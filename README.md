@@ -168,14 +168,14 @@ plugins/
         └── share.sh       ← deploy HTML to Vercel for sharing
 ```
 
-**Output:** `~/.agents/diagrams/filename.html` → opens in browser
+**Output:** `.agents/diagrams/filename.html` → opens in browser
 
 The skill routes to the right approach automatically: Mermaid for flowcharts and diagrams, CSS Grid for architecture overviews, HTML tables for data, Chart.js for dashboards.
 
 ## Limitations
 
 - Generated HTML is portable and self-contained, but auto-opening depends on the harness, browser access, and sandbox rules.
-- All harnesses write visual output to `~/.agents/diagrams/` unless the user asks for a different path.
+- All harnesses write visual output to `.agents/diagrams/` unless the user asks for a different path.
 - Switching OS theme requires a page refresh for Mermaid SVGs.
 - `/share-page` uses `plugins/VisualExplainer/scripts/share.sh`, which expects a Pi-compatible `vercel-deploy` skill in a standard Pi skill location. Other harnesses can still generate and open pages, but sharing may need that dependency installed separately.
 - Results vary by model capability.

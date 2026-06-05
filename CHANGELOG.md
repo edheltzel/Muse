@@ -70,7 +70,7 @@ Based on PR #25 by [@peak-flow](https://github.com/peak-flow), with additional m
 - Removed stale `pi` field from `package.json` (was pointing to non-existent root paths)
 
 ### OpenAI Codex Install Fix
-- Fixed prompts path: `~/.codex/prompts/` (was incorrectly `~/.agents/commands/`)
+- Fixed prompts path: `~/.codex/prompts/` (was incorrectly `.agents/commands/`)
 - Prompts are optional (deprecated feature) — skill works without them via `$VisualExplainer`
 - With prompts installed, invoke as `/prompts:diff-review`, `/prompts:plan-review`, etc.
 
@@ -95,7 +95,7 @@ Based on PR #25 by [@peak-flow](https://github.com/peak-flow), with additional m
 
 ### OpenAI Codex Support
 - Added install instructions for OpenAI Codex to README
-- Uses `~/.agents/skills` and `~/.agents/commands` paths
+- Uses `.agents/skills` and `.agents/commands` paths
 
 ### Share Command
 - New `/share` prompt and `scripts/share.sh` for instant sharing of visual explainer pages
