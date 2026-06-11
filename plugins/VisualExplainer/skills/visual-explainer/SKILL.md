@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires a browser to view generated HTML files. Optional surf-cli for AI image generation.
 metadata:
   author: edheltzel
-  version: "0.6.3"
+  version: "0.7.2"
 ---
 
 # Visual Explainer
@@ -398,7 +398,7 @@ Every diagram is a single self-contained `.html` file. No external assets except
 
 ## Sharing Pages
 
-Share visual explainer pages instantly via Vercel when a Pi-compatible `vercel-deploy` skill is available. No account or authentication required.
+Share visual explainer pages instantly via the Vercel CLI. Each share creates its own Vercel project and deploys to **production**, returning the project's public production URL — every other generated deployment URL (including previews) sits behind Vercel Deployment Protection (SSO) and returns 401 for anonymous visitors.
 
 **Usage with the installed skill path:**
 
@@ -415,27 +415,27 @@ bash ~/.pi/agent/skills/VisualExplainer/scripts/share.sh .agents/diagrams/my-dia
 
 # Output:
 # ✓ Shared successfully!
-# Live URL:  https://skill-deploy-abc123.vercel.app
-# Claim URL: https://vercel.com/claim-deployment?code=...
+# Live URL:  https://visual-explainer-abc123.vercel.app
 ```
 
 **How it works:**
 
 1. Runs the `share.sh` script from the installed `VisualExplainer` skill directory
-2. Copies HTML file to temp directory as `index.html`
-3. Deploys via the Pi-compatible `vercel-deploy` skill
-4. URL is live immediately — works in any browser
+2. Copies HTML file to a uniquely-named temp directory as `index.html`
+3. Runs `vercel deploy --prod --yes` from that directory — each share gets its own Vercel project
+4. Resolves the project's public production URL and verifies it with an anonymous request
+5. URL is live immediately — works in any browser, no sign-in required
 
 **Requirements:**
 
-- vercel-deploy skill in a standard Pi-compatible skill location (in Pi: `pi install npm:vercel-deploy`)
+- Vercel CLI on PATH — install with `npm i -g vercel` (or `bun add -g vercel`)
+- Authenticated session — run `vercel login` once
 
 **Notes:**
 
-- Deployments are public — anyone with the URL can view
-- Preview deployments have configurable retention (default: 30 days)
-- Claim URL lets you transfer the deployment to your Vercel account
-- Other harnesses can generate and open HTML normally; `/share-page` depends on the Pi-compatible `vercel-deploy` script being available
+- Shared URLs are public — anyone with the URL can view
+- Each share creates its own Vercel project, so every shared URL stays live independently of later shares
+- Projects and deployments land in your own Vercel account; manage retention via the Vercel dashboard
 
 See `./commands/share-page.md` for the `/share-page` command template.
 

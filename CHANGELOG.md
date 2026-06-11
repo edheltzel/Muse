@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.2] - 2026-06-11
+
+### Bug Fixes
+- `/share-page` now returns a publicly accessible URL. Plain `vercel deploy` created preview deployments, which Vercel Deployment Protection gates behind SSO — anyone opening a shared URL hit a sign-up wall (HTTP 401). `share.sh` now deploys to **production** (`vercel deploy --prod --yes`) in a per-share Vercel project, resolves the project's public production domain via `vercel inspect` (generated deployment URLs stay SSO-gated even for production), and verifies it answers an anonymous request with HTTP 200 before returning it.
+- Each share gets its own Vercel project so a later share never overwrites an earlier shared URL.
+- Renamed the script's JSON output key from `previewUrl` to `productionUrl` to match.
+- Updated share-flow docs (`commands/share-page.md`, `SKILL.md`, README) to describe the Vercel CLI production deploy; removed stale `vercel-deploy`-skill and claim-URL wording from `SKILL.md`.
+
 ## [0.7.1] - 2026-04-27
 
 ### Compatibility

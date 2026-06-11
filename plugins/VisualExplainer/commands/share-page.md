@@ -25,9 +25,9 @@ Share a visual explainer HTML file via Vercel. Returns a live URL deployed under
 
 ## How It Works
 
-1. Copies your HTML file to a temp directory as `index.html`
-2. Runs `vercel deploy --yes` from that directory
-3. Returns the live preview URL
+1. Copies your HTML file to a uniquely-named temp directory as `index.html`
+2. Runs `vercel deploy --prod --yes` from that directory — each share gets its own Vercel project
+3. Resolves the project's public production URL (verified with an anonymous request) and returns it
 
 ## Requirements
 
@@ -59,11 +59,11 @@ Live URL:  https://visualexplainer-abc123.vercel.app
 The script also outputs JSON for programmatic use:
 
 ```json
-{ "previewUrl": "https://..." }
+{ "productionUrl": "https://..." }
 ```
 
 ## Notes
 
-- Deployments are **public** — anyone with the URL can view
-- Each share creates a new deployment with a unique URL
-- Deployments live under your Vercel account; manage retention via the Vercel dashboard
+- Shared URLs are **public** — anyone with the URL can view. The script deploys to **production** and returns the project's production domain; every other generated deployment URL (including previews) sits behind Vercel Deployment Protection (SSO) and returns 401 for anonymous visitors
+- Each share creates its own Vercel project, so every shared URL stays live independently of later shares
+- Projects and deployments live under your Vercel account; manage retention via the Vercel dashboard

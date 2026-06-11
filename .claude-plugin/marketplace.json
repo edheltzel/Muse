@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Plugin distribution for VisualExplainer",
-    "version": "0.7.1",
+    "version": "0.7.2",
     "pluginRoot": "./plugins"
   },
   "plugins": [
@@ -13,7 +13,7 @@
       "name": "VisualExplainer",
       "source": "./plugins/VisualExplainer",
       "description": "Generate beautiful HTML pages for diagrams, diff reviews, plan reviews, slides, and data tables",
-      "version": "0.7.1",
+      "version": "0.7.2",
       "author": {
         "name": "edheltzel"
       },

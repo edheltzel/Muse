@@ -30,6 +30,11 @@ if ! command -v vercel >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! command -v curl >/dev/null 2>&1; then
+    echo -e "${RED}Error: curl not found on PATH${NC}" >&2
+    exit 1
+fi
+
 if ! vercel whoami >/dev/null 2>&1; then
     echo -e "${RED}Error: not authenticated with Vercel${NC}" >&2
     echo "Run: vercel login" >&2
@@ -39,15 +44,20 @@ fi
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
-# Use a stable subdir name so Vercel derives a clean project name from it
-DEPLOY_DIR="$TEMP_DIR/visual-explainer"
+# Unique subdir per share: Vercel derives the project name from it, and each
+# share needs its own project so its public production URL is never
+# overwritten by a later share.
+DEPLOY_DIR="$TEMP_DIR/visual-explainer-$(date +%Y%m%d%H%M%S)-$$-$RANDOM"
 mkdir -p "$DEPLOY_DIR"
 cp "$HTML_FILE" "$DEPLOY_DIR/index.html"
 
 echo -e "${CYAN}Sharing $(basename "$HTML_FILE") via Vercel...${NC}" >&2
 
+# --prod: under Vercel's default Standard Protection, every generated
+# deployment URL (preview AND production) is gated behind SSO — only the
+# project's production domain is publicly accessible.
 set +e
-RESULT=$(cd "$DEPLOY_DIR" && vercel deploy --yes 2>&1)
+RESULT=$(cd "$DEPLOY_DIR" && vercel deploy --prod --yes 2>&1)
 DEPLOY_EXIT=$?
 set -e
 
@@ -57,19 +67,41 @@ if [ $DEPLOY_EXIT -ne 0 ]; then
     exit 1
 fi
 
-PREVIEW_URL=$(echo "$RESULT" | grep -oE 'https://[a-zA-Z0-9.-]+\.vercel\.app' | head -1)
+DEPLOY_URL=$(echo "$RESULT" | grep -oE 'https://[a-zA-Z0-9.-]+\.vercel\.app' | head -1)
 
-if [ -z "$PREVIEW_URL" ]; then
-    echo -e "${RED}Error: could not parse preview URL from vercel output${NC}" >&2
+if [ -z "$DEPLOY_URL" ]; then
+    echo -e "${RED}Error: could not parse deployment URL from vercel output${NC}" >&2
     echo "$RESULT" >&2
+    exit 1
+fi
+
+# Resolve the public production domain: the generated deployment URL is
+# SSO-gated, so pick the first candidate that answers an anonymous GET
+# with HTTP 200.
+INSPECT=$(vercel inspect "$DEPLOY_URL" 2>&1 || true)
+CANDIDATES=$(echo "$INSPECT" | grep -oE 'https://[a-zA-Z0-9.-]+\.vercel\.app' || true)
+
+PROD_URL=""
+for url in $CANDIDATES $DEPLOY_URL; do
+    STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$url" || echo 000)
+    if [ "$STATUS" = "200" ]; then
+        PROD_URL="$url"
+        break
+    fi
+done
+
+if [ -z "$PROD_URL" ]; then
+    echo -e "${RED}Error: no publicly accessible URL found for the deployment${NC}" >&2
+    echo "Check the project's Deployment Protection settings in the Vercel dashboard." >&2
+    echo "$INSPECT" >&2
     exit 1
 fi
 
 echo "" >&2
 echo -e "${GREEN}✓ Shared successfully!${NC}" >&2
 echo "" >&2
-echo -e "${GREEN}Live URL:  ${PREVIEW_URL}${NC}" >&2
+echo -e "${GREEN}Live URL:  ${PROD_URL}${NC}" >&2
 echo "" >&2
 
 # JSON for programmatic callers
-printf '{"previewUrl":"%s"}\n' "$PREVIEW_URL"
+printf '{"productionUrl":"%s"}\n' "$PROD_URL"
