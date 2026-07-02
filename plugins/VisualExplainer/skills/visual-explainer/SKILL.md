@@ -5,12 +5,12 @@ license: MIT
 compatibility: Requires a browser to view generated HTML files. Optional surf-cli for AI image generation.
 metadata:
   author: edheltzel
-  version: "0.7.2"
+  version: "0.8.0"
 ---
 
 # Visual Explainer
 
-Generate self-contained HTML files for technical diagrams, visualizations, and data tables. Always open the result in the browser. Never fall back to ASCII art when this skill is loaded.
+Generate self-contained HTML files for technical diagrams, visualizations, and data tables. Generate interactive MDX visual plans/recaps when review state, approval, questions, or agent handoff files matter. Always open visual results in the browser. Never fall back to ASCII art when this skill is loaded.
 
 **Proactive table rendering.** When you're about to present tabular data as an ASCII box-drawing table in the terminal (comparisons, audits, feature matrices, status reports, any structured rows/columns), generate an HTML page instead. The threshold: if the table has 4+ rows or 3+ columns, it belongs in the browser. Don't wait for the user to ask — render it as HTML automatically and tell them the file path. You can still include a brief text summary in the chat, but the table itself should be the HTML page.
 
@@ -18,16 +18,17 @@ Generate self-contained HTML files for technical diagrams, visualizations, and d
 
 Detailed prompt templates in `./commands/`. In Pi, these are slash commands (`/diff-review`). In Claude Code, namespaced (`/VisualExplainer:diff-review`). In Codex, use `/prompts:diff-review` (if installed to `~/.codex/prompts/`) or invoke `$VisualExplainer` and describe the workflow.
 
-| Command                | What it does                                                    |
-| ---------------------- | --------------------------------------------------------------- |
-| `generate-web-diagram` | Generate an HTML diagram for any topic                          |
-| `generate-visual-plan` | Generate a visual implementation plan for a feature             |
-| `generate-slides`      | Generate a magazine-quality slide deck                          |
-| `diff-review`          | Visual diff review with architecture comparison and code review |
-| `plan-review`          | Compare a plan against the codebase with risk assessment        |
-| `project-recap`        | Mental model snapshot for context-switching back to a project   |
-| `fact-check`           | Verify accuracy of a document against actual code               |
-| `share-page`           | Deploy an HTML page to Vercel and get a live URL                |
+| Command                | What it does                                                            |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `generate-web-diagram` | Generate an HTML diagram for any topic                                  |
+| `generate-visual-plan` | Generate an interactive MDX plan with review state and agent handoff    |
+| `visual-recap`         | Generate an interactive recap for a branch, commit, PR, or diff         |
+| `generate-slides`      | Generate a magazine-quality slide deck                                  |
+| `diff-review`          | Visual diff review with architecture comparison and code review         |
+| `plan-review`          | Compare a plan against the codebase with risk assessment                |
+| `project-recap`        | Mental model snapshot for context-switching back to a project           |
+| `fact-check`           | Verify accuracy of a document against actual code                       |
+| `share-page`           | Deploy an HTML page to Vercel and get a live URL                        |
 
 ## Workflow
 
@@ -77,6 +78,8 @@ Vary the choice each time. If the last diagram was dark and technical, make the 
 - For slide deck presentations (when `--slides` flag is present or `/generate-slides` is invoked): read `./templates/slide-deck.html` and `./references/slide-patterns.md`
 - For prose-heavy publishable pages (READMEs, articles, blog posts, essays): read the "Prose Page Elements" section in `./references/css-patterns.md` and "Typography by Content Voice" in `./references/libraries.md`
 
+
+**For interactive plans and recaps**, read `./references/interactive-plans.md`, `./references/mdx-components.md`, `./references/mdx-blocks.md`, and `./references/review-state.md`. These artifacts live under `.agents/visual-plans/<slug>/` or `.agents/visual-recaps/<slug>/`, use `plan.mdx` as the source of truth, render to reviewable HTML, and persist approval state to local JSON plus `agent-handoff.*`.
 **For CSS/layout patterns and SVG connectors**, read `./references/css-patterns.md`.
 
 **For pages with 4+ sections** (reviews, recaps, dashboards), also read `./references/responsive-nav.md` for section navigation with sticky sidebar TOC on desktop and horizontal scrollable bar on mobile.

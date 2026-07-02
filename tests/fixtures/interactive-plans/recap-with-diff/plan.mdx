@@ -1,0 +1,25 @@
+---
+title: Recap With Diff
+kind: recap
+slug: recap-with-diff
+---
+
+<PlanSummary id="summary" title="Recap With Diff" status="Draft">
+A visual recap fixture with file tree and diff tabs.
+</PlanSummary>
+
+<FileTree id="files" title="Changed files">
+M plugins/VisualExplainer/commands/generate-visual-plan.md
+A plugins/VisualExplainer/commands/visual-recap.md
+</FileTree>
+
+<DiffTabs id="diffs" title="Key changes">
+file: generate-visual-plan.md
+- static HTML only
++ interactive MDX plan
+---
+file: visual-recap.md
++ new recap command
+</DiffTabs>
+
+<ApprovalGate id="approval" title="Acknowledge recap" />

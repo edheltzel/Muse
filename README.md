@@ -8,12 +8,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 
-Ask your agent to explain a system architecture, review a diff, or compare requirements against a plan. Instead of ASCII art and box-drawing tables, it generates a self-contained HTML page and opens it in your browser.
+Ask your agent to explain a system architecture, review a diff, compare requirements against a plan, or build an approval-aware visual plan. Static diagram commands still generate self-contained HTML, while `/generate-visual-plan` and `/visual-recap` now create local MDX review folders with persisted state and agent handoff files.
 
 ```
 > draw a diagram of our authentication flow
 > /diff-review
-> /plan-review ~/docs/refactor-plan.md
+> /generate-visual-plan ~/docs/refactor-plan.md
+> /visual-recap main...HEAD
 ```
 
 https://github.com/user-attachments/assets/55ebc81b-8732-40f6-a4b1-7c3781aa96ec
@@ -24,7 +25,7 @@ Every coding agent defaults to ASCII art when you ask for a diagram. Box-drawing
 
 Tables are worse. Ask the agent to compare 15 requirements against a plan and you get a wall of pipes and dashes that wraps and breaks in the terminal. The data is there but it's painful to read.
 
-This skill fixes that. Real typography, dark/light themes, interactive Mermaid diagrams with zoom and pan. No build step, no dependencies beyond a browser.
+This skill fixes that. Real typography, dark/light themes, interactive Mermaid diagrams with zoom and pan, plus MDX-first visual plan/recap artifacts for workflows that need questions, comments, approval state, and machine-readable handoffs.
 
 ## Install
 
@@ -69,7 +70,7 @@ If you previously used the old curl/manual installer, remove those copied files 
 
 ```bash
 rm -rf ~/.pi/agent/skills/VisualExplainer
-rm -f ~/.pi/agent/prompts/{diff-review,fact-check,generate-slides,generate-visual-plan,generate-web-diagram,plan-review,project-recap,share-page}.md
+rm -f ~/.pi/agent/prompts/{diff-review,fact-check,generate-slides,generate-visual-plan,generate-web-diagram,plan-review,project-recap,share-page,visual-recap}.md
 ```
 
 The legacy installer still works if you prefer copied files over package management:
@@ -121,7 +122,8 @@ Use `configs/openclaw/AGENTS.md` as lightweight project guidance and copy or ref
 | Command | What it does |
 |---------|-------------|
 | `/generate-web-diagram` | Generate an HTML diagram for any topic |
-| `/generate-visual-plan` | Generate a visual implementation plan for a feature or extension |
+| `/generate-visual-plan` | Generate an interactive MDX implementation plan with review state and handoff files |
+| `/visual-recap` | Turn a branch, commit, PR, or diff into an interactive visual recap |
 | `/generate-slides` | Generate a magazine-quality slide deck |
 | `/diff-review` | Visual diff review with architecture comparison and code review |
 | `/plan-review` | Compare a plan against the codebase with risk assessment |
@@ -155,20 +157,25 @@ plugins/
     ├── SKILL.md           ← workflow + design principles
     ├── commands/          ← slash commands
     ├── references/        ← agent reads before generating
-    │   ├── css-patterns.md   (layouts, animations, theming)
-    │   ├── libraries.md      (Mermaid, Chart.js, fonts)
-    │   ├── responsive-nav.md (sticky TOC for multi-section pages)
-    │   └── slide-patterns.md (slide engine, transitions, presets)
+    │   ├── css-patterns.md        (layouts, animations, theming)
+    │   ├── interactive-plans.md   (MDX folder contract + approval flow)
+    │   ├── mdx-components.md      (plan/recap component catalog)
+    │   ├── mdx-blocks.md          (block validation contract)
+    │   ├── review-state.md        (local JSON state model)
+    │   ├── libraries.md           (Mermaid, Chart.js, fonts)
+    │   ├── responsive-nav.md      (sticky TOC for multi-section pages)
+    │   └── slide-patterns.md      (slide engine, transitions, presets)
     ├── templates/         ← reference templates with different palettes
     │   ├── architecture.html
     │   ├── mermaid-flowchart.html
+    │   ├── interactive-plan-shell.html
     │   ├── data-table.html
     │   └── slide-deck.html
-    └── scripts/
-        └── share.sh       ← deploy HTML to Vercel for sharing
 ```
 
 **Output:** `.agents/diagrams/filename.html` → opens in browser
+
+**Interactive plan output:** `.agents/visual-plans/<slug>/plan.mdx` → local review page at `dist/index.html` plus `agent-handoff.*` after approval. Visual recaps use `.agents/visual-recaps/<slug>/`.
 
 The skill routes to the right approach automatically: Mermaid for flowcharts and diagrams, CSS Grid for architecture overviews, HTML tables for data, Chart.js for dashboards.
 

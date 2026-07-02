@@ -1,0 +1,40 @@
+---
+title: Minimal Interactive Plan
+kind: plan
+slug: minimal-plan
+---
+
+<PlanSummary id="summary" status="Draft" title="Minimal Interactive Plan">
+A local-first MDX plan proving the VisualExplainer interactive pipeline.
+</PlanSummary>
+
+<DecisionMatrix id="decisions" title="Decisions">
+Use local MDX | Keeps source portable | accepted
+Use Vite Plus | Keeps browser pipeline explicit | accepted
+</DecisionMatrix>
+
+<ArchitectureDiagram id="flow" title="Review flow">
+flowchart TD
+  A[MDX] --> B[Render]
+  B --> C[Review]
+  C --> D[Handoff]
+</ArchitectureDiagram>
+
+<FileTree id="files" title="Files">
+plan.mdx
+visual-explainer.json
+plan-state.json
+</FileTree>
+
+<QuestionForm id="questions" title="Open Questions">
+runtime | Which lightweight runtime should U2 choose? | freeform
+</QuestionForm>
+
+<Checklist id="checks" title="Verification">
+schema | Schema validates
+render | HTML renders
+</Checklist>
+
+<ApprovalGate id="approval" title="Approval">
+Approve after the fixture renders and the handoff can be generated.
+</ApprovalGate>
