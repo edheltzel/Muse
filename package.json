@@ -36,19 +36,24 @@
     "configs",
     "install-pi.sh",
     "README.md",
+    "AGENTS.md",
+    "docs/assets",
     "CHANGELOG.md",
     "LICENSE"
   ],
   "type": "module",
+  "packageManager": "bun@1.3.14",
   "scripts": {
     "test": "bun test",
+    "build": "vp build --config vite.config.ts",
+    "check": "vp run test && vp run visual-plan:build",
     "visual-plan:render": "bun plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/render.ts",
     "visual-plan:serve": "bun plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/server.ts",
-    "visual-plan:build": "bunx --bun vite build --config vite.config.ts"
+    "visual-plan:build": "vp build --config vite.config.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
-    "vite": "^8.1.2"
+    "vite-plus": "0.2.2"
   },
   "pi": {
     "skills": [

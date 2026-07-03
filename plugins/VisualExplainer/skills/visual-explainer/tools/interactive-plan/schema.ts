@@ -1,6 +1,6 @@
 import { KNOWN_MDX_COMPONENTS } from "./shared";
 
-export type VisualPlanKind = "plan" | "recap";
+export type VisualPlanKind = "plan" | "recap" | "styleguide";
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 export type CommentStatus = "open" | "resolved";
 

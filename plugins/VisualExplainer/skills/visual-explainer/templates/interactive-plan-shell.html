@@ -1,21 +1,34 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Fragment+Mono&display=swap" rel="stylesheet">
 <style>{{STYLE}}</style>
 </head>
 <body data-review-status="draft">
-  <aside class="ve-ip-nav"><strong>{{KIND}}</strong>{{NAV}}</aside>
+  <aside class="ve-ip-nav">
+    <strong>{{KIND}}</strong>
+    {{NAV}}
+  </aside>
+  <div class="ve-ip-chrome" aria-label="Display settings">
+    <span>Theme</span>
+    <button type="button" class="ve-ip-theme-toggle" data-theme-toggle aria-pressed="false">
+      <span data-theme-toggle-label>Light</span>
+    </button>
+  </div>
   <main class="ve-ip-main">
     <header class="ve-ip-page-header">
-      <p class="ve-ip-eyebrow">VisualExplainer interactive {{KIND}}</p>
+      <p class="ve-ip-kicker">VisualExplainer interactive {{KIND}}</p>
       <h1>{{TITLE}}</h1>
       <p>{{SUBTITLE}}</p>
     </header>
     {{CONTENT}}
   </main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script type="module">{{CLIENT}}</script>
 </body>
 </html>

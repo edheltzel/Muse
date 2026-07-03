@@ -45,6 +45,35 @@ describe("interactive plan MDX loading", () => {
       { name: "minimal-plan", kind: "plan", slug: "minimal-plan", blockIds: ["summary", "decisions", "flow", "files", "questions", "checks", "approval"], hasCanvas: false },
       { name: "recap-with-diff", kind: "recap", slug: "recap-with-diff", blockIds: ["summary", "files", "diffs", "approval"], hasCanvas: false },
       { name: "ui-plan-with-canvas", kind: "plan", slug: "ui-plan-with-canvas", blockIds: ["summary", "before-after", "approval"], hasCanvas: true },
+      {
+        name: "component-library-showcase",
+        kind: "styleguide",
+        slug: "component-library-showcase",
+        blockIds: [
+          "summary",
+          "status",
+          "design-principle",
+          "decisions",
+          "flow",
+          "timeline",
+          "risks",
+          "file-map",
+          "file-tree",
+          "code",
+          "diffs",
+          "api",
+          "data-model",
+          "before-after",
+          "wireframe",
+          "states",
+          "component-table",
+          "questions",
+          "checks",
+          "approval",
+          "component-anchor",
+        ],
+        hasCanvas: true,
+      },
     ];
 
     for (const fixture of fixtureExpectations) {
@@ -92,15 +121,20 @@ describe("interactive plan rendering", () => {
       expect(indexHtml).toContain("VisualExplainer interactive plan");
       expect(indexHtml).toContain("data-block-type=\"PlanSummary\"");
       expect(indexHtml).toContain("class=\"ve-ip-block ve-ip-hero\"");
+      expect(indexHtml).toContain("data-theme-toggle");
       expect(indexHtml).toContain("data-plan-questions");
       expect(indexHtml).toContain("data-checklist-id=\"schema\"");
       expect(indexHtml).toContain("data-approve-plan");
       expect(indexHtml).toContain("class=\"mermaid-wrap\"");
+      expect(indexHtml).toContain("class=\"mermaid-canvas\"");
+      expect(indexHtml).toContain("mermaid.min.js");
       expect(indexHtml).toContain("postJson(\"/api/state\"");
 
       expect(staticHtml).toContain("Static export. Interactive persistence requires the local review bridge.");
       expect(staticHtml).toContain("Static export: copy this page with the generated handoff packet.");
       expect(staticHtml).not.toContain("postJson(\"/api/state\"");
+      expect(staticHtml).toContain("data-theme-toggle");
+      expect(staticHtml).toContain("mermaid.min.js");
 
       expectNoForbiddenRuntimeReferences(indexHtml);
       expectNoForbiddenRuntimeReferences(staticHtml);

@@ -47,7 +47,7 @@ function renderDecisionMatrix(block: MdxBlock): string {
 }
 
 function renderArchitectureDiagram(block: MdxBlock): string {
-  return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint">Scroll to zoom, drag to pan, expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}"><div class="zoom-controls"><button type="button" data-zoom="out">−</button><button type="button" data-zoom="reset">100%</button><button type="button" data-zoom="in">+</button><button type="button" data-expand>⛶</button></div><div class="mermaid-viewport"><pre class="mermaid mermaid-canvas">${escapeHtml(block.body)}</pre></div></div></div>`);
+  return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint">Scroll to zoom, drag to pan, expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}"><div class="zoom-controls"><button type="button" data-zoom="out">−</button><button type="button" data-zoom="reset">100%</button><button type="button" data-zoom="in">+</button><button type="button" data-expand>⛶</button></div><div class="mermaid-viewport"><pre class="mermaid-source">${escapeHtml(block.body)}</pre><div class="mermaid-canvas" aria-label="${title(block)} diagram"></div></div></div></div>`);
 }
 
 function renderTimeline(block: MdxBlock): string {
