@@ -5,8 +5,7 @@
   },
   "metadata": {
     "description": "Plugin distribution for VisualExplainer",
-    "version": "0.8.0",
-    "pluginRoot": "./plugins"
+    "version": "0.8.0"
   },
   "plugins": [
     {
