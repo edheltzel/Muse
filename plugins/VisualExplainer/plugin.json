@@ -6,5 +6,8 @@
     "name": "edheltzel"
   },
   "repository": "https://github.com/edheltzel/visual-explainer",
-  "license": "MIT"
+  "homepage": "https://github.com/edheltzel/visual-explainer#readme",
+  "license": "MIT",
+  "category": "visualization",
+  "tags": ["diagrams", "html-generation", "code-review", "plans", "recaps", "mermaid"]
 }

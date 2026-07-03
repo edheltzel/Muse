@@ -1,0 +1,173 @@
+---
+title: VisualExplainer Component Library
+kind: styleguide
+slug: component-library-showcase
+---
+
+<PlanSummary id="summary" status="Live style guide" title="Component library and real-world review surface">
+A polished component inventory for the VisualExplainer interactive plan system, shown through a realistic launch-readiness review for a local-first AI feature.
+</PlanSummary>
+
+<StatusDashboard id="status" title="Launch readiness dashboard">
+Review coverage | 18/18 | All component families visible
+Open questions | 3 | Persisted through the local bridge
+Risk posture | Medium | One rollout dependency remains
+Approval state | Draft | Ready for reviewer interaction
+</StatusDashboard>
+
+<Callout id="design-principle" title="Design principle" tone="decision">
+This library stays vanilla HTML, CSS, and TypeScript. It does not introduce React, Agent Native, or a hosted component runtime.
+</Callout>
+
+<DecisionMatrix id="decisions" title="Design decisions">
+Use renderer-owned components | Keeps command output portable across harnesses | accepted
+Add theme toggle in shell | Lets reviewers inspect light and dark modes directly | accepted
+Render Mermaid in client runtime | Fixes diagrams without requiring author-side SVG exports | accepted
+Keep style guide as fixture | Makes visual regressions reproducible in tests | accepted
+</DecisionMatrix>
+
+<ArchitectureDiagram id="flow" title="Live review flow">
+flowchart TD
+  A["Agent writes plan.mdx"] --> B["VisualExplainer renderer"]
+  B --> C["Component library shell"]
+  C --> D{"Reviewer decision"}
+  D -->|"Approve"| E["agent-handoff.json"]
+  D -->|"Needs revision"| F["plan-state.json"]
+  C --> G["Static export"]
+</ArchitectureDiagram>
+
+<ImplementationTimeline id="timeline" title="Real-world launch sequence">
+Author a plan with every review component represented
+Render the local review page and static export
+Collect reviewer answers, checklist state, and comments
+Approve the plan and hand off machine-readable implementation context
+</ImplementationTimeline>
+
+<RiskRegister id="risks" title="Rollout risks">
+Mermaid CDN unavailable | Show readable source fallback and render state marker | medium
+Reviewer misses dark-mode issue | Theme toggle is always visible in chrome | low
+Plan overfits one workflow | Style guide covers every current MDX component | medium
+</RiskRegister>
+
+<FileMap id="file-map" title="Touched files">
+plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/render.ts
+plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/client.ts
+plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/components.ts
+plugins/VisualExplainer/skills/visual-explainer/templates/interactive-plan-shell.html
+tests/fixtures/interactive-plans/component-library-showcase/plan.mdx
+</FileMap>
+
+<FileTree id="file-tree" title="Generated review packet">
+plan.mdx
+canvas.mdx
+visual-explainer.json
+dist/index.html
+dist/static-export.html
+plan-state.json
+agent-handoff.json
+</FileTree>
+
+<AnnotatedCode id="code" title="Focused renderer contract" file="tools/interactive-plan/render.ts">
+export async function renderPlanFolder(rootDir: string): Promise<{ indexPath: string; staticExportPath: string }> {
+  const plan = await loadPlanFolder(rootDir);
+  const distDir = join(rootDir, plan.manifest.dist);
+  await mkdir(distDir, { recursive: true });
+  await writeFile(join(distDir, "index.html"), await renderPlanHtml(plan, false, shell));
+  await writeFile(join(distDir, "static-export.html"), await renderPlanHtml(plan, true, shell));
+}
+</AnnotatedCode>
+
+<DiffTabs id="diffs" title="Example review tabs">
+file: render.ts
++ static exports keep diagram rendering
++ interactive exports add persistence handlers
+---
+file: client.ts
++ theme toggle persists reviewer preference
++ Mermaid diagrams render into SVG canvases
+---
+file: shell.html
++ top-level display controls
++ Mermaid runtime script
+</DiffTabs>
+
+<ApiSurface id="api" title="Local bridge API">
+Endpoint | Method | Purpose
+/api/state | POST | Persist answers, checklist values, and revision status
+/api/comments | POST | Add or resolve anchored review comments
+/api/approve | POST | Create agent-handoff.json and approve plan
+/plan-state.json | GET | Inspect current local review state
+</ApiSurface>
+
+<DataModel id="data-model" title="Review state model">
+Field | Type | Notes
+status | draft / needs_revision / approved | Drives body data-review-status
+answers | Record<string, string> | QuestionForm persistence
+checklist | Record<string, boolean> | Checklist persistence
+unresolvedCommentIds | string[] | Approval-readiness signal
+</DataModel>
+
+<BeforeAfter id="before-after" title="Before and after">
+A minimal fixture showed one approval button, a basic table, and an unrendered Mermaid source block.
+---
+The component library shows every MDX component, a full launch-review story, rendered diagrams, persisted controls, and explicit light/dark themes.
+</BeforeAfter>
+
+<Wireframe id="wireframe" title="Review app wireframe" surface="browser">
+<div style="display:grid;grid-template-columns:1fr 1.2fr;gap:16px;padding:18px;min-height:260px">
+  <aside style="border:1px solid var(--border);border-radius:14px;padding:14px;background:var(--surface-elevated)">
+    <p class="wf-muted">Launch dossier</p>
+    <h3 style="margin:.25rem 0">AI Review Bridge</h3>
+    <button class="primary">Start review</button>
+  </aside>
+  <section style="border:1px solid var(--border);border-radius:14px;padding:14px;background:var(--surface)">
+    <p class="wf-muted">Reviewer actions</p>
+    <label class="ve-ip-check"><input type="checkbox" checked /> <span>Architecture reviewed</span></label>
+    <label class="ve-ip-check"><input type="checkbox" /> <span>Risks accepted</span></label>
+  </section>
+</div>
+</Wireframe>
+
+<StateGallery id="states" title="Interactive states">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;padding:16px">
+  <div style="border:1px solid var(--border);border-radius:14px;padding:14px;background:var(--surface-elevated)"><strong>Draft</strong><p class="wf-muted">Questions open, checklist empty.</p></div>
+  <div style="border:1px solid var(--border);border-radius:14px;padding:14px;background:color-mix(in oklch,var(--warn) 12%,var(--surface))"><strong>Needs revision</strong><p class="wf-muted">Reviewer asked for changes.</p></div>
+  <div style="border:1px solid var(--border);border-radius:14px;padding:14px;background:color-mix(in oklch,var(--ok) 12%,var(--surface))"><strong>Approved</strong><p class="wf-muted">Handoff packet generated.</p></div>
+</div>
+</StateGallery>
+
+<Table id="component-table" title="Component inventory">
+Component | Family | Live example
+PlanSummary | Overview | Hero summary at page top
+StatusDashboard | Overview | Launch readiness KPIs
+DecisionMatrix | Planning | Design decision table
+ArchitectureDiagram | Diagram | Live review flow Mermaid graph
+ImplementationTimeline | Planning | Launch sequence
+RiskRegister | Planning | Rollout risks
+FileMap / FileTree | Evidence | Source and generated packet lists
+AnnotatedCode | Evidence | Renderer contract snippet
+DiffTabs / Tabs | Evidence | File-specific change tabs
+ApiSurface / DataModel / Table | Contracts | Local bridge tables
+Wireframe / StateGallery / BeforeAfter | Product UI | Review app examples
+QuestionForm / Checklist / ApprovalGate | Interactive review | Reviewer state and handoff controls
+Callout / CommentAnchor | Review guidance | Principle and anchor targets
+</Table>
+
+<CommentAnchor id="component-anchor" />
+
+<QuestionForm id="questions" title="Reviewer questions">
+palette | Does the terracotta, sage, teal, and gold palette feel like the right VisualExplainer direction? | freeform
+component-system | Should this remain vanilla, or is a larger component system warranted later? | freeform
+launch-risk | What would block this from being the default demo? | freeform
+</QuestionForm>
+
+<Checklist id="checks" title="Style guide checks">
+all-components | Every supported MDX component is represented
+mermaid | Mermaid renders as an SVG with zoom controls
+theme-toggle | Light and dark themes can be toggled in the page chrome
+live-use-case | The page tells a realistic launch-review story
+</Checklist>
+
+<ApprovalGate id="approval" title="Approval">
+Approve this style-guide direction when the component inventory, real-world use case, and theme behavior feel ready to become the canonical demo.
+</ApprovalGate>

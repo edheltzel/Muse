@@ -1,0 +1,10 @@
+{
+  "kind": "styleguide",
+  "slug": "component-library-showcase",
+  "title": "VisualExplainer Component Library",
+  "createdAt": "2026-07-03T00:00:00.000Z",
+  "source": ["fixture", "styleguide"],
+  "entry": "plan.mdx",
+  "dist": "dist",
+  "localOnly": true
+}

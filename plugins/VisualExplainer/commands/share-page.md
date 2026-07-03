@@ -41,10 +41,10 @@ Deployments land in your own Vercel account, so no claim step is needed.
 Resolve the script from the installed skill directory, then run it with the HTML file path:
 
 ```bash
-bash ~/.claude/plugins/cache/VisualExplainer-marketplace/VisualExplainer/<version>/scripts/share.sh <file>
+bash ~/.claude/plugins/cache/visual-explainer-marketplace/visual-explainer/<version>/skills/visual-explainer/scripts/share.sh <file>
 ```
 
-Common alternatives include `~/.codex/skills/VisualExplainer/scripts/share.sh`, `~/.config/opencode/skill/VisualExplainer/scripts/share.sh`, or `./plugins/VisualExplainer/scripts/share.sh` from a repository checkout.
+Common alternatives include `~/.codex/skills/VisualExplainer/scripts/share.sh`, `~/.config/opencode/skill/VisualExplainer/scripts/share.sh`, or `./plugins/VisualExplainer/skills/visual-explainer/scripts/share.sh` from a repository checkout.
 
 ## Output
 

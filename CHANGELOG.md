@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0] - 2026-07-01
+
+### Added
+- Added a local-first interactive MDX visual plan pipeline: schema validation, MDX block loading, renderer, Bun review server, persisted `plan-state.json` / `comments.json`, and approval-generated `agent-handoff.json` plus `agent-handoff.md`.
+- Added a documented MDX component catalog for summaries, decisions, diagrams, file maps, annotated code/diffs, questions, risks, timelines, wireframes, and approval gates.
+- Added `/visual-recap` for interactive branch/commit/PR/diff recaps.
+- Added fixture plans for the minimal plan, UI canvas plan, and recap-with-diff paths.
+
+### Changed
+- `/generate-visual-plan` now targets `.agents/visual-plans/<slug>/plan.mdx` plus a local review bridge instead of one-off static HTML.
+- README and skill docs now distinguish static diagrams from approval-aware interactive plan/recap artifacts.
+- **Breaking:** renamed the plugin from `VisualExplainer` to `visual-explainer` (OMP requires lowercase catalog names) and corrected the documented OMP install commands (`omp plugin marketplace add`, lowercase `visual-explainer@visual-explainer-marketplace` refs, `omp install .` for local checkouts, `--scope project` for marketplace installs). Old `VisualExplainer@…` refs and `/VisualExplainer:…` command namespaces no longer resolve.
+
 ## [0.7.2] - 2026-06-11
 
 ### Bug Fixes
