@@ -34,17 +34,19 @@ Do not use `npm`, `npx`, `pnpm`, or `yarn` in this repo. Vite+ delegates to Bun 
 
 ## OMP plugin contract
 
-`plugins/VisualExplainer/` is also the OMP plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/VisualExplainer/.claude-plugin/plugin.json`, `plugins/VisualExplainer/skills/visual-explainer/SKILL.md`, and `.claude-plugin/marketplace.json`. The plugin `name` must stay lowercase `visual-explainer` (OMP silently drops catalog entries with uppercase names) in `plugins/VisualExplainer/plugin.json`, `plugins/VisualExplainer/.claude-plugin/plugin.json`, and the `plugins[0].name` in `.claude-plugin/marketplace.json`; the directory name `plugins/VisualExplainer` is a path, not the plugin name.
+`plugins/VisualExplainer/` is also the OMP plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/VisualExplainer/.claude-plugin/plugin.json`, `plugins/VisualExplainer/skills/visual-explainer/SKILL.md`, and `.claude-plugin/marketplace.json`. The plugin `name` must stay lowercase `visual-explainer` (OMP silently drops catalog entries with uppercase names) in `plugins/VisualExplainer/plugin.json`, `plugins/VisualExplainer/.claude-plugin/plugin.json`, and the `plugins[0].name` in `.claude-plugin/marketplace.json`; the directory name `plugins/VisualExplainer` is a path, not the plugin name. The name also appears in doc surfaces that must stay in sync: the README Claude Code command examples (`/visual-explainer:…`), the SKILL.md command namespaces, and the `commands/share-page.md` plugin cache path.
 
 Use OMP commands for OMP installs:
 
 ```bash
 omp install github:edheltzel/visual-explainer
-omp install -l github:edheltzel/visual-explainer
-omp plugin marketplace add github:edheltzel/visual-explainer
+omp plugin marketplace add edheltzel/visual-explainer
 omp install visual-explainer@visual-explainer-marketplace
-omp -p '/extensions'
+omp install --scope project visual-explainer@visual-explainer-marketplace
+omp plugin list
 ```
+
+Project scope (`--scope project`) works only for marketplace installs; it is warned-and-ignored for git sources, and `-l` is not a valid flag. `/extensions` is TUI-only — use `omp plugin list` for scripted verification.
 
 Local installs need the root `package.json` manifest: use `omp install .` from the repo root (`omp install ./plugins/VisualExplainer` fails). Local marketplace sources need a `./` prefix or an absolute path. Uninstalls must use the full ref: `omp plugin uninstall visual-explainer@visual-explainer-marketplace` (the bare name reports success without removing a marketplace-scoped install).
 

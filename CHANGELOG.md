@@ -11,6 +11,7 @@
 ### Changed
 - `/generate-visual-plan` now targets `.agents/visual-plans/<slug>/plan.mdx` plus a local review bridge instead of one-off static HTML.
 - README and skill docs now distinguish static diagrams from approval-aware interactive plan/recap artifacts.
+- **Breaking:** renamed the plugin from `VisualExplainer` to `visual-explainer` (OMP requires lowercase catalog names) and corrected the documented OMP install commands (`omp plugin marketplace add`, lowercase `visual-explainer@visual-explainer-marketplace` refs, `omp install .` for local checkouts, `--scope project` for marketplace installs). Old `VisualExplainer@…` refs and `/VisualExplainer:…` command namespaces no longer resolve.
 
 ## [0.7.2] - 2026-06-11
 

@@ -68,20 +68,20 @@ This section gives you one working path for each supported agent surface. After 
 Install from the Claude Code plugin marketplace:
 
 ```shell
-/plugin marketplace add edheltzel/VisualExplainer
+/plugin marketplace add edheltzel/visual-explainer
 /plugin install visual-explainer@visual-explainer-marketplace
 ```
 
-You should see Claude Code report that the `VisualExplainer` plugin installed successfully.
+You should see Claude Code report that the `visual-explainer` plugin installed successfully.
 
 Claude Code namespaces plugin commands. Use:
 
 ```text
-/VisualExplainer:generate-web-diagram
-/VisualExplainer:generate-visual-plan
-/VisualExplainer:visual-recap
-/VisualExplainer:diff-review
-/VisualExplainer:plan-review
+/visual-explainer:generate-web-diagram
+/visual-explainer:generate-visual-plan
+/visual-explainer:visual-recap
+/visual-explainer:diff-review
+/visual-explainer:plan-review
 ```
 
 You can also ask Claude Code to use the `VisualExplainer` skill directly when you want diagrams, visual plans, diff reviews, recaps, slide decks, or complex tables rendered as browser pages.
@@ -129,10 +129,10 @@ Install directly from GitHub with OMP:
 omp install github:edheltzel/visual-explainer
 ```
 
-For project-scoped installs, use OMP's project scope flag:
+For project-scoped installs, use `--scope project` with a marketplace install (git installs are always user-scoped):
 
 ```bash
-omp install -l github:edheltzel/visual-explainer
+omp install --scope project visual-explainer@visual-explainer-marketplace
 ```
 
 For local development, install from the repo root of a checkout (local installs need the root `package.json` manifest, so `omp install ./plugins/VisualExplainer` does not work):
@@ -146,14 +146,14 @@ omp install .
 You can also install through the bundled marketplace catalog (local marketplace sources need a `./` prefix or an absolute path):
 
 ```bash
-omp plugin marketplace add github:edheltzel/visual-explainer
+omp plugin marketplace add edheltzel/visual-explainer
 omp install visual-explainer@visual-explainer-marketplace
 ```
 
-Verify that OMP loaded the plugin surfaces:
+Verify that OMP loaded the plugin surfaces (inside the OMP TUI you can also run `/extensions`):
 
 ```bash
-omp -p '/extensions'
+omp plugin list
 ```
 
 Then start a fresh OMP session and use:
