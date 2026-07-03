@@ -32,6 +32,24 @@ vp install
 
 Do not use `npm`, `npx`, `pnpm`, or `yarn` in this repo. Vite+ delegates to Bun because the root `packageManager` field is pinned to Bun.
 
+## OMP plugin contract
+
+`plugins/VisualExplainer/` is also the OMP plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/VisualExplainer/.claude-plugin/plugin.json`, `plugins/VisualExplainer/skills/visual-explainer/SKILL.md`, and `.claude-plugin/marketplace.json`. The plugin `name` must stay lowercase `visual-explainer` (OMP silently drops catalog entries with uppercase names) in `plugins/VisualExplainer/plugin.json`, `plugins/VisualExplainer/.claude-plugin/plugin.json`, and the `plugins[0].name` in `.claude-plugin/marketplace.json`; the directory name `plugins/VisualExplainer` is a path, not the plugin name.
+
+Use OMP commands for OMP installs:
+
+```bash
+omp install github:edheltzel/visual-explainer
+omp install -l github:edheltzel/visual-explainer
+omp plugin marketplace add github:edheltzel/visual-explainer
+omp install visual-explainer@visual-explainer-marketplace
+omp -p '/extensions'
+```
+
+Local installs need the root `package.json` manifest: use `omp install .` from the repo root (`omp install ./plugins/VisualExplainer` fails). Local marketplace sources need a `./` prefix or an absolute path. Uninstalls must use the full ref: `omp plugin uninstall visual-explainer@visual-explainer-marketplace` (the bare name reports success without removing a marketplace-scoped install).
+
+Do not document OMP installs with `pi install`; Pi and OMP have separate package managers even though this repo supports both surfaces.
+
 ## Architecture map
 
 ```text

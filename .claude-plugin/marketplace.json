@@ -5,23 +5,24 @@
   },
   "metadata": {
     "description": "Plugin distribution for VisualExplainer",
-    "version": "0.7.2",
+    "version": "0.8.0",
     "pluginRoot": "./plugins"
   },
   "plugins": [
     {
-      "name": "VisualExplainer",
+      "name": "visual-explainer",
       "source": "./plugins/VisualExplainer",
       "description": "Generate beautiful HTML pages for diagrams, diff reviews, plan reviews, slides, and data tables",
-      "version": "0.7.2",
+      "version": "0.8.0",
       "author": {
         "name": "edheltzel"
       },
+      "homepage": "https://github.com/edheltzel/visual-explainer#readme",
       "repository": "https://github.com/edheltzel/visual-explainer",
       "license": "MIT",
-      "keywords": ["diagrams", "html", "visualization", "diff-review", "slides"],
+      "keywords": ["diagrams", "html", "visualization", "diff-review", "plans", "recaps", "slides"],
       "category": "visualization",
-      "tags": ["diagrams", "html-generation", "code-review", "slides", "mermaid"]
+      "tags": ["diagrams", "html-generation", "code-review", "plans", "recaps", "slides", "mermaid"]
     }
   ]
 }

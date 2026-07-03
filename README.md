@@ -61,22 +61,51 @@ VisualExplainer turns that same information into a web page:
 
 ## Install
 
-### Claude Code marketplace
+This section gives you one working path for each supported agent surface. After installing, start a fresh agent session so the new skill and command templates are loaded.
+
+### Claude Code
+
+Install from the Claude Code plugin marketplace:
 
 ```shell
 /plugin marketplace add edheltzel/VisualExplainer
-/plugin install VisualExplainer@VisualExplainer-marketplace
+/plugin install visual-explainer@visual-explainer-marketplace
 ```
 
-Claude Code namespaces commands as `/VisualExplainer:command-name`.
+You should see Claude Code report that the `VisualExplainer` plugin installed successfully.
+
+Claude Code namespaces plugin commands. Use:
+
+```text
+/VisualExplainer:generate-web-diagram
+/VisualExplainer:generate-visual-plan
+/VisualExplainer:visual-recap
+/VisualExplainer:diff-review
+/VisualExplainer:plan-review
+```
+
+You can also ask Claude Code to use the `VisualExplainer` skill directly when you want diagrams, visual plans, diff reviews, recaps, slide decks, or complex tables rendered as browser pages.
 
 ### Pi
+
+Install the package from GitHub:
 
 ```bash
 pi install git:github.com/edheltzel/VisualExplainer
 ```
 
-From a local checkout:
+You should see Pi install the package and register the skill plus command templates. Start a fresh Pi session, then invoke:
+
+```text
+$VisualExplainer
+/generate-web-diagram
+/generate-visual-plan
+/visual-recap
+/diff-review
+/plan-review
+```
+
+For local development, install from a checkout instead:
 
 ```bash
 git clone --depth 1 https://github.com/edheltzel/VisualExplainer.git
@@ -92,12 +121,53 @@ The package manifest advertises the canonical skill and command templates:
 }
 ```
 
-If you previously used the old curl/manual installer, remove those copied files before using `pi install`; otherwise Pi may report skill and prompt conflicts because user-level copies shadow package resources:
+### OMP
+
+Install directly from GitHub with OMP:
 
 ```bash
-rm -rf ~/.pi/agent/skills/VisualExplainer
-rm -f ~/.pi/agent/prompts/{diff-review,fact-check,generate-slides,generate-visual-plan,generate-web-diagram,plan-review,project-recap,share-page,visual-recap}.md
+omp install github:edheltzel/visual-explainer
 ```
+
+For project-scoped installs, use OMP's project scope flag:
+
+```bash
+omp install -l github:edheltzel/visual-explainer
+```
+
+For local development, install from the repo root of a checkout (local installs need the root `package.json` manifest, so `omp install ./plugins/VisualExplainer` does not work):
+
+```bash
+git clone --depth 1 https://github.com/edheltzel/visual-explainer.git
+cd visual-explainer
+omp install .
+```
+
+You can also install through the bundled marketplace catalog (local marketplace sources need a `./` prefix or an absolute path):
+
+```bash
+omp plugin marketplace add github:edheltzel/visual-explainer
+omp install visual-explainer@visual-explainer-marketplace
+```
+
+Verify that OMP loaded the plugin surfaces:
+
+```bash
+omp -p '/extensions'
+```
+
+Then start a fresh OMP session and use:
+
+```text
+$VisualExplainer
+/generate-web-diagram
+/generate-visual-plan
+/visual-recap
+```
+
+Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plans and recaps create local MDX review folders with state, comments, approval controls, and agent handoff files.
+
+`/share-page` requires an OMP-compatible `vercel-deploy` plugin or skill. Install publishing support separately when you need hosted pages.
 
 ### Codex CLI
 
