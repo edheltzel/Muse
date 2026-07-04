@@ -1,6 +1,6 @@
-# VisualExplainer Agent Guide
+# Muse Agent Guide
 
-This file is the repository-local reference for coding agents working on VisualExplainer.
+This file is the repository-local reference for coding agents working on Muse.
 
 ## Current stack
 
@@ -34,32 +34,32 @@ Do not use `npm`, `npx`, `pnpm`, or `yarn` in this repo. Vite+ delegates to Bun 
 
 ## OMP plugin contract
 
-`plugins/VisualExplainer/` is also the OMP plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/VisualExplainer/.claude-plugin/plugin.json`, `plugins/VisualExplainer/skills/visual-explainer/SKILL.md`, and `.claude-plugin/marketplace.json`. The plugin `name` must stay lowercase `visual-explainer` (OMP silently drops catalog entries with uppercase names) in `plugins/VisualExplainer/plugin.json`, `plugins/VisualExplainer/.claude-plugin/plugin.json`, and the `plugins[0].name` in `.claude-plugin/marketplace.json`; the directory name `plugins/VisualExplainer` is a path, not the plugin name. The name also appears in doc surfaces that must stay in sync: the README Claude Code command examples (`/visual-explainer:…`), the SKILL.md command namespaces, and the `commands/share-page.md` plugin cache path.
+`plugins/Muse/` is also the OMP plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/skills/muse/SKILL.md`, and `.claude-plugin/marketplace.json`. The plugin `name` must stay lowercase `muse` (OMP silently drops catalog entries with uppercase names) in `plugins/Muse/plugin.json`, `plugins/Muse/.claude-plugin/plugin.json`, and the `plugins[0].name` in `.claude-plugin/marketplace.json`; the directory name `plugins/Muse` is a path, not the plugin name. The name also appears in doc surfaces that must stay in sync: the README Claude Code command examples (`/muse:…`), the SKILL.md command namespaces, and the `commands/share-page.md` plugin cache path.
 
 Use OMP commands for OMP installs:
 
 ```bash
 omp install github:edheltzel/visual-explainer
 omp plugin marketplace add edheltzel/visual-explainer
-omp install visual-explainer@visual-explainer-marketplace
-omp install --scope project visual-explainer@visual-explainer-marketplace
+omp install muse@muse-marketplace
+omp install --scope project muse@muse-marketplace
 omp plugin list
 ```
 
 Project scope (`--scope project`) works only for marketplace installs; it is warned-and-ignored for git sources, and `-l` is not a valid flag. `/extensions` is TUI-only — use `omp plugin list` for scripted verification.
 
-Local installs need the root `package.json` manifest: use `omp install .` from the repo root (`omp install ./plugins/VisualExplainer` fails). Local marketplace sources need a `./` prefix or an absolute path. Uninstalls must use the full ref: `omp plugin uninstall visual-explainer@visual-explainer-marketplace` (the bare name reports success without removing a marketplace-scoped install).
+Local installs need the root `package.json` manifest: use `omp install .` from the repo root (`omp install ./plugins/Muse` fails). Local marketplace sources need a `./` prefix or an absolute path. Uninstalls must use the full ref: `omp plugin uninstall muse@muse-marketplace` (the bare name reports success without removing a marketplace-scoped install).
 
 Do not document OMP installs with `pi install`; Pi and OMP have separate package managers even though this repo supports both surfaces.
 
 ## Architecture map
 
 ```text
-plugins/VisualExplainer/commands/                         slash-command prompt templates
-plugins/VisualExplainer/skills/visual-explainer/SKILL.md  primary skill instructions
-plugins/VisualExplainer/skills/visual-explainer/references/ design and authoring references
-plugins/VisualExplainer/skills/visual-explainer/templates/  HTML templates
-plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/ renderer, server, state, handoff
+plugins/Muse/commands/                         slash-command prompt templates
+plugins/Muse/skills/muse/SKILL.md              primary skill instructions
+plugins/Muse/skills/muse/references/           design and authoring references
+plugins/Muse/skills/muse/templates/            HTML templates
+plugins/Muse/skills/muse/tools/interactive-plan/ renderer, server, state, handoff
 tests/fixtures/interactive-plans/                         reproducible MDX review fixtures
 ```
 
@@ -93,9 +93,9 @@ Core source files:
 
 When adding, removing, or materially changing an MDX component, update:
 
-- `plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/shared.ts`
-- `plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/components.ts`
-- `plugins/VisualExplainer/skills/visual-explainer/references/mdx-components.md`
+- `plugins/Muse/skills/muse/tools/interactive-plan/shared.ts`
+- `plugins/Muse/skills/muse/tools/interactive-plan/components.ts`
+- `plugins/Muse/skills/muse/references/mdx-components.md`
 - `tests/fixtures/interactive-plans/component-library-showcase/plan.mdx`
 - `tests/interactive-plan.test.ts`
 
@@ -103,7 +103,7 @@ The component-library fixture is the visual regression anchor. It should show ev
 
 ## Design rules
 
-VisualExplainer output should look deliberate, not generated from a default AI template.
+Muse output should look deliberate, not generated from a default AI template.
 
 Avoid:
 

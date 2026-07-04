@@ -1,12 +1,12 @@
-![VisualExplainer banner](banner.png)
+![Muse banner](banner.png)
 
-# VisualExplainer
+# Muse
 
 **Turn dense agent output into beautiful browser-native pages people can actually understand.**
 
-VisualExplainer is an agent skill for diagrams, visual plans, diff reviews, project recaps, slide decks, and approval-aware MDX review pages. It is built for humans first: open the page, scan the structure, interact with the review controls, and hand an agent the resulting machine-readable context when you approve.
+Muse is an agent skill for diagrams, visual plans, diff reviews, project recaps, slide decks, and approval-aware MDX review pages. It is built for humans first: open the page, scan the structure, interact with the review controls, and hand an agent the resulting machine-readable context when you approve.
 
-![VisualExplainer component library screenshot](docs/assets/component-library-showcase.png)
+![Muse component library screenshot](docs/assets/component-library-showcase.png)
 
 ## What it makes
 
@@ -51,7 +51,7 @@ Static diagram commands write portable HTML pages. Interactive plan and recap co
 
 Agents are good at structure but bad at presentation by default. Ask for a diagram and you usually get ASCII boxes. Ask for a comparison and you get a pipe table that wraps in the terminal. Ask for a plan and you get prose that nobody wants to review line by line.
 
-VisualExplainer turns that same information into a web page:
+Muse turns that same information into a web page:
 
 1. the agent gathers the facts,
 2. the skill picks the right visual treatment,
@@ -69,22 +69,22 @@ Install from the Claude Code plugin marketplace:
 
 ```shell
 /plugin marketplace add edheltzel/visual-explainer
-/plugin install visual-explainer@visual-explainer-marketplace
+/plugin install muse@muse-marketplace
 ```
 
-You should see Claude Code report that the `visual-explainer` plugin installed successfully.
+You should see Claude Code report that the `muse` plugin installed successfully.
 
 Claude Code namespaces plugin commands. Use:
 
 ```text
-/visual-explainer:generate-web-diagram
-/visual-explainer:generate-visual-plan
-/visual-explainer:visual-recap
-/visual-explainer:diff-review
-/visual-explainer:plan-review
+/muse:generate-web-diagram
+/muse:generate-visual-plan
+/muse:visual-recap
+/muse:diff-review
+/muse:plan-review
 ```
 
-You can also ask Claude Code to use the `VisualExplainer` skill directly when you want diagrams, visual plans, diff reviews, recaps, slide decks, or complex tables rendered as browser pages.
+You can also ask Claude Code to use the `Muse` skill directly when you want diagrams, visual plans, diff reviews, recaps, slide decks, or complex tables rendered as browser pages.
 
 ### Pi
 
@@ -97,7 +97,7 @@ pi install git:github.com/edheltzel/VisualExplainer
 You should see Pi install the package and register the skill plus command templates. Start a fresh Pi session, then invoke:
 
 ```text
-$VisualExplainer
+$Muse
 /generate-web-diagram
 /generate-visual-plan
 /visual-recap
@@ -116,8 +116,8 @@ The package manifest advertises the canonical skill and command templates:
 
 ```json
 "pi": {
-  "skills": ["./plugins/VisualExplainer"],
-  "prompts": ["./plugins/VisualExplainer/commands"]
+  "skills": ["./plugins/Muse"],
+  "prompts": ["./plugins/Muse/commands"]
 }
 ```
 
@@ -132,10 +132,10 @@ omp install github:edheltzel/visual-explainer
 For project-scoped installs, use `--scope project` with a marketplace install (git installs are always user-scoped):
 
 ```bash
-omp install --scope project visual-explainer@visual-explainer-marketplace
+omp install --scope project muse@muse-marketplace
 ```
 
-For local development, install from the repo root of a checkout (local installs need the root `package.json` manifest, so `omp install ./plugins/VisualExplainer` does not work):
+For local development, install from the repo root of a checkout (local installs need the root `package.json` manifest, so `omp install ./plugins/Muse` does not work):
 
 ```bash
 git clone --depth 1 https://github.com/edheltzel/visual-explainer.git
@@ -147,7 +147,7 @@ You can also install through the bundled marketplace catalog (local marketplace 
 
 ```bash
 omp plugin marketplace add edheltzel/visual-explainer
-omp install visual-explainer@visual-explainer-marketplace
+omp install muse@muse-marketplace
 ```
 
 Verify that OMP loaded the plugin surfaces (inside the OMP TUI you can also run `/extensions`):
@@ -159,7 +159,7 @@ omp plugin list
 Then start a fresh OMP session and use:
 
 ```text
-$VisualExplainer
+$Muse
 /generate-web-diagram
 /generate-visual-plan
 /visual-recap
@@ -174,26 +174,26 @@ Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plan
 ```bash
 git clone --depth 1 https://github.com/edheltzel/VisualExplainer.git /tmp/VisualExplainer
 mkdir -p ~/.codex/skills ~/.codex/prompts
-cp -R /tmp/VisualExplainer/plugins/VisualExplainer ~/.codex/skills/VisualExplainer
-cp /tmp/VisualExplainer/plugins/VisualExplainer/commands/*.md ~/.codex/prompts/
+cp -R /tmp/VisualExplainer/plugins/Muse ~/.codex/skills/Muse
+cp /tmp/VisualExplainer/plugins/Muse/commands/*.md ~/.codex/prompts/
 rm -rf /tmp/VisualExplainer
 ```
 
-Invoke with `$VisualExplainer` or, when prompt templates are installed and supported, `/prompts:diff-review`, `/prompts:plan-review`, etc.
+Invoke with `$Muse` or, when prompt templates are installed and supported, `/prompts:diff-review`, `/prompts:plan-review`, etc.
 
 ### OpenCode/opencode
 
 ```bash
 git clone --depth 1 https://github.com/edheltzel/VisualExplainer.git /tmp/VisualExplainer
 mkdir -p ~/.config/opencode/skill ~/.config/opencode/command
-cp -R /tmp/VisualExplainer/plugins/VisualExplainer ~/.config/opencode/skill/VisualExplainer
-cp /tmp/VisualExplainer/plugins/VisualExplainer/commands/*.md ~/.config/opencode/command/
+cp -R /tmp/VisualExplainer/plugins/Muse ~/.config/opencode/skill/Muse
+cp /tmp/VisualExplainer/plugins/Muse/commands/*.md ~/.config/opencode/command/
 rm -rf /tmp/VisualExplainer
 ```
 
 ### Cursor and OpenClaw
 
-- Cursor: use `configs/cursor/visual-explainer.mdc` as the project rule.
+- Cursor: use `configs/cursor/muse.mdc` as the project rule.
 - OpenClaw: use `configs/openclaw/AGENTS.md` as lightweight project guidance.
 
 ## Commands
@@ -259,7 +259,7 @@ It covers:
 
 ## Development stack
 
-VisualExplainer now uses **Vite+ as the project toolchain** with **Bun as the underlying package manager**.
+Muse now uses **Vite+ as the project toolchain** with **Bun as the underlying package manager**.
 
 - `vp install` installs dependencies through Bun because `packageManager` is pinned to `bun@1.3.14`.
 - `vp build` runs the Vite+ production build.
@@ -280,10 +280,10 @@ Use `vp add`, `vp remove`, and `vp install` for dependency management. Do not us
 
 ```text
 .claude-plugin/                         marketplace metadata
-plugins/VisualExplainer/
+plugins/Muse/
 ├── .claude-plugin/                     plugin manifest
 ├── commands/                           command prompts
-└── skills/visual-explainer/
+└── skills/muse/
     ├── SKILL.md                        skill instructions
     ├── references/                     design, Mermaid, MDX, state docs
     ├── templates/                      HTML templates

@@ -1,0 +1,13 @@
+{
+  "name": "muse",
+  "description": "Generate beautiful HTML pages and interactive MDX visual plans/recaps",
+  "version": "0.9.0",
+  "author": {
+    "name": "edheltzel"
+  },
+  "repository": "https://github.com/edheltzel/visual-explainer",
+  "homepage": "https://github.com/edheltzel/visual-explainer#readme",
+  "license": "MIT",
+  "category": "visualization",
+  "tags": ["diagrams", "html-generation", "code-review", "plans", "recaps", "mermaid"]
+}

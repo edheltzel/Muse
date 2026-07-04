@@ -1,11 +1,11 @@
 ---
-title: VisualExplainer Component Library
+title: Muse Component Library
 kind: styleguide
 slug: component-library-showcase
 ---
 
 <PlanSummary id="summary" status="Live style guide" title="Component library and real-world review surface">
-A polished component inventory for the VisualExplainer interactive plan system, shown through a realistic launch-readiness review for a local-first AI feature.
+A polished component inventory for the Muse interactive plan system, shown through a realistic launch-readiness review for a local-first AI feature.
 </PlanSummary>
 
 <StatusDashboard id="status" title="Launch readiness dashboard">
@@ -28,7 +28,7 @@ Keep style guide as fixture | Makes visual regressions reproducible in tests | a
 
 <ArchitectureDiagram id="flow" title="Live review flow">
 flowchart TD
-  A["Agent writes plan.mdx"] --> B["VisualExplainer renderer"]
+  A["Agent writes plan.mdx"] --> B["Muse renderer"]
   B --> C["Component library shell"]
   C --> D{"Reviewer decision"}
   D -->|"Approve"| E["agent-handoff.json"]
@@ -50,10 +50,10 @@ Plan overfits one workflow | Style guide covers every current MDX component | me
 </RiskRegister>
 
 <FileMap id="file-map" title="Touched files">
-plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/render.ts
-plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/client.ts
-plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/components.ts
-plugins/VisualExplainer/skills/visual-explainer/templates/interactive-plan-shell.html
+plugins/Muse/skills/muse/tools/interactive-plan/render.ts
+plugins/Muse/skills/muse/tools/interactive-plan/client.ts
+plugins/Muse/skills/muse/tools/interactive-plan/components.ts
+plugins/Muse/skills/muse/templates/interactive-plan-shell.html
 tests/fixtures/interactive-plans/component-library-showcase/plan.mdx
 </FileMap>
 
@@ -156,7 +156,7 @@ Callout / CommentAnchor | Review guidance | Principle and anchor targets
 <CommentAnchor id="component-anchor" />
 
 <QuestionForm id="questions" title="Reviewer questions">
-palette | Does the terracotta, sage, teal, and gold palette feel like the right VisualExplainer direction? | freeform
+palette | Does the terracotta, sage, teal, and gold palette feel like the right Muse direction? | freeform
 component-system | Should this remain vanilla, or is a larger component system warranted later? | freeform
 launch-risk | What would block this from being the default demo? | freeform
 </QuestionForm>

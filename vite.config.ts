@@ -12,7 +12,7 @@ export default defineConfig({
     emptyOutDir: false,
     rollupOptions: {
       input:
-        "plugins/VisualExplainer/skills/visual-explainer/templates/interactive-plan-shell.html",
+        "plugins/Muse/skills/muse/templates/interactive-plan-shell.html",
     },
   },
 });

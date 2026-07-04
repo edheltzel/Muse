@@ -1,18 +1,18 @@
 {
-  "name": "visual-explainer-marketplace",
+  "name": "muse-marketplace",
   "owner": {
     "name": "edheltzel"
   },
   "metadata": {
-    "description": "Plugin distribution for VisualExplainer",
-    "version": "0.8.0"
+    "description": "Plugin distribution for Muse",
+    "version": "0.9.0"
   },
   "plugins": [
     {
-      "name": "visual-explainer",
-      "source": "./plugins/VisualExplainer",
+      "name": "muse",
+      "source": "./plugins/Muse",
       "description": "Generate beautiful HTML pages for diagrams, diff reviews, plan reviews, slides, and data tables",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "author": {
         "name": "edheltzel"
       },

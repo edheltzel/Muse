@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "visual-explainer",
+      "name": "muse",
       "devDependencies": {
         "@types/bun": "^1.2.0",
         "vite-plus": "0.2.2",

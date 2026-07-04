@@ -3,8 +3,8 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadPlanFolder } from "../plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/mdx-loader.ts";
-import { renderPlanFolder } from "../plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/render.ts";
+import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
+import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 import {
   addComment,
   approvePlan,
@@ -12,7 +12,7 @@ import {
   readReviewState,
   resolveComment,
   updateReviewState,
-} from "../plugins/VisualExplainer/skills/visual-explainer/tools/interactive-plan/state-store.ts";
+} from "../plugins/Muse/skills/muse/tools/interactive-plan/state-store.ts";
 
 const repoRoot = join(import.meta.dir, "..");
 const fixturesRoot = join(repoRoot, "tests", "fixtures", "interactive-plans");
@@ -118,7 +118,7 @@ describe("interactive plan rendering", () => {
       expect(staticExportPath.endsWith(join("dist", "static-export.html"))).toBe(true);
 
       expect(indexHtml).toContain("Minimal Interactive Plan");
-      expect(indexHtml).toContain("VisualExplainer interactive plan");
+      expect(indexHtml).toContain("Muse interactive plan");
       expect(indexHtml).toContain("data-block-type=\"PlanSummary\"");
       expect(indexHtml).toContain("class=\"ve-ip-block ve-ip-hero\"");
       expect(indexHtml).toContain("data-theme-toggle");
@@ -206,7 +206,7 @@ describe("interactive plan review state and handoff", () => {
 
 describe("interactive command documentation contracts", () => {
   test("/generate-visual-plan documents MDX, local bridge review, and dependency boundaries", async () => {
-    const doc = await readFile(join(repoRoot, "plugins", "VisualExplainer", "commands", "generate-visual-plan.md"), "utf8");
+    const doc = await readFile(join(repoRoot, "plugins", "Muse", "commands", "generate-visual-plan.md"), "utf8");
 
     expect(doc).toMatch(/interactive MDX visual implementation plan/i);
     expect(doc).toMatch(/plan\.mdx/);
@@ -219,9 +219,9 @@ describe("interactive command documentation contracts", () => {
   });
 
   test("/visual-recap documents MDX recap artifacts, local rendering, and dependency boundaries", async () => {
-    const doc = await readFile(join(repoRoot, "plugins", "VisualExplainer", "commands", "visual-recap.md"), "utf8");
+    const doc = await readFile(join(repoRoot, "plugins", "Muse", "commands", "visual-recap.md"), "utf8");
 
-    expect(doc).toMatch(/interactive VisualExplainer recap/i);
+    expect(doc).toMatch(/interactive Muse recap/i);
     expect(doc).toMatch(/plan\.mdx/);
     expect(doc).toMatch(/visual-explainer\.json/);
     expect(doc).toMatch(/Render and serve locally|interactive-plan tools|local/i);

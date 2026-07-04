@@ -11,7 +11,7 @@
     "allowImportingTsExtensions": true
   },
   "include": [
-    "plugins/VisualExplainer/**/*.ts",
+    "plugins/Muse/**/*.ts",
     "tests/**/*.ts",
     "vite.config.ts"
   ]

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.0] - 2026-07-04
+
+### Changed
+- **Breaking:** renamed the plugin identity from `visual-explainer` to `muse` — plugin name, skill name (`Muse`), marketplace (`muse-marketplace`), package name, plugin directories (`plugins/Muse/`, `skills/muse/`), Claude Code command namespace (`/muse:…`), and Pi activation (`$Muse`). Old `visual-explainer@…` install refs and `/visual-explainer:…` command namespaces no longer resolve; reinstall with `muse@muse-marketplace`.
+- The GitHub repository slug is unchanged: `edheltzel/visual-explainer`. All repo URLs, clone URLs, `omp install github:edheltzel/visual-explainer`, and `/plugin marketplace add edheltzel/visual-explainer` keep working.
+- Renamed `configs/cursor/visual-explainer.mdc` to `configs/cursor/muse.mdc` and pointed the cursor/openclaw guidance at the real `plugins/Muse/skills/muse/SKILL.md` path (fixes pre-existing path drift).
+- `install-pi.sh` now installs to `~/.pi/agent/skills/Muse`; `share.sh` deploy directories (and the resulting Vercel project names) are now prefixed `muse-` instead of `visual-explainer-`.
+- The interactive plan/recap manifest filename remains `visual-explainer.json`; existing artifacts keep loading.
+
 ## [0.8.0] - 2026-07-01
 
 ### Added
