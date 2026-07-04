@@ -2,7 +2,7 @@
 description: Deploy a generated Muse HTML page and return a live Vercel URL
 ---
 
-# Share Visual Explainer Page
+# Share Muse Page
 
 Share a visual explainer HTML file via Vercel. Returns a live URL deployed under your Vercel account using the Vercel CLI.
 
@@ -44,7 +44,7 @@ Resolve the script from the installed skill directory, then run it with the HTML
 bash ~/.claude/plugins/cache/muse-marketplace/muse/<version>/skills/muse/scripts/share.sh <file>
 ```
 
-Common alternatives include `~/.codex/skills/Muse/scripts/share.sh`, `~/.config/opencode/skill/Muse/scripts/share.sh`, or `./plugins/Muse/skills/muse/scripts/share.sh` from a repository checkout.
+Common alternatives include `~/.codex/skills/Muse/skills/muse/scripts/share.sh`, `~/.config/opencode/skill/Muse/skills/muse/scripts/share.sh`, or `./plugins/Muse/skills/muse/scripts/share.sh` from a repository checkout.
 
 ## Output
 
@@ -53,7 +53,7 @@ Sharing my-diagram.html via Vercel...
 
 ✓ Shared successfully!
 
-Live URL:  https://visualexplainer-abc123.vercel.app
+Live URL:  https://muse-abc123.vercel.app
 ```
 
 The script also outputs JSON for programmatic use:

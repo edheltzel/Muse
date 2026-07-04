@@ -1,6 +1,6 @@
 Use the canonical `Muse` skill from `plugins/Muse/`.
 
-For Pi, prefer `pi install git:github.com/edheltzel/VisualExplainer` or install a local checkout with `pi install ./VisualExplainer`. The package metadata points to `./plugins/Muse` for the skill and `./plugins/Muse/commands` for prompts.
+For Pi, prefer `pi install git:github.com/edheltzel/visual-explainer` or install a local checkout with `pi install ./visual-explainer`. The package metadata points to `./plugins/Muse` for the skill and `./plugins/Muse/commands` for prompts.
 
 Do not keep the old manual installer copies alongside a package install. If you previously used `install-pi.sh`, remove `~/.pi/agent/skills/VisualExplainer` and the copied `~/.pi/agent/prompts/{diff-review,fact-check,generate-slides,generate-visual-plan,generate-web-diagram,plan-review,project-recap,share-page}.md` files before relying on the package.
 

@@ -91,7 +91,7 @@ You can also ask Claude Code to use the `Muse` skill directly when you want diag
 Install the package from GitHub:
 
 ```bash
-pi install git:github.com/edheltzel/VisualExplainer
+pi install git:github.com/edheltzel/visual-explainer
 ```
 
 You should see Pi install the package and register the skill plus command templates. Start a fresh Pi session, then invoke:
@@ -108,8 +108,8 @@ $Muse
 For local development, install from a checkout instead:
 
 ```bash
-git clone --depth 1 https://github.com/edheltzel/VisualExplainer.git
-pi install ./VisualExplainer
+git clone --depth 1 https://github.com/edheltzel/visual-explainer.git
+pi install ./visual-explainer
 ```
 
 The package manifest advertises the canonical skill and command templates:
@@ -172,11 +172,11 @@ Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plan
 ### Codex CLI
 
 ```bash
-git clone --depth 1 https://github.com/edheltzel/VisualExplainer.git /tmp/VisualExplainer
+git clone --depth 1 https://github.com/edheltzel/visual-explainer.git /tmp/visual-explainer
 mkdir -p ~/.codex/skills ~/.codex/prompts
-cp -R /tmp/VisualExplainer/plugins/Muse ~/.codex/skills/Muse
-cp /tmp/VisualExplainer/plugins/Muse/commands/*.md ~/.codex/prompts/
-rm -rf /tmp/VisualExplainer
+cp -R /tmp/visual-explainer/plugins/Muse ~/.codex/skills/Muse
+cp /tmp/visual-explainer/plugins/Muse/commands/*.md ~/.codex/prompts/
+rm -rf /tmp/visual-explainer
 ```
 
 Invoke with `$Muse` or, when prompt templates are installed and supported, `/prompts:diff-review`, `/prompts:plan-review`, etc.
@@ -184,11 +184,11 @@ Invoke with `$Muse` or, when prompt templates are installed and supported, `/pro
 ### OpenCode/opencode
 
 ```bash
-git clone --depth 1 https://github.com/edheltzel/VisualExplainer.git /tmp/VisualExplainer
+git clone --depth 1 https://github.com/edheltzel/visual-explainer.git /tmp/visual-explainer
 mkdir -p ~/.config/opencode/skill ~/.config/opencode/command
-cp -R /tmp/VisualExplainer/plugins/Muse ~/.config/opencode/skill/Muse
-cp /tmp/VisualExplainer/plugins/Muse/commands/*.md ~/.config/opencode/command/
-rm -rf /tmp/VisualExplainer
+cp -R /tmp/visual-explainer/plugins/Muse ~/.config/opencode/skill/Muse
+cp /tmp/visual-explainer/plugins/Muse/commands/*.md ~/.config/opencode/command/
+rm -rf /tmp/visual-explainer
 ```
 
 ### Cursor and OpenClaw
