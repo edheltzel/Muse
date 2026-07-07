@@ -1,6 +1,6 @@
 {
   "name": "muse",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Agent skill that generates beautiful HTML pages for diagrams, diff reviews, plan reviews, slide decks, and data tables",
   "license": "MIT",
   "homepage": "https://github.com/edheltzel/Muse#readme",
@@ -17,7 +17,6 @@
     "claude-code-plugin",
     "claude-marketplace",
     "codex",
-    "opencode",
     "openclaw",
     "cursor",
     "diagrams",

@@ -181,16 +181,6 @@ rm -rf /tmp/Muse
 
 Invoke with `$Muse` or, when prompt templates are installed and supported, `/prompts:diff-review`, `/prompts:plan-review`, etc.
 
-### OpenCode/opencode
-
-```bash
-git clone --depth 1 https://github.com/edheltzel/Muse.git /tmp/Muse
-mkdir -p ~/.config/opencode/skill ~/.config/opencode/command
-cp -R /tmp/Muse/plugins/Muse ~/.config/opencode/skill/Muse
-cp /tmp/Muse/plugins/Muse/commands/*.md ~/.config/opencode/command/
-rm -rf /tmp/Muse
-```
-
 ### Cursor and OpenClaw
 
 - Cursor: use `configs/cursor/muse.mdc` as the project rule.

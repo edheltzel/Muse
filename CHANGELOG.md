@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.2] - 2026-07-07
+
+### Removed
+- **Dropped OpenCode/opencode support.** Removed `configs/opencode/AGENTS.md`, the OpenCode install section from `README.md`, the `opencode` `package.json` keyword, and OpenCode path mentions in `SKILL.md` and `commands/share-page.md`. Existing OpenCode installs are unaffected but no longer documented or supported going forward.
+
 ## [0.9.1] - 2026-07-07
 
 ### Changed

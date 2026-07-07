@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires a browser to view generated HTML files. Optional surf-cli for AI image generation.
 metadata:
   author: edheltzel
-  version: "0.9.1"
+  version: "0.9.2"
 ---
 
 # Muse
@@ -409,7 +409,7 @@ Share visual explainer pages instantly via the Vercel CLI. Each share creates it
 bash ~/.pi/agent/skills/Muse/scripts/share.sh <html-file>
 ```
 
-If the skill lives somewhere else, use that install path instead, such as `~/.codex/skills/Muse/skills/muse/scripts/share.sh`, `~/.config/opencode/skill/Muse/skills/muse/scripts/share.sh`, or `./plugins/Muse/skills/muse/scripts/share.sh` from a repository checkout.
+If the skill lives somewhere else, use that install path instead, such as `~/.codex/skills/Muse/skills/muse/scripts/share.sh`, or `./plugins/Muse/skills/muse/scripts/share.sh` from a repository checkout.
 
 **Example:**
 

@@ -44,7 +44,7 @@ Resolve the script from the installed skill directory, then run it with the HTML
 bash ~/.claude/plugins/cache/muse-marketplace/muse/<version>/skills/muse/scripts/share.sh <file>
 ```
 
-Common alternatives include `~/.codex/skills/Muse/skills/muse/scripts/share.sh`, `~/.config/opencode/skill/Muse/skills/muse/scripts/share.sh`, or `./plugins/Muse/skills/muse/scripts/share.sh` from a repository checkout.
+Common alternatives include `~/.codex/skills/Muse/skills/muse/scripts/share.sh`, or `./plugins/Muse/skills/muse/scripts/share.sh` from a repository checkout.
 
 ## Output
 
