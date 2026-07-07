@@ -39,8 +39,8 @@ Do not use `npm`, `npx`, `pnpm`, or `yarn` in this repo. Vite+ delegates to Bun 
 Use OMP commands for OMP installs:
 
 ```bash
-omp install github:edheltzel/visual-explainer
-omp plugin marketplace add edheltzel/visual-explainer
+omp install github:edheltzel/Muse
+omp plugin marketplace add edheltzel/Muse
 omp install muse@muse-marketplace
 omp install --scope project muse@muse-marketplace
 omp plugin list

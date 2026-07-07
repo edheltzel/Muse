@@ -5,19 +5,19 @@
   },
   "metadata": {
     "description": "Plugin distribution for Muse",
-    "version": "0.9.0"
+    "version": "0.9.1"
   },
   "plugins": [
     {
       "name": "muse",
       "source": "./plugins/Muse",
       "description": "Generate beautiful HTML pages for diagrams, diff reviews, plan reviews, slides, and data tables",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "author": {
         "name": "edheltzel"
       },
-      "homepage": "https://github.com/edheltzel/visual-explainer#readme",
-      "repository": "https://github.com/edheltzel/visual-explainer",
+      "homepage": "https://github.com/edheltzel/Muse#readme",
+      "repository": "https://github.com/edheltzel/Muse",
       "license": "MIT",
       "keywords": ["diagrams", "html", "visualization", "diff-review", "plans", "recaps", "slides"],
       "category": "visualization",

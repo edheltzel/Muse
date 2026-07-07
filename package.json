@@ -1,15 +1,15 @@
 {
   "name": "muse",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Agent skill that generates beautiful HTML pages for diagrams, diff reviews, plan reviews, slide decks, and data tables",
   "license": "MIT",
-  "homepage": "https://github.com/edheltzel/visual-explainer#readme",
+  "homepage": "https://github.com/edheltzel/Muse#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/edheltzel/visual-explainer.git"
+    "url": "git+https://github.com/edheltzel/Muse.git"
   },
   "bugs": {
-    "url": "https://github.com/edheltzel/visual-explainer/issues"
+    "url": "https://github.com/edheltzel/Muse/issues"
   },
   "keywords": [
     "agent-skill",

@@ -9,7 +9,7 @@ PROMPTS_DIR="$HOME/.pi/agent/prompts"
 if [ ! -f "plugins/Muse/skills/muse/SKILL.md" ]; then
   echo "Cloning Muse..."
   TEMP_DIR=$(mktemp -d)
-  git clone --depth 1 https://github.com/edheltzel/visual-explainer.git "$TEMP_DIR"
+  git clone --depth 1 https://github.com/edheltzel/Muse.git "$TEMP_DIR"
   cd "$TEMP_DIR"
   CLEANUP=true
 else

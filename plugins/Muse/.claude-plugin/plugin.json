@@ -1,10 +1,10 @@
 {
   "name": "muse",
   "description": "Generate beautiful HTML pages and interactive MDX visual plans/recaps",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "author": {
     "name": "edheltzel"
   },
-  "repository": "https://github.com/edheltzel/visual-explainer",
+  "repository": "https://github.com/edheltzel/Muse",
   "license": "MIT"
 }

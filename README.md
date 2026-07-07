@@ -68,7 +68,7 @@ This section gives you one working path for each supported agent surface. After 
 Install from the Claude Code plugin marketplace:
 
 ```shell
-/plugin marketplace add edheltzel/visual-explainer
+/plugin marketplace add edheltzel/Muse
 /plugin install muse@muse-marketplace
 ```
 
@@ -91,7 +91,7 @@ You can also ask Claude Code to use the `Muse` skill directly when you want diag
 Install the package from GitHub:
 
 ```bash
-pi install git:github.com/edheltzel/visual-explainer
+pi install git:github.com/edheltzel/Muse
 ```
 
 You should see Pi install the package and register the skill plus command templates. Start a fresh Pi session, then invoke:
@@ -108,8 +108,8 @@ $Muse
 For local development, install from a checkout instead:
 
 ```bash
-git clone --depth 1 https://github.com/edheltzel/visual-explainer.git
-pi install ./visual-explainer
+git clone --depth 1 https://github.com/edheltzel/Muse.git
+pi install ./Muse
 ```
 
 The package manifest advertises the canonical skill and command templates:
@@ -126,7 +126,7 @@ The package manifest advertises the canonical skill and command templates:
 Install directly from GitHub with OMP:
 
 ```bash
-omp install github:edheltzel/visual-explainer
+omp install github:edheltzel/Muse
 ```
 
 For project-scoped installs, use `--scope project` with a marketplace install (git installs are always user-scoped):
@@ -138,15 +138,15 @@ omp install --scope project muse@muse-marketplace
 For local development, install from the repo root of a checkout (local installs need the root `package.json` manifest, so `omp install ./plugins/Muse` does not work):
 
 ```bash
-git clone --depth 1 https://github.com/edheltzel/visual-explainer.git
-cd visual-explainer
+git clone --depth 1 https://github.com/edheltzel/Muse.git
+cd Muse
 omp install .
 ```
 
 You can also install through the bundled marketplace catalog (local marketplace sources need a `./` prefix or an absolute path):
 
 ```bash
-omp plugin marketplace add edheltzel/visual-explainer
+omp plugin marketplace add edheltzel/Muse
 omp install muse@muse-marketplace
 ```
 
@@ -172,11 +172,11 @@ Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plan
 ### Codex CLI
 
 ```bash
-git clone --depth 1 https://github.com/edheltzel/visual-explainer.git /tmp/visual-explainer
+git clone --depth 1 https://github.com/edheltzel/Muse.git /tmp/Muse
 mkdir -p ~/.codex/skills ~/.codex/prompts
-cp -R /tmp/visual-explainer/plugins/Muse ~/.codex/skills/Muse
-cp /tmp/visual-explainer/plugins/Muse/commands/*.md ~/.codex/prompts/
-rm -rf /tmp/visual-explainer
+cp -R /tmp/Muse/plugins/Muse ~/.codex/skills/Muse
+cp /tmp/Muse/plugins/Muse/commands/*.md ~/.codex/prompts/
+rm -rf /tmp/Muse
 ```
 
 Invoke with `$Muse` or, when prompt templates are installed and supported, `/prompts:diff-review`, `/prompts:plan-review`, etc.
@@ -184,11 +184,11 @@ Invoke with `$Muse` or, when prompt templates are installed and supported, `/pro
 ### OpenCode/opencode
 
 ```bash
-git clone --depth 1 https://github.com/edheltzel/visual-explainer.git /tmp/visual-explainer
+git clone --depth 1 https://github.com/edheltzel/Muse.git /tmp/Muse
 mkdir -p ~/.config/opencode/skill ~/.config/opencode/command
-cp -R /tmp/visual-explainer/plugins/Muse ~/.config/opencode/skill/Muse
-cp /tmp/visual-explainer/plugins/Muse/commands/*.md ~/.config/opencode/command/
-rm -rf /tmp/visual-explainer
+cp -R /tmp/Muse/plugins/Muse ~/.config/opencode/skill/Muse
+cp /tmp/Muse/plugins/Muse/commands/*.md ~/.config/opencode/command/
+rm -rf /tmp/Muse
 ```
 
 ### Cursor and OpenClaw

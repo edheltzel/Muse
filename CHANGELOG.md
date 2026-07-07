@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.1] - 2026-07-07
+
+### Changed
+- The GitHub repository was renamed from `edheltzel/visual-explainer` to `edheltzel/Muse`. Updated every repo URL, clone URL, `omp install`/`omp plugin marketplace add`, `pi install`, and `/plugin marketplace add` reference across `README.md`, `AGENTS.md`, `install-pi.sh`, `configs/pi/AGENTS.md`, and the package/plugin/marketplace manifests. The 0.9.0 entry below is left as written for historical accuracy — the slug was unchanged at that time.
+
 ## [0.9.0] - 2026-07-04
 
 ### Changed
