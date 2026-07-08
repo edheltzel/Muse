@@ -2,6 +2,9 @@
 
 # Muse
 
+> [! INFO]
+> Big thanks to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) for the original idea and work but [Muse](https://github.com/edheltzel/Muse) been **heavily modified** to fit my personal needs and will continue to change with more features.
+
 **Turn dense agent output into beautiful browser-native pages people can actually understand.**
 
 Muse is an agent skill for diagrams, visual plans, diff reviews, project recaps, slide decks, and approval-aware MDX review pages. It is built for humans first: open the page, scan the structure, interact with the review controls, and hand an agent the resulting machine-readable context when you approve.
@@ -188,17 +191,17 @@ Invoke with `$Muse` or, when prompt templates are installed and supported, `/pro
 
 ## Commands
 
-| Command | Human result |
-|---|---|
-| `/generate-web-diagram` | A styled HTML diagram for any topic |
+| Command                 | Human result                                                               |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `/generate-web-diagram` | A styled HTML diagram for any topic                                        |
 | `/generate-visual-plan` | An interactive MDX implementation plan with review state and handoff files |
-| `/visual-recap` | A visual recap for a branch, commit, PR, or diff |
-| `/generate-slides` | A magazine-quality slide deck |
-| `/diff-review` | A visual code-review page with architecture context |
-| `/plan-review` | A plan-vs-codebase review with risks and gaps |
-| `/project-recap` | A visual mental-model snapshot for returning to a project |
-| `/fact-check` | A code-grounded accuracy review for a document |
-| `/share-page` | A Vercel production URL for an HTML explainer page |
+| `/visual-recap`         | A visual recap for a branch, commit, PR, or diff                           |
+| `/generate-slides`      | A magazine-quality slide deck                                              |
+| `/diff-review`          | A visual code-review page with architecture context                        |
+| `/plan-review`          | A plan-vs-codebase review with risks and gaps                              |
+| `/project-recap`        | A visual mental-model snapshot for returning to a project                  |
+| `/fact-check`           | A code-grounded accuracy review for a document                             |
+| `/share-page`           | A Vercel production URL for an HTML explainer page                         |
 
 The skill also activates proactively when an agent is about to dump a complex table in the terminal: 4+ rows or 3+ columns should become a browser page.
 
