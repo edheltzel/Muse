@@ -203,6 +203,8 @@ Invoke with `$Muse` or, when prompt templates are installed and supported, `/pro
 | `/fact-check`           | A code-grounded accuracy review for a document                             |
 | `/share-page`           | A Vercel production URL for an HTML explainer page                         |
 
+You rarely need the slash commands. On native-skill surfaces (Claude Code, Oh-My-Pi) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and Muse picks the right treatment on its own. The slash commands are just explicit shortcuts to a specific template.
+
 The skill also activates proactively when an agent is about to dump a complex table in the terminal: 4+ rows or 3+ columns should become a browser page.
 
 ## Interactive plans
