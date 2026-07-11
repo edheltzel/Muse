@@ -1,6 +1,6 @@
 Use the canonical `Muse` skill from `plugins/Muse/`.
 
-OpenClaw support is lightweight rules guidance, not a native plugin adapter. Point the agent at `plugins/Muse/skills/muse/SKILL.md` and ask it to follow that workflow when producing diagrams, visual reviews, slide decks, or complex tables.
+OpenClaw support is lightweight rules guidance, not a native plugin adapter. Point the agent at `plugins/Muse/skills/muse/SKILL.md` and ask it to follow that workflow when producing diagrams, visual explainers, visual reviews, slide decks, or complex tables — including when the user says "visualize this", "visualize a plan", "make it visual", "show me this visually", or "explain this visually".
 
 Generated pages should be written to `.agents/diagrams/` and opened in a browser when the environment allows it. If OpenClaw does not support command templates, read the matching file under `plugins/Muse/commands/` and execute its instructions manually.
 

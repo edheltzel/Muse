@@ -1,12 +1,12 @@
 ---
-description: Use muse to generate browser-ready technical diagrams and review pages
+description: Use muse to generate browser-ready technical diagrams, visual explainers, and review pages. Trigger on "diagram", "visual explainer", "visualize this", "visualize a plan", "make it visual", "explain this visually", diff review, plan review, project recap, slide deck, or complex comparison table.
 globs: **/*
 alwaysApply: false
 ---
 
 Use the canonical `muse` skill from `plugins/Muse/`. Cursor support is rules-based guidance, not native Agent Skills support.
 
-When the user asks for a diagram, architecture overview, diff review, plan review, project recap, slide deck, or complex comparison table, read `plugins/Muse/skills/muse/SKILL.md` and follow its workflow. Use the command markdown in `plugins/Muse/commands/` as templates when helpful.
+When the user asks for a diagram, architecture overview, diff review, plan review, project recap, slide deck, complex comparison table, or a "visual explainer" — or uses phrasings like "visualize this", "visualize a plan", "make it visual", "show me this visually", or "explain this visually" — read `plugins/Muse/skills/muse/SKILL.md` and follow its workflow. Use the command markdown in `plugins/Muse/commands/` as templates when helpful.
 
 Write generated HTML to `.agents/diagrams/` unless the user asks for another path, then open it in a browser if Cursor permits shell/browser access. If browser access is blocked, report the file path.
 
