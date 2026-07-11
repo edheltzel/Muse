@@ -172,17 +172,28 @@ Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plan
 
 `/share-page` requires an OMP-compatible `vercel-deploy` plugin or skill. Install publishing support separately when you need hosted pages.
 
-### Codex CLI
+### Codex and ChatGPT
+
+Muse ships a native Codex plugin manifest. Add the bundled marketplace from Codex CLI:
+
+```bash
+codex plugin marketplace add edheltzel/Muse
+codex plugin add muse@muse-marketplace
+codex plugin marketplace list
+```
+
+Codex installs the plugin into its local cache; the same marketplace is also available in the ChatGPT desktop app's plugin directory. Start a new Codex task, then invoke `$Muse` or describe the visual you need. Codex can also activate Muse implicitly from the skill description.
+
+For a direct Codex CLI user-skill install without the plugin marketplace:
 
 ```bash
 git clone --depth 1 https://github.com/edheltzel/Muse.git /tmp/Muse
-mkdir -p ~/.codex/skills ~/.codex/prompts
-cp -R /tmp/Muse/plugins/Muse ~/.codex/skills/Muse
-cp /tmp/Muse/plugins/Muse/commands/*.md ~/.codex/prompts/
+mkdir -p ~/.agents/skills
+cp -R /tmp/Muse/plugins/Muse/skills/muse ~/.agents/skills/muse
 rm -rf /tmp/Muse
 ```
 
-Invoke with `$Muse` or, when prompt templates are installed and supported, `/prompts:diff-review`, `/prompts:plan-review`, etc.
+Codex scans `~/.agents/skills` for user skills and supports `$Muse` or `/skills` for explicit invocation. The older `~/.codex/skills` and `~/.codex/prompts` copy paths are not used.
 
 ### Cursor and OpenClaw
 
@@ -203,7 +214,7 @@ Invoke with `$Muse` or, when prompt templates are installed and supported, `/pro
 | `/fact-check`           | A code-grounded accuracy review for a document                             |
 | `/share-page`           | A Vercel production URL for an HTML explainer page                         |
 
-You rarely need the slash commands. On native-skill surfaces (Claude Code, Oh-My-Pi) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and Muse picks the right treatment on its own. The slash commands are just explicit shortcuts to a specific template.
+You rarely need the slash commands. On native-skill surfaces (Claude Code, Pi, OMP, and Codex) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and Muse picks the right treatment on its own. The slash commands are just explicit shortcuts on harnesses that support command templates.
 
 The skill also activates proactively when an agent is about to dump a complex table in the terminal: 4+ rows or 3+ columns should become a browser page.
 

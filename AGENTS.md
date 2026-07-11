@@ -34,7 +34,7 @@ Do not use `npm`, `npx`, `pnpm`, or `yarn` in this repo. Vite+ delegates to Bun 
 
 ## OMP plugin contract
 
-`plugins/Muse/` is also the OMP plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/skills/muse/SKILL.md`, and `.claude-plugin/marketplace.json`. The plugin `name` must stay lowercase `muse` (OMP silently drops catalog entries with uppercase names) in `plugins/Muse/plugin.json`, `plugins/Muse/.claude-plugin/plugin.json`, and the `plugins[0].name` in `.claude-plugin/marketplace.json`; the directory name `plugins/Muse` is a path, not the plugin name. The name also appears in doc surfaces that must stay in sync: the README Claude Code command examples (`/muse:…`), the SKILL.md command namespaces, and the `commands/share-page.md` plugin cache path.
+`plugins/Muse/` is also the OMP, Claude Code, and Codex plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/.codex-plugin/plugin.json`, `plugins/Muse/skills/muse/SKILL.md`, and `.claude-plugin/marketplace.json`. The plugin `name` must stay lowercase `muse` (OMP silently drops catalog entries with uppercase names) in `plugins/Muse/plugin.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and the `plugins[0].name` in `.claude-plugin/marketplace.json`; the directory name `plugins/Muse` is a path, not the plugin name. The name also appears in doc surfaces that must stay in sync: the README Claude Code command examples (`/muse:…`), the SKILL.md command namespaces, and the `commands/share-page.md` plugin cache path.
 
 Use OMP commands for OMP installs:
 
@@ -50,7 +50,7 @@ Project scope (`--scope project`) works only for marketplace installs; it is war
 
 Local installs need the root `package.json` manifest: use `omp install .` from the repo root (`omp install ./plugins/Muse` fails). Local marketplace sources need a `./` prefix or an absolute path. Uninstalls must use the full ref: `omp plugin uninstall muse@muse-marketplace` (the bare name reports success without removing a marketplace-scoped install).
 
-Do not document OMP installs with `pi install`; Pi and OMP have separate package managers even though this repo supports both surfaces.
+Do not document OMP installs with `pi install`; Pi and OMP have separate package managers even though this repo supports both surfaces. Codex user skills belong under `~/.agents/skills`, not the legacy `~/.codex/skills` path; Codex plugins use `.codex-plugin/plugin.json`.
 
 ## Architecture map
 

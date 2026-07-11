@@ -1,0 +1,20 @@
+{
+  "name": "muse-marketplace",
+  "interface": {
+    "displayName": "Muse"
+  },
+  "plugins": [
+    {
+      "name": "muse",
+      "source": {
+        "source": "local",
+        "path": "./plugins/Muse"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

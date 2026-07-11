@@ -1,0 +1,28 @@
+{
+  "name": "muse",
+  "version": "0.9.3",
+  "description": "Generate beautiful HTML pages and interactive MDX visual plans and recaps",
+  "author": {
+    "name": "edheltzel",
+    "url": "https://github.com/edheltzel"
+  },
+  "homepage": "https://github.com/edheltzel/Muse#readme",
+  "repository": "https://github.com/edheltzel/Muse",
+  "license": "MIT",
+  "keywords": ["diagrams", "html", "visualization", "code-review", "plans", "recaps", "slides"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Muse",
+    "shortDescription": "Visual explainers for technical work",
+    "longDescription": "Turn systems, code changes, plans, reviews, recaps, slides, and structured data into polished browser-based visual explainers.",
+    "developerName": "edheltzel",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/edheltzel/Muse",
+    "defaultPrompt": [
+      "Use Muse to visualize this technical system.",
+      "Use Muse to create a visual review of these changes."
+    ],
+    "brandColor": "#B85C3C"
+  }
+}

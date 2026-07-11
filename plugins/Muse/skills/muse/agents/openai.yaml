@@ -1,0 +1,5 @@
+interface:
+  display_name: "Muse"
+  short_description: "Turn technical work into visual HTML explainers"
+  brand_color: "#B85C3C"
+  default_prompt: "Use $Muse to turn this technical material into a polished visual explainer."

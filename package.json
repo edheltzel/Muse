@@ -16,6 +16,8 @@
     "pi-package",
     "claude-code-plugin",
     "claude-marketplace",
+    "omp",
+    "oh-my-pi",
     "codex",
     "openclaw",
     "cursor",
@@ -32,6 +34,7 @@
   "files": [
     "plugins/Muse",
     ".claude-plugin",
+    ".agents/plugins/marketplace.json",
     "configs",
     "install-pi.sh",
     "README.md",

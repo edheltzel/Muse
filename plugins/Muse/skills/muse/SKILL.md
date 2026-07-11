@@ -16,7 +16,7 @@ Generate self-contained HTML files for technical diagrams, visualizations, and d
 
 ## Available Commands
 
-Detailed prompt templates in `./commands/`. In Pi, these are slash commands (`/diff-review`). In Claude Code, namespaced (`/muse:diff-review`). In Codex, use `/prompts:diff-review` (if installed to `~/.codex/prompts/`) or invoke `$Muse` and describe the workflow.
+Detailed prompt templates live in `./commands/`. In Pi and OMP, these are slash commands (`/diff-review`). In Claude Code, they are namespaced (`/muse:diff-review`). In Codex, invoke `$Muse` and name the workflow you want; the command files remain reference material rather than separately installed prompts.
 
 | Command                | What it does                                                            |
 | ---------------------- | ----------------------------------------------------------------------- |
