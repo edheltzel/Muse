@@ -1,7 +1,7 @@
 {
   "name": "muse",
   "description": "Generate beautiful HTML pages and interactive MDX visual plans/recaps",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "author": {
     "name": "edheltzel"
   },

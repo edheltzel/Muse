@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires a browser to view generated HTML files. Optional surf-cli for AI image generation.
 metadata:
   author: edheltzel
-  version: "0.9.2"
+  version: "0.9.3"
 ---
 
 # Muse
