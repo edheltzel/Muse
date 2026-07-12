@@ -36,8 +36,12 @@ Use these components to make plans visually informative and interactive.
 
 ## Tabs contract
 
-Separate panels with `---`; each panel's first line is its visible label. A leading `file:` prefix is optional and omitted from the label. Interactive output uses a single tab stop, supports Left/Right with wraparound plus Home/End, and activates panels on click or keyboard navigation. Static export renders every labeled panel sequentially in source order without tab controls.
+Separate panels with `---`; empty panels, including leading, trailing, or consecutive separators, are invalid. Each panel's first line is its visible label. A leading `file:` prefix is optional and omitted from the label; a prefix-only label falls back to `Panel N` for `Tabs` or `Diff N` for `DiffTabs`.
+
+Interactive output uses a single tab stop. Unmodified Left/Right wrap and activate, Home/End activate the boundaries, and Tab or modified navigation keys retain native behavior. Real pointer clicks rely on native button focus and activate the panel; programmatic `click()` activates without forcing focus. Static export renders every labeled panel sequentially in source order without hidden state or tab controls.
 
 ## Authoring rule
 
 If a common plan element has a component, use the component. Raw HTML is reserved for exceptional one-off visuals.
+
+Component IDs are document-wide HTML identifiers. Start with a letter and use only letters, numbers, underscores, or hyphens; IDs must not collide across `plan.mdx`, `canvas.mdx`, renderer-owned IDs, or generated tab descendants.

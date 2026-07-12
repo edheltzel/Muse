@@ -36,3 +36,7 @@ export function splitLines(body: string): string[] {
 export function splitPipeFields(line: string): string[] {
   return line.split("|").map((part) => part.trim());
 }
+
+export function splitTabPanels(body: string): string[] {
+  return body.split(/^---\s*$/m).map((panel) => panel.trim());
+}

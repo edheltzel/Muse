@@ -1,4 +1,4 @@
-import { KNOWN_MDX_COMPONENTS } from "./shared";
+import { KNOWN_MDX_COMPONENTS, splitTabPanels } from "./shared";
 
 export type VisualPlanKind = "plan" | "recap" | "styleguide";
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -84,23 +84,48 @@ export function validateReviewState(value: unknown): string[] {
   return errors;
 }
 
-export function validateBlocks(blocks: MdxBlock[]): string[] {
+export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[] = []): string[] {
   const errors: string[] = [];
-  const seen = new Set<string>();
+  const authoredIds = new Set<string>();
+  const reservedIdSet = new Set(reservedIds);
   for (const block of blocks) {
     if (!KNOWN_MDX_COMPONENTS[block.type]) {
       errors.push(`Unknown MDX component '${block.type}'${block.id ? ` at block '${block.id}'` : ""}`);
     }
     if (!block.id || typeof block.id !== "string") {
       errors.push(`MDX component '${block.type}' is missing required id`);
-    } else if (seen.has(block.id)) {
-      errors.push(`Duplicate MDX component id '${block.id}'`);
     } else {
-      seen.add(block.id);
+      if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(block.id)) {
+        errors.push(`MDX component '${block.type}' has unsafe id '${block.id}'; use a letter followed by letters, numbers, underscores, or hyphens`);
+      }
+      if (reservedIdSet.has(block.id)) {
+        errors.push(`MDX component id '${block.id}' collides with renderer-owned id '${block.id}'`);
+      }
+      if (authoredIds.has(block.id)) errors.push(`Duplicate MDX component id '${block.id}'`);
+      else authoredIds.add(block.id);
     }
     if (block.type === "Wireframe" && /<\/?(?:html|head|body|script)\b/i.test(block.body)) {
       errors.push(`Wireframe '${block.id}' must be an HTML fragment without html/head/body/script tags`);
     }
+  }
+
+  const emittedIds = new Set([...authoredIds, ...reservedIdSet]);
+  for (const block of blocks) {
+    if (block.type !== "Tabs" && block.type !== "DiffTabs") continue;
+    const panels = splitTabPanels(block.body);
+    panels.forEach((panel, index) => {
+      if (!panel) errors.push(`${block.type} '${block.id}' contains an empty panel at position ${index + 1}`);
+      for (const generatedId of [`${block.id}-tab-${index}`, `${block.id}-panel-${index}`]) {
+        if (authoredIds.has(generatedId)) {
+          errors.push(`Generated HTML id '${generatedId}' for ${block.type} '${block.id}' collides with an authored block id`);
+        } else if (reservedIdSet.has(generatedId)) {
+          errors.push(`Generated HTML id '${generatedId}' for ${block.type} '${block.id}' collides with a renderer-owned id`);
+        } else if (emittedIds.has(generatedId)) {
+          errors.push(`Generated HTML id '${generatedId}' for ${block.type} '${block.id}' collides with another emitted id`);
+        }
+        emittedIds.add(generatedId);
+      }
+    });
   }
   return errors;
 }

@@ -155,7 +155,7 @@ const baseClientScript = `
 
 export const staticPlanClientScript = baseClientScript;
 
-export const interactivePlanClientScript = baseClientScript + `
+export const interactivePlanInteractionScript = `
 (() => {
   const postJson = async (url, body) => {
     const response = await fetch(url, {
@@ -174,39 +174,56 @@ export const interactivePlanClientScript = baseClientScript + `
     return true;
   };
 
+  const ownedTabset = (tab) => {
+    const tablist = tab.parentElement;
+    const group = tablist?.parentElement;
+    if (!tablist?.matches('[role="tablist"]') || !group?.matches(".ve-ip-tabs")) return null;
+    const tabs = Array.from(tablist.children).filter((item) => item.matches('[role="tab"][data-tab-target]'));
+    const panels = Array.from(group.children).filter((item) => item.matches('[role="tabpanel"]'));
+    return tabs.includes(tab) ? { group, panels, tablist, tabs } : null;
+  };
   const activateTab = (tab, moveFocus = false) => {
+    const owner = ownedTabset(tab);
     const id = tab.getAttribute("data-tab-target");
-    const group = tab.closest(".ve-ip-tabs");
-    group?.querySelectorAll("[role=tabpanel]").forEach((panel) => { panel.hidden = panel.id !== id; });
-    group?.querySelectorAll("[role=tab]").forEach((button) => {
+    const matchingPanels = owner?.panels.filter((panel) => panel.id === id) || [];
+    if (!owner || !id || matchingPanels.length !== 1) return false;
+    owner.panels.forEach((panel) => { panel.hidden = panel.id !== id; });
+    owner.tabs.forEach((button) => {
       const active = button === tab;
       button.setAttribute("aria-selected", String(active));
       button.setAttribute("tabindex", active ? "0" : "-1");
     });
     if (moveFocus) tab.focus();
+    return true;
   };
 
   document.addEventListener("keydown", (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLElement) || !target.matches('[role="tab"][data-tab-target]')) return;
-    const group = target.closest(".ve-ip-tabs");
-    const tabs = Array.from(group?.querySelectorAll('[role="tab"][data-tab-target]') || []);
-    const currentIndex = tabs.indexOf(target);
+    if (
+      !(target instanceof HTMLElement)
+      || !target.matches('[role="tab"][data-tab-target]')
+      || event.altKey
+      || event.ctrlKey
+      || event.metaKey
+      || event.shiftKey
+    ) return;
+    const owner = ownedTabset(target);
+    if (!owner) return;
+    const currentIndex = owner.tabs.indexOf(target);
     let nextIndex;
-    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
-    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % owner.tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + owner.tabs.length) % owner.tabs.length;
     if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = tabs.length - 1;
-    if (nextIndex === undefined) return;
+    if (event.key === "End") nextIndex = owner.tabs.length - 1;
+    if (nextIndex === undefined || !activateTab(owner.tabs[nextIndex], true)) return;
     event.preventDefault();
-    activateTab(tabs[nextIndex], true);
   });
 
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
 
-    const tab = target.closest("[data-tab-target]");
+    const tab = target.closest('[role="tab"][data-tab-target]');
     if (tab) activateTab(tab);
 
     if (target.closest("[data-needs-revision]")) {
@@ -246,3 +263,5 @@ export const interactivePlanClientScript = baseClientScript + `
     }
   });
 })();`;
+
+export const interactivePlanClientScript = baseClientScript + interactivePlanInteractionScript;

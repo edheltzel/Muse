@@ -1,5 +1,5 @@
 import { type MdxBlock } from "./schema";
-import { type MdxComponentName, splitLines, splitPipeFields } from "./shared";
+import { type MdxComponentName, splitLines, splitPipeFields, splitTabPanels } from "./shared";
 
 export interface RenderContext {
   staticMode: boolean;
@@ -73,12 +73,13 @@ function renderAnnotatedCode(block: MdxBlock): string {
 }
 
 function renderDiffTabs(block: MdxBlock, context: RenderContext): string {
-  const chunks = block.body.split(/^---\s*$/m).map((chunk) => chunk.trim()).filter(Boolean);
+  const chunks = splitTabPanels(block.body);
   const items = chunks.map((chunk, index) => {
-    const firstLine = chunk.match(/^[^\r\n]*/)?.[0] || `Diff ${index + 1}`;
+    const firstLine = chunk.match(/^[^\r\n]*/)?.[0] ?? "";
+    const fallbackLabel = `${block.type === "DiffTabs" ? "Diff" : "Panel"} ${index + 1}`;
     return {
       chunk,
-      label: firstLine.replace(/^file:\s*/, ""),
+      label: firstLine.replace(/^file:\s*/, "") || fallbackLabel,
       panelId: `${block.id}-panel-${index}`,
       tabId: `${block.id}-tab-${index}`,
     };
