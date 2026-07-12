@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { renderPlanFolder } from "./render";
-import { addComment, approvePlan, readComments, readReviewState, resolveComment, updateReviewState } from "./state-store";
+import { addComment, approvePlan, readComments, readPublishedArtifact, readReviewState, resolveComment, updateReviewState } from "./state-store";
 
 async function json(request: Request): Promise<Record<string, unknown>> {
   try {
@@ -28,7 +28,10 @@ export async function servePlan(planDir: string, port = 7374) {
           return Response.json(await readComments(planDir));
         }
         if (url.pathname === "/agent-handoff.json") {
-          return Response.json(JSON.parse(await readFile(join(planDir, "agent-handoff.json"), "utf8")));
+          return new Response(await readPublishedArtifact(planDir, "agent-handoff.json"), { headers: { "content-type": "application/json; charset=utf-8" } });
+        }
+        if (url.pathname === "/agent-handoff.md") {
+          return new Response(await readPublishedArtifact(planDir, "agent-handoff.md"), { headers: { "content-type": "text/markdown; charset=utf-8" } });
         }
         if (url.pathname === "/api/state" && request.method === "POST") {
           return Response.json(await updateReviewState(planDir, await json(request)));

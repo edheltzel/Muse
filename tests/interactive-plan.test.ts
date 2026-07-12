@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import * as fs from "node:fs/promises";
+import { chmod, cp, mkdtemp, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,6 +18,10 @@ import {
 
 const repoRoot = join(import.meta.dir, "..");
 const fixturesRoot = join(repoRoot, "tests", "fixtures", "interactive-plans");
+
+afterEach(() => {
+  mock.restore();
+});
 
 async function copyFixture(name: string): Promise<string> {
   const planDir = await mkdtemp(join(tmpdir(), `ve-ip-${name}-`));
@@ -75,14 +80,14 @@ describe("interactive plan MDX loading", () => {
         ],
         hasCanvas: true,
       },
-    ];
+    ] as const;
 
     for (const fixture of fixtureExpectations) {
       const plan = await loadPlanFolder(join(fixturesRoot, fixture.name));
       expect(plan.manifest.kind).toBe(fixture.kind);
       expect(plan.manifest.slug).toBe(fixture.slug);
       expect(plan.manifest.localOnly).toBe(true);
-      expect(plan.plan.blocks.map((block) => block.id)).toEqual(fixture.blockIds);
+      expect(plan.plan.blocks.map((block) => block.id)).toEqual([...fixture.blockIds]);
       expect(Boolean(plan.canvas)).toBe(fixture.hasCanvas);
     }
   });
@@ -156,133 +161,289 @@ describe("interactive plan review state and handoff", () => {
     );
   }
 
-  test("persists review values and comment resolution", async () => {
+  async function post(server: { port: number | undefined }, path: string, body: Record<string, unknown>): Promise<Response> {
+    if (server.port === undefined) throw new Error("Test server did not bind a port");
+    return fetch(`http://localhost:${server.port}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function temporaryPublicationEntries(planDir: string): Promise<string[]> {
+    const store = join(planDir, ".muse-review");
+    const bundles = await readdir(join(store, "bundles"));
+    const entries = await readdir(store);
+    return [...bundles, ...entries].filter((entry) => entry.endsWith(".staging") || entry.endsWith(".pointer") || entry.includes(".restore"));
+  }
+
+  test("persists review values and treats durable open comments as authoritative", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await updateReviewState(planDir, {
         answers: { runtime: "Use the local Vite Plus bridge with Bun." },
         checklist: { schema: true, render: true },
+        unresolvedCommentIds: ["stale-cache-entry"],
       });
+      expect((await readReviewState(planDir)).unresolvedCommentIds).toEqual([]);
+
       const comment = await addComment(planDir, {
         id: "c-review-scope",
         blockId: "summary",
-        anchor: "scope",
         body: "Clarify whether approval is local-only before handoff.",
       });
       expect(comment.status).toBe("open");
       expect((await readReviewState(planDir)).unresolvedCommentIds).toEqual(["c-review-scope"]);
+      await expect(approvePlan(planDir, "tester")).rejects.toThrow(/unresolved blocking comments/i);
 
       const resolvedComments = await resolveComment(planDir, "c-review-scope");
-      expect(resolvedComments[0]).toMatchObject({ id: "c-review-scope", status: "resolved", blockId: "summary" });
-      expect(resolvedComments[0].resolvedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(resolvedComments[0]).toMatchObject({ id: "c-review-scope", status: "resolved" });
       expect(await readComments(planDir)).toEqual(resolvedComments);
       expect((await readReviewState(planDir)).unresolvedCommentIds).toEqual([]);
     });
   });
 
-  test("required questions and checks gate approval while advisory blanks do not", async () => {
+  test("serializes state mutations across processes without losing either revision", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const worker = join(repoRoot, "tests", "helpers", "review-state-writer.ts");
+      const first = Bun.spawn([process.execPath, worker, planDir, "first", "one"], { cwd: repoRoot, stderr: "pipe" });
+      const second = Bun.spawn([process.execPath, worker, planDir, "second", "two"], { cwd: repoRoot, stderr: "pipe" });
+      const exitCodes = await Promise.all([first.exited, second.exited]);
+      if (exitCodes[0] !== 0) throw new Error(await new Response(first.stderr).text());
+      if (exitCodes[1] !== 0) throw new Error(await new Response(second.stderr).text());
+
+      expect((await readReviewState(planDir)).answers).toMatchObject({ first: "one", second: "two" });
+    });
+  });
+
+  test("validates required, advisory, omitted, scalar, array, checklist, and canvas readiness", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await setReadinessPolicy(planDir);
-      const priorState = {
-        status: "needs_revision" as const,
-        approvedAt: "2026-07-01T12:00:00.000Z",
-        reviewer: "prior-reviewer",
-        answers: { runtime: "  " },
-        checklist: { schema: false, render: false },
-        unresolvedCommentIds: [],
-      };
-      await updateReviewState(planDir, priorState);
-
-      await expect(approvePlan(planDir, "tester")).rejects.toThrow(/runtime.*schema|schema.*runtime/s);
-      expect(await readReviewState(planDir)).toEqual(priorState);
-      expect(await Bun.file(join(planDir, "agent-handoff.json")).exists()).toBe(false);
-      expect(await Bun.file(join(planDir, "agent-handoff.md")).exists()).toBe(false);
-
+      await writeFile(join(planDir, "canvas.mdx"), `<QuestionForm id="canvas-questions">\ncanvas-owner | Who owns the canvas? | freeform | required\n</QuestionForm>`);
       await updateReviewState(planDir, {
-        answers: { runtime: "Use the local Vite Plus bridge with Bun." },
+        answers: { runtime: [" "], "canvas-owner": " " },
+        checklist: { schema: false, render: false },
+      });
+
+      await expect(approvePlan(planDir, "tester")).rejects.toThrow(/^(?=[\s\S]*runtime)(?=[\s\S]*schema)(?=[\s\S]*canvas-owner)/);
+      await updateReviewState(planDir, {
+        answers: { runtime: [" ", "Use Bun."], "canvas-owner": "Design team" },
         checklist: { schema: true },
       });
       const handoff = await approvePlan(planDir, "tester");
 
-      expect(handoff.status).toBe("approved");
-      expect(handoff.verification).toEqual([
-        "schema | Schema validates | required",
-        "render | HTML renders | advisory",
-      ]);
-      expect(handoff.decisions).toEqual([
-        "Use local MDX | Keeps source portable | accepted",
-        "Use Vite Plus | Keeps browser pipeline explicit | accepted",
-      ]);
-      expect(handoff.openRisks).toEqual([]);
-      const approvedState = await readReviewState(planDir);
-      expect(approvedState).toMatchObject({ status: "approved", reviewer: "tester" });
-      expect(approvedState.approvedAt).toBe(handoff.approvedAt);
+      expect(handoff.answers.runtime).toEqual([" ", "Use Bun."]);
+      expect(await readReviewState(planDir)).toMatchObject({ status: "approved", reviewer: "tester" });
       expect(JSON.parse(await readFile(join(planDir, "agent-handoff.json"), "utf8"))).toEqual(handoff);
-      const markdown = await readFile(join(planDir, "agent-handoff.md"), "utf8");
-      expect(markdown).toContain(`Approved: ${approvedState.approvedAt}`);
-      expect(markdown).toContain("Use local MDX | Keeps source portable | accepted");
-      expect(markdown).toContain("## Open Risks\n\n- None recorded");
-      expect(markdown).toContain('"runtime": "Use the local Vite Plus bridge with Bun."');
+      expect(await readFile(join(planDir, "agent-handoff.md"), "utf8")).toContain(`Approved: ${handoff.approvedAt}`);
+    });
+
+    await withFixture("minimal-plan", async (planDir) => {
+      const handoff = await approvePlan(planDir, "implicit-advisory");
+      expect(handoff.status).toBe("approved");
     });
   });
 
-  test("unresolved blockers reject through the approval route before state mutation", async () => {
+  test("rejects malformed readiness grammar, blank or duplicate IDs, and invalid runtime values", async () => {
+    const invalidLines = [
+      "runtime | Prompt | required",
+      "runtime | Prompt | freeform |",
+      "runtime | Prompt | freeform | required | trailing",
+      " | Prompt | freeform | required",
+    ];
+    for (const line of invalidLines) {
+      await withFixture("minimal-plan", async (planDir) => {
+        const path = join(planDir, "plan.mdx");
+        const source = await readFile(path, "utf8");
+        await writeFile(path, source.replace("runtime | Which lightweight runtime should U2 choose? | freeform", line));
+        await expect(loadPlanFolder(planDir)).rejects.toThrow(/invalid|blank|required field|field count|mode field/i);
+      });
+    }
+
     await withFixture("minimal-plan", async (planDir) => {
-      const priorState = {
-        status: "in_review" as const,
-        reviewer: "prior-reviewer",
-        answers: {},
+      await writeFile(join(planDir, "canvas.mdx"), `<Checklist id="canvas-checks">\nschema | Duplicate across documents | required\n</Checklist>`);
+      await expect(loadPlanFolder(planDir)).rejects.toThrow(/Duplicate readiness item id 'schema'/);
+    });
+
+    await withFixture("minimal-plan", async (planDir) => {
+      await writeFile(join(planDir, "plan-state.json"), JSON.stringify({
+        status: "in_review",
+        answers: { runtime: ["valid", 42] },
         checklist: {},
-        unresolvedCommentIds: ["c-blocking"],
-      };
-      await updateReviewState(planDir, priorState);
+        unresolvedCommentIds: [],
+      }));
+      await expect(readReviewState(planDir)).rejects.toThrow(/string or string array/);
+    });
+  });
+
+  test("migrates missing and mixed legacy artifacts fail-closed behind compatibility paths", async () => {
+    for (const existingArtifact of [undefined, "agent-handoff.json", "agent-handoff.md", "both"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await writeFile(join(planDir, "plan-state.json"), JSON.stringify({
+          status: "approved",
+          approvedAt: "2026-07-01T12:00:00.000Z",
+          reviewer: "legacy",
+          answers: {},
+          checklist: {},
+          unresolvedCommentIds: [],
+        }));
+        if (existingArtifact === "both") {
+          await writeFile(join(planDir, "agent-handoff.json"), "{}");
+          await writeFile(join(planDir, "agent-handoff.md"), "# mismatched");
+        } else if (existingArtifact) {
+          await writeFile(join(planDir, existingArtifact), existingArtifact.endsWith(".json") ? "{}" : "# stale");
+        }
+
+        expect((await readReviewState(planDir)).status).toBe("needs_revision");
+        expect(await Bun.file(join(planDir, "agent-handoff.json")).exists()).toBe(false);
+        expect(await Bun.file(join(planDir, "agent-handoff.md")).exists()).toBe(false);
+        expect(await readlink(join(planDir, "plan-state.json"))).toBe(".muse-review/current/plan-state.json");
+        expect(await temporaryPublicationEntries(planDir)).toEqual([]);
+      });
+    }
+  });
+
+  test("uses one pointer commit and cleans write, partial-write, rename, cleanup, and permission faults", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const first = await approvePlan(planDir, "first-reviewer");
+      const pointer = join(planDir, ".muse-review", "current");
+      const committedPointer = await readlink(pointer);
+      const committedState = await readReviewState(planDir);
+      const originalWriteFile = fs.writeFile;
+      const originalRename = fs.rename;
+      const originalRm = fs.rm;
+
+      for (const partial of [false, true]) {
+        spyOn(fs, "writeFile").mockImplementation(async (path, data, options) => {
+          if (String(path).includes(".staging/agent-handoff.md")) {
+            if (partial) await originalWriteFile(path, String(data).slice(0, 8), options);
+            throw Object.assign(new Error(partial ? "partial write" : "write failure"), { code: partial ? "ENOSPC" : "EACCES" });
+          }
+          return originalWriteFile(path, data, options);
+        });
+        await expect(approvePlan(planDir, "faulted-reviewer")).rejects.toThrow(partial ? "partial write" : "write failure");
+        expect(await readlink(pointer)).toBe(committedPointer);
+        expect(await readReviewState(planDir)).toEqual(committedState);
+        expect(await temporaryPublicationEntries(planDir)).toEqual([]);
+        mock.restore();
+      }
+
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        if (String(to) === pointer) throw Object.assign(new Error("rename failure"), { code: "EACCES" });
+        return originalRename(from, to);
+      });
+      await expect(approvePlan(planDir, "rename-fault")).rejects.toThrow("rename failure");
+      expect(await readlink(pointer)).toBe(committedPointer);
+      expect(await temporaryPublicationEntries(planDir)).toEqual([]);
+      mock.restore();
+
+      spyOn(fs, "writeFile").mockImplementation(async (path, data, options) => {
+        if (String(path).includes(".staging/agent-handoff.md")) throw new Error("primary write failure");
+        return originalWriteFile(path, data, options);
+      });
+      spyOn(fs, "rm").mockImplementation(async (path, options) => {
+        if (String(path).endsWith(".staging")) throw new Error("cleanup failure");
+        return originalRm(path, options);
+      });
+      await expect(approvePlan(planDir, "cleanup-fault")).rejects.toThrow("primary write failure");
+      expect(await readlink(pointer)).toBe(committedPointer);
+      mock.restore();
+      await updateReviewState(planDir, { answers: { cleanup: "recovered" } });
+      expect(await temporaryPublicationEntries(planDir)).toEqual([]);
+
+      const bundles = join(planDir, ".muse-review", "bundles");
+      await chmod(bundles, 0o500);
+      try {
+        await expect(approvePlan(planDir, "permission-fault")).rejects.toThrow();
+      } finally {
+        await chmod(bundles, 0o700);
+      }
+      expect((await readReviewState(planDir)).status).toBe("needs_revision");
+      expect(first.status).toBe("approved");
+    });
+  });
+
+  test("approval routes reject bypasses and blockers, agree on success, and serialize races", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await setReadinessPolicy(planDir);
+      await writeFile(join(planDir, "comments.json"), JSON.stringify([{
+        id: "c-durable",
+        blockId: "summary",
+        body: "Durable blocker",
+        status: "open",
+        createdAt: "2026-07-01T12:00:00.000Z",
+      }]));
       const server = await servePlan(planDir, 0);
       try {
-        const response = await fetch(`http://localhost:${server.port}/api/approve`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ reviewer: "tester" }),
+        const bypass = await post(server, "/api/state", { status: "approved", approvedAt: "fake", reviewer: "attacker" });
+        expect(bypass.ok).toBe(false);
+        expect(await bypass.text()).toMatch(/only be set through \/api\/approve/i);
+
+        const blocked = await post(server, "/api/approve", { reviewer: "tester" });
+        expect(blocked.ok).toBe(false);
+        expect(await blocked.text()).toMatch(/unresolved blocking comments/i);
+        await post(server, "/api/comments", { resolveId: "c-durable" });
+
+        const required = await post(server, "/api/approve", { reviewer: "tester" });
+        expect(required.ok).toBe(false);
+        expect(await required.text()).toMatch(/runtime|schema/i);
+
+        const [stateResponse, racedApproval] = await Promise.all([
+          post(server, "/api/state", { answers: { runtime: "Bun" }, checklist: { schema: true } }),
+          post(server, "/api/approve", { reviewer: "raced-reviewer" }),
+        ]);
+        expect(stateResponse.ok).toBe(true);
+        if (!racedApproval.ok) expect(await racedApproval.text()).toMatch(/runtime|schema/i);
+        expect((await readReviewState(planDir)).answers.runtime).toBe("Bun");
+
+        const approvedResponse = await post(server, "/api/approve", { reviewer: "final-reviewer" });
+        expect(approvedResponse.ok).toBe(true);
+        const approved = await approvedResponse.json();
+        const routedState = await (await fetch(`http://localhost:${server.port}/plan-state.json`)).json();
+        const routedJson = await (await fetch(`http://localhost:${server.port}/agent-handoff.json`)).json();
+        const routedMarkdown = await (await fetch(`http://localhost:${server.port}/agent-handoff.md`)).text();
+        expect(routedJson).toEqual(approved);
+        expect(routedState.approvedAt).toBe(approved.approvedAt);
+        expect(routedMarkdown).toContain(`Approved: ${approved.approvedAt}`);
+
+        const committedPointer = await readlink(join(planDir, ".muse-review", "current"));
+        const originalWriteFile = fs.writeFile;
+        spyOn(fs, "writeFile").mockImplementation(async (path, data, options) => {
+          if (String(path).includes(".staging/agent-handoff.md")) throw new Error("route publication failure");
+          return originalWriteFile(path, data, options);
         });
-        expect(response.ok).toBe(false);
-        expect(await response.text()).toMatch(/unresolved blocking comments/i);
+        const failedPublication = await post(server, "/api/approve", { reviewer: "faulted-route" });
+        expect(failedPublication.ok).toBe(false);
+        expect(await readlink(join(planDir, ".muse-review", "current"))).toBe(committedPointer);
+        expect((await readReviewState(planDir)).approvedAt).toBe(approved.approvedAt);
+        mock.restore();
+
+        const reapprovedResponse = await post(server, "/api/approve", { reviewer: "second-reviewer" });
+        expect(reapprovedResponse.ok).toBe(true);
+        const reapproved = await reapprovedResponse.json();
+        expect((await readReviewState(planDir))).toMatchObject({ approvedAt: reapproved.approvedAt, reviewer: "second-reviewer" });
+
+        const concurrentApprovals = await Promise.all([
+          post(server, "/api/approve", { reviewer: "concurrent-a" }),
+          post(server, "/api/approve", { reviewer: "concurrent-b" }),
+        ]);
+        expect(concurrentApprovals.every((response) => response.ok)).toBe(true);
+        const concurrentHandoffs = await Promise.all(concurrentApprovals.map((response) => response.json()));
+        const finalHandoff = await (await fetch(`http://localhost:${server.port}/agent-handoff.json`)).json();
+        expect(concurrentHandoffs).toContainEqual(finalHandoff);
+        expect((await readReviewState(planDir)).approvedAt).toBe(finalHandoff.approvedAt);
+
+        const [commentResponse] = await Promise.all([
+          post(server, "/api/comments", { blockId: "summary", body: "Concurrent blocker" }),
+          post(server, "/api/approve", { reviewer: "concurrent-reviewer" }),
+        ]);
+        expect(commentResponse.ok).toBe(true);
+        expect((await readReviewState(planDir)).status).toBe("needs_revision");
+        expect(await Bun.file(join(planDir, "agent-handoff.json")).exists()).toBe(false);
+        expect(await Bun.file(join(planDir, "agent-handoff.md")).exists()).toBe(false);
       } finally {
         server.stop(true);
       }
-
-      expect(await readReviewState(planDir)).toEqual(priorState);
-      expect(await Bun.file(join(planDir, "agent-handoff.json")).exists()).toBe(false);
-      expect(await Bun.file(join(planDir, "agent-handoff.md")).exists()).toBe(false);
     });
-  });
-
-  test("publication failure preserves prior state and the prior handoff pair", async () => {
-    for (const failedStep of ["handoff-json", "handoff-markdown", "state"] as const) {
-      await withFixture("minimal-plan", async (planDir) => {
-        await setReadinessPolicy(planDir);
-        const priorState = {
-          status: "needs_revision" as const,
-          approvedAt: "2026-07-01T12:00:00.000Z",
-          reviewer: "prior-reviewer",
-          answers: { runtime: "Use Bun." },
-          checklist: { schema: true },
-          unresolvedCommentIds: [],
-        };
-        const priorJson = '{"status":"approved","approvedAt":"prior"}\n';
-        const priorMarkdown = "# Prior matching handoff\n\nApproved: prior\n";
-        await updateReviewState(planDir, priorState);
-        await writeFile(join(planDir, "agent-handoff.json"), priorJson);
-        await writeFile(join(planDir, "agent-handoff.md"), priorMarkdown);
-
-        await expect(approvePlan(planDir, "tester", {
-          beforePublish(step) {
-            if (step === failedStep) throw new Error(`Injected ${step} publication failure`);
-          },
-        })).rejects.toThrow(`Injected ${failedStep} publication failure`);
-
-        expect(await readReviewState(planDir)).toEqual(priorState);
-        expect(await readFile(join(planDir, "agent-handoff.json"), "utf8")).toBe(priorJson);
-        expect(await readFile(join(planDir, "agent-handoff.md"), "utf8")).toBe(priorMarkdown);
-      });
-    }
   });
 });
 

@@ -10,6 +10,26 @@ Use these components to make plans visually informative and interactive.
 - `CommentAnchor` — target for anchored feedback.
 - `Callout` — decision, warning, note, and risk callouts.
 
+### Readiness fields
+
+Each `QuestionForm` line uses `id | prompt | mode | policy`; omitting the fourth field makes the question advisory. Each `Checklist` line uses `id | label | policy`; omitting the third field makes the item advisory. `policy` is exactly `required` or `advisory`.
+
+```mdx
+<QuestionForm id="questions" title="Open Questions">
+runtime | Which runtime should this plan use? | freeform | required
+notes | Any additional context? | freeform | advisory
+owner | Who owns implementation? | freeform
+</QuestionForm>
+
+<Checklist id="checks" title="Verification">
+schema | Schema validates | required
+render | HTML renders | advisory
+copy | Copy reviewed
+</Checklist>
+```
+
+Readiness item IDs must be nonblank and unique across `plan.mdx` and `canvas.mdx`. Required questions need a nonblank scalar answer or at least one nonblank string in an array answer; required checklist items must be `true`. Advisory and omitted-policy items never gate approval.
+
 ## Visual explanation components
 
 - `PlanSummary` — hero summary with goal, scope, audience, and status.

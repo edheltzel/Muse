@@ -78,9 +78,25 @@ export function validateReviewState(value: unknown): string[] {
   if (!REVIEW_STATUSES.includes(state.status as ReviewStatus)) {
     errors.push(`ReviewState.status must be one of ${REVIEW_STATUSES.join(", ")}`);
   }
-  if (!state.answers || typeof state.answers !== "object") errors.push("ReviewState.answers must be an object");
-  if (!state.checklist || typeof state.checklist !== "object") errors.push("ReviewState.checklist must be an object");
-  if (!Array.isArray(state.unresolvedCommentIds)) errors.push("ReviewState.unresolvedCommentIds must be an array");
+  if (!state.answers || typeof state.answers !== "object" || Array.isArray(state.answers)) {
+    errors.push("ReviewState.answers must be an object");
+  } else {
+    for (const [id, answer] of Object.entries(state.answers)) {
+      if (typeof answer !== "string" && !(Array.isArray(answer) && answer.every((item) => typeof item === "string"))) {
+        errors.push(`ReviewState.answers['${id}'] must be a string or string array`);
+      }
+    }
+  }
+  if (!state.checklist || typeof state.checklist !== "object" || Array.isArray(state.checklist)) {
+    errors.push("ReviewState.checklist must be an object");
+  } else {
+    for (const [id, checked] of Object.entries(state.checklist)) {
+      if (typeof checked !== "boolean") errors.push(`ReviewState.checklist['${id}'] must be boolean`);
+    }
+  }
+  if (!Array.isArray(state.unresolvedCommentIds) || !state.unresolvedCommentIds.every((id) => typeof id === "string")) {
+    errors.push("ReviewState.unresolvedCommentIds must be a string array");
+  }
   return errors;
 }
 
@@ -107,6 +123,7 @@ export function validateApprovalReadiness(blocks: MdxBlock[], state: ReviewState
 export function validateBlocks(blocks: MdxBlock[]): string[] {
   const errors: string[] = [];
   const seen = new Set<string>();
+  const readinessIds = new Set<string>();
   for (const block of blocks) {
     if (!KNOWN_MDX_COMPONENTS[block.type]) {
       errors.push(`Unknown MDX component '${block.type}'${block.id ? ` at block '${block.id}'` : ""}`);
@@ -122,10 +139,27 @@ export function validateBlocks(blocks: MdxBlock[]): string[] {
       errors.push(`Wireframe '${block.id}' must be an HTML fragment without html/head/body/script tags`);
     }
     if (block.type === "QuestionForm" || block.type === "Checklist") {
-      const policyIndex = block.type === "QuestionForm" ? 3 : 2;
       for (const line of splitLines(block.body)) {
-        const policy = splitPipeFields(line)[policyIndex];
-        if (policy && policy !== "required" && policy !== "advisory") {
+        const fields = splitPipeFields(line);
+        const expectedArities = block.type === "QuestionForm" ? [3, 4] : [2, 3];
+        if (!expectedArities.includes(fields.length)) {
+          errors.push(`${block.type} '${block.id}' has invalid field count ${fields.length}; expected ${expectedArities.join(" or ")}`);
+          continue;
+        }
+        const requiredFields = block.type === "QuestionForm" ? fields.slice(0, 3) : fields.slice(0, 2);
+        if (requiredFields.some((field) => field.length === 0)) {
+          errors.push(`${block.type} '${block.id}' has a blank required field`);
+          continue;
+        }
+        const id = fields[0];
+        if (readinessIds.has(id)) errors.push(`Duplicate readiness item id '${id}'`);
+        else readinessIds.add(id);
+
+        const policyIndex = block.type === "QuestionForm" ? 3 : 2;
+        const policy = fields[policyIndex];
+        if (block.type === "QuestionForm" && fields.length === 3 && (fields[2] === "required" || fields[2] === "advisory")) {
+          errors.push(`QuestionForm '${block.id}' has readiness policy '${fields[2]}' in the mode field`);
+        } else if (policy !== undefined && policy !== "required" && policy !== "advisory") {
           errors.push(`${block.type} '${block.id}' has invalid readiness policy '${policy}'`);
         }
       }
