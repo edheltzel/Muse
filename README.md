@@ -2,7 +2,7 @@
 
 # Muse
 
-> [! INFO]
+> [! NOTE]
 > Big thanks to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) for the original idea and work but [Muse](https://github.com/edheltzel/Muse) been **heavily modified** to fit my personal needs and will continue to change with more features.
 
 **Turn dense agent output into beautiful browser-native pages people can actually understand.**
