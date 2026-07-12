@@ -51,6 +51,8 @@
     "check": "vp run test && vp run visual-plan:build",
     "visual-plan:render": "bun plugins/Muse/skills/muse/tools/interactive-plan/render.ts",
     "visual-plan:serve": "bun plugins/Muse/skills/muse/tools/interactive-plan/server.ts",
+    "component-explorer:render": "bun plugins/Muse/skills/muse/tools/interactive-plan/render.ts tests/fixtures/interactive-plans/component-library-showcase",
+    "component-explorer:serve": "bun plugins/Muse/skills/muse/tools/interactive-plan/server.ts tests/fixtures/interactive-plans/component-library-showcase 7375",
     "visual-plan:build": "vp build --config vite.config.ts"
   },
   "devDependencies": {

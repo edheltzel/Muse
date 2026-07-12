@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { interactivePlanClientScript, staticPlanClientScript } from "./client";
 import { escapeHtml, renderBlocks } from "./components";
 import { loadPlanFolder, type LoadedPlanFolder } from "./mdx-loader";
+import { MDX_COMPONENT_META, MDX_COMPONENT_NAMES } from "./shared";
 
 const defaultShell = `<!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -20,6 +21,7 @@ const defaultShell = `<!DOCTYPE html>
   <div class="ve-ip-chrome" aria-label="Display settings"><span>Theme</span><button type="button" class="ve-ip-theme-toggle" data-theme-toggle aria-pressed="false"><span data-theme-toggle-label>Light</span></button></div>
   <main class="ve-ip-main">
     <header class="ve-ip-page-header"><p class="ve-ip-kicker">Muse interactive {{KIND}}</p><h1>{{TITLE}}</h1><p>{{SUBTITLE}}</p></header>
+    {{EXPLORER}}
     {{CONTENT}}
   </main>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
@@ -168,6 +170,78 @@ code, pre, .ve-ip-label, .ve-ip-kicker, .ve-ip-nav, .code-file__header { font-fa
   margin: 0;
   color: var(--text-dim);
   font-size: clamp(1.05rem, 2vw, 1.3rem);
+}
+.ve-ip-explorer {
+  margin-bottom: 1.2rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  padding: 1.2rem;
+  background: var(--surface);
+}
+.ve-ip-explorer-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, .55fr);
+  gap: 1.5rem;
+  align-items: end;
+}
+.ve-ip-explorer .ve-ip-label { padding: 0; }
+.ve-ip-explorer h2 {
+  margin: .25rem 0 .4rem;
+  font-size: 2rem;
+  letter-spacing: -.025em;
+  text-wrap: balance;
+}
+.ve-ip-explorer-intro p:last-child {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--text-dim);
+}
+.ve-ip-search {
+  display: grid;
+  gap: .35rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: .78rem;
+}
+.ve-ip-search input {
+  width: 100%;
+  min-height: 2.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: .65rem .8rem;
+  color: var(--text);
+  background: var(--surface-elevated);
+}
+.ve-ip-search input:focus-visible,
+.ve-ip-filter-row button:focus-visible,
+.ve-ip-source button:focus-visible {
+  outline: 3px solid color-mix(in oklch, var(--accent-teal) 45%, transparent);
+  outline-offset: 2px;
+}
+.ve-ip-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-top: 1rem;
+}
+.ve-ip-filter-row button,
+.ve-ip-source button {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: .38rem .7rem;
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
+}
+.ve-ip-filter-row button[aria-pressed="true"] {
+  color: var(--surface);
+  background: var(--text);
+}
+.ve-ip-results {
+  margin: .85rem 0 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: .78rem;
 }
 .ve-ip-block {
   margin: 0 0 1.2rem;
@@ -436,6 +510,44 @@ tr:last-child td { border-bottom: 0; }
   background: var(--text);
   color: var(--surface);
 }
+.ve-ip-component-meta {
+  display: grid;
+  grid-template-columns: minmax(7rem, .25fr) 1fr;
+  gap: 1rem;
+  align-items: baseline;
+  border-top: 1px solid var(--border);
+  padding: .85rem 1.15rem;
+  color: var(--text-dim);
+}
+.ve-ip-component-meta span {
+  color: var(--accent-teal);
+  font-family: var(--font-mono);
+  font-size: .76rem;
+}
+.ve-ip-component-meta p { margin: 0; }
+.ve-ip-source { border-top: 1px solid var(--border); }
+.ve-ip-source summary {
+  padding: .8rem 1.15rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: .78rem;
+}
+.ve-ip-source-toolbar {
+  display: flex;
+  justify-content: end;
+  padding: 0 1.15rem .65rem;
+}
+.ve-ip-source pre {
+  margin: 0;
+  border-radius: 0;
+  max-height: 24rem;
+}
+.ve-ip-source button[data-copy-state="copied"] {
+  color: var(--surface);
+  background: var(--accent-sage);
+}
+.ve-ip-block[hidden] { display: none; }
 @media (max-width: 860px) {
   .ve-ip-nav {
     position: sticky;
@@ -446,12 +558,15 @@ tr:last-child td { border-bottom: 0; }
     flex-direction: row;
     overflow-x: auto;
   }
+  .ve-ip-nav a { flex: 0 0 auto; white-space: nowrap; }
   .ve-ip-main {
     width: min(100% - 1.5rem, 74rem);
     padding: 1rem 0 4rem;
   }
   .ve-ip-chrome { top: auto; bottom: 1rem; }
   .ve-ip-page-header { min-height: 24rem; }
+  .ve-ip-explorer-intro { grid-template-columns: 1fr; }
+  .ve-ip-component-meta { grid-template-columns: 1fr; gap: .25rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -467,20 +582,35 @@ async function readShellTemplate(): Promise<string> {
   }
 }
 
+function componentExplorerFor(plan: LoadedPlanFolder): string {
+  if (plan.manifest.kind !== "styleguide") return "";
+  const categories = Array.from(new Set(MDX_COMPONENT_NAMES.map((name) => MDX_COMPONENT_META[name].category)));
+  const filters = [
+    `<button type="button" data-component-filter="" aria-pressed="true">All</button>`,
+    ...categories.map((category) => `<button type="button" data-component-filter="${escapeHtml(category)}" aria-pressed="false">${escapeHtml(category)}</button>`),
+  ].join("");
+  return `<section class="ve-ip-explorer" data-component-explorer data-component-count="${MDX_COMPONENT_NAMES.length}" aria-labelledby="component-explorer-title"><div class="ve-ip-explorer-intro"><div><p class="ve-ip-label">Human reference</p><h2 id="component-explorer-title">Browse every Muse component</h2><p>Search by component name or purpose, filter by family, inspect the rendered result, then copy the exact MDX source.</p></div><label class="ve-ip-search"><span>Search components</span><input type="search" data-component-search placeholder="Try “diagram”, “risk”, or “review”" autocomplete="off" /></label></div><div class="ve-ip-filter-row" role="group" aria-label="Component families">${filters}</div><p class="ve-ip-results" data-component-results aria-live="polite">${MDX_COMPONENT_NAMES.length} components</p></section>`;
+}
+
 function navFor(plan: LoadedPlanFolder): string {
-  return plan.plan.blocks.map((block) => `<a href="#${escapeHtml(block.id)}">${escapeHtml(block.props.title ?? block.type)}</a>`).join("");
+  return plan.plan.blocks.map((block) => {
+    const label = plan.manifest.kind === "styleguide" ? block.type : block.props.title ?? block.type;
+    return `<a href="#${escapeHtml(block.id)}">${escapeHtml(label)}</a>`;
+  }).join("");
 }
 
 export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false, shell?: string): Promise<string> {
   const template = shell ?? (await readShellTemplate());
+  const componentExplorer = plan.manifest.kind === "styleguide";
   const content = [
-    renderBlocks(plan.plan.blocks, { staticMode }),
-    plan.canvas ? `<section class="ve-ip-block ve-ip-card" id="canvas"><div class="ve-ip-label">Canvas</div><h2>Canvas</h2>${renderBlocks(plan.canvas.blocks, { staticMode })}</section>` : "",
+    renderBlocks(plan.plan.blocks, { staticMode, componentExplorer }),
+    plan.canvas ? `<section class="ve-ip-block ve-ip-card" id="canvas"><div class="ve-ip-label">Canvas</div><h2>Canvas</h2>${renderBlocks(plan.canvas.blocks, { staticMode, componentExplorer: false })}</section>` : "",
   ].join("\n");
   return template
     .replaceAll("{{TITLE}}", escapeHtml(plan.manifest.title))
     .replaceAll("{{KIND}}", escapeHtml(plan.manifest.kind))
-    .replaceAll("{{SUBTITLE}}", staticMode ? "Static export. Interactive persistence requires the local review bridge." : "Local interactive review surface.")
+    .replaceAll("{{SUBTITLE}}", componentExplorer ? "A human-facing reference for every renderer-owned MDX component." : staticMode ? "Static export. Interactive persistence requires the local review bridge." : "Local interactive review surface.")
+    .replaceAll("{{EXPLORER}}", componentExplorerFor(plan))
     .replaceAll("{{NAV}}", navFor(plan))
     .replaceAll("{{CONTENT}}", content)
     .replaceAll("{{STYLE}}", style)

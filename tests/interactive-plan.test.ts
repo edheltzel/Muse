@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
 import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
+import { MDX_COMPONENT_NAMES } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
 import {
   addComment,
   approvePlan,
@@ -61,6 +62,7 @@ describe("interactive plan MDX loading", () => {
           "file-tree",
           "code",
           "diffs",
+          "reference-tabs",
           "api",
           "data-model",
           "before-after",
@@ -140,6 +142,27 @@ describe("interactive plan rendering", () => {
       expectNoForbiddenRuntimeReferences(staticHtml);
     });
   });
+  test("renders the style guide as a searchable, copyable component explorer", async () => {
+    await withFixture("component-library-showcase", async (planDir) => {
+      const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
+      const indexHtml = await readFile(indexPath, "utf8");
+      const staticHtml = await readFile(staticExportPath, "utf8");
+
+      expect(indexHtml).toContain("data-component-explorer");
+      expect(indexHtml).toContain("data-component-search");
+      expect(indexHtml).toContain("data-component-filter");
+      expect(indexHtml).toContain("data-component-results");
+      expect(indexHtml).toContain("data-copy-mdx");
+      expect(indexHtml).toContain("class=\"ve-ip-source\"");
+      expect(indexHtml).toContain("navigator.clipboard");
+      expect(staticHtml).toContain("data-component-explorer");
+
+      for (const componentName of MDX_COMPONENT_NAMES) {
+        expect(indexHtml).toContain(`data-block-type="${componentName}"`);
+      }
+    });
+  });
+
 });
 
 describe("interactive plan review state and handoff", () => {

@@ -18,8 +18,8 @@ Use Vite+ commands from the repository root:
 vp install
 vp run test
 vp run visual-plan:build
-vp run visual-plan:render tests/fixtures/interactive-plans/component-library-showcase
-vp run visual-plan:serve tests/fixtures/interactive-plans/component-library-showcase 7375
+vp run component-explorer:render
+vp run component-explorer:serve
 ```
 
 Dependency changes go through Vite+:
