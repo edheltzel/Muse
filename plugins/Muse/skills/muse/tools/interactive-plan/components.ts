@@ -72,13 +72,25 @@ function renderAnnotatedCode(block: MdxBlock): string {
   return card(block, "ve-ip-code-card", `<div class="code-file"><div class="code-file__header">${escapeHtml(block.props.file ?? block.props.title ?? "code")}</div><pre class="code-block code-block--scroll"><code>${escapeHtml(block.body)}</code></pre></div>`);
 }
 
-function renderDiffTabs(block: MdxBlock): string {
+function renderDiffTabs(block: MdxBlock, context: RenderContext): string {
   const chunks = block.body.split(/^---\s*$/m).map((chunk) => chunk.trim()).filter(Boolean);
-  const tabs = chunks.map((chunk, index) => {
+  const items = chunks.map((chunk, index) => {
     const firstLine = chunk.match(/^[^\r\n]*/)?.[0] || `Diff ${index + 1}`;
-    return `<button type="button" role="tab" data-tab-target="${escapeHtml(block.id)}-${index}" ${index === 0 ? "aria-selected=\"true\"" : ""}>${escapeHtml(firstLine.replace(/^file:\s*/, ""))}</button>`;
-  }).join("");
-  const panels = chunks.map((chunk, index) => `<div role="tabpanel" id="${escapeHtml(block.id)}-${index}" ${index === 0 ? "" : "hidden"}><pre class="code-block code-block--scroll"><code>${escapeHtml(chunk)}</code></pre></div>`).join("");
+    return {
+      chunk,
+      label: firstLine.replace(/^file:\s*/, ""),
+      panelId: `${block.id}-panel-${index}`,
+      tabId: `${block.id}-tab-${index}`,
+    };
+  });
+
+  if (context.staticMode) {
+    const panels = items.map(({ chunk, label }) => `<section class="ve-ip-static-tab-panel"><h3>${escapeHtml(label)}</h3><pre class="code-block code-block--scroll"><code>${escapeHtml(chunk)}</code></pre></section>`).join("");
+    return card(block, "ve-ip-card", `<div class="ve-ip-tabs ve-ip-tabs--static">${panels}</div>`);
+  }
+
+  const tabs = items.map(({ label, panelId, tabId }, index) => `<button type="button" role="tab" id="${escapeHtml(tabId)}" aria-controls="${escapeHtml(panelId)}" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}" data-tab-target="${escapeHtml(panelId)}">${escapeHtml(label)}</button>`).join("");
+  const panels = items.map(({ chunk, panelId, tabId }, index) => `<div role="tabpanel" id="${escapeHtml(panelId)}" aria-labelledby="${escapeHtml(tabId)}"${index === 0 ? "" : " hidden"}><pre class="code-block code-block--scroll"><code>${escapeHtml(chunk)}</code></pre></div>`).join("");
   return card(block, "ve-ip-card", `<div class="ve-ip-tabs"><div class="ve-ip-tab-list" role="tablist">${tabs}</div>${panels}</div>`);
 }
 

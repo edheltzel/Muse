@@ -23,7 +23,8 @@ Use these components to make plans visually informative and interactive.
 
 - `FileMap` / `FileTree` — repo-relative file footprints.
 - `AnnotatedCode` — focused code with file header.
-- `DiffTabs` — key changes grouped in tabs.
+- `DiffTabs` — file-specific changes grouped into labeled panels.
+- `Tabs` — code-styled labeled panels for related evidence.
 - `ApiSurface` — API/command/route contract table.
 - `DataModel` — schema/entity table.
 
@@ -32,6 +33,10 @@ Use these components to make plans visually informative and interactive.
 - `Wireframe` — semantic HTML fragment inside renderer-owned frame.
 - `BeforeAfter` — visual before/after comparison.
 - `StateGallery` — multiple UI states.
+
+## Tabs contract
+
+Separate panels with `---`; each panel's first line is its visible label. A leading `file:` prefix is optional and omitted from the label. Interactive output uses a single tab stop, supports Left/Right with wraparound plus Home/End, and activates panels on click or keyboard navigation. Static export renders every labeled panel sequentially in source order without tab controls.
 
 ## Authoring rule
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
+import { renderBlock } from "../plugins/Muse/skills/muse/tools/interactive-plan/components.ts";
 import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 import {
   addComment,
@@ -61,6 +62,7 @@ describe("interactive plan MDX loading", () => {
           "file-tree",
           "code",
           "diffs",
+          "tabs",
           "api",
           "data-model",
           "before-after",
@@ -139,6 +141,57 @@ describe("interactive plan rendering", () => {
       expectNoForbiddenRuntimeReferences(indexHtml);
       expectNoForbiddenRuntimeReferences(staticHtml);
     });
+  });
+  test.each(["Tabs", "DiffTabs"])("%s emits complete tab and panel relationships", (type) => {
+    const blockId = `${type.toLowerCase()}-contract`;
+    const html = renderBlock({
+      id: blockId,
+      type,
+      props: { title: `${type} contract` },
+      body: "file: alpha.ts\nalpha body\n---\nfile: beta.ts\nbeta body\n---\nfile: gamma.ts\ngamma body",
+    }, { staticMode: false });
+    const tabs = [...html.matchAll(/<button\b[^>]*role="tab"[^>]*>/g)].map(([tag]) => tag);
+    const panels = [...html.matchAll(/<div\b[^>]*role="tabpanel"[^>]*>/g)].map(([tag]) => tag);
+
+    expect(tabs).toHaveLength(3);
+    expect(panels).toHaveLength(3);
+    expect(new Set(tabs.map((tag) => tag.match(/\bid="([^"]+)"/)?.[1])).size).toBe(3);
+    expect(new Set(panels.map((tag) => tag.match(/\bid="([^"]+)"/)?.[1])).size).toBe(3);
+
+    tabs.forEach((tab, index) => {
+      const tabId = `${blockId}-tab-${index}`;
+      const panelId = `${blockId}-panel-${index}`;
+      expect(tab).toContain(`id="${tabId}"`);
+      expect(tab).toContain(`aria-controls="${panelId}"`);
+      expect(tab).toContain(`aria-selected="${index === 0}"`);
+      expect(tab).toContain(`tabindex="${index === 0 ? 0 : -1}"`);
+      expect(panels[index]).toContain(`id="${panelId}"`);
+      expect(panels[index]).toContain(`aria-labelledby="${tabId}"`);
+      expect(panels[index].includes(" hidden")).toBe(index !== 0);
+    });
+  });
+
+  test.each(["Tabs", "DiffTabs"])("%s static output exposes every labeled panel in source order", (type) => {
+    const html = renderBlock({
+      id: `${type.toLowerCase()}-static`,
+      type,
+      props: { title: `${type} static contract` },
+      body: "file: alpha.ts\nalpha body\n---\nfile: beta.ts\nbeta body\n---\nfile: gamma.ts\ngamma body",
+    }, { staticMode: true });
+
+    expect(html).not.toContain('role="tablist"');
+    expect(html).not.toContain('role="tab"');
+    expect(html).not.toContain('role="tabpanel"');
+    expect(html).not.toContain("data-tab-target");
+    expect(html.match(/class="ve-ip-static-tab-panel"/g)).toHaveLength(3);
+
+    const orderedContent = ["alpha.ts", "alpha body", "beta.ts", "beta body", "gamma.ts", "gamma body"];
+    let previousIndex = -1;
+    for (const content of orderedContent) {
+      const index = html.indexOf(content);
+      expect(index).toBeGreaterThan(previousIndex);
+      previousIndex = index;
+    }
   });
 });
 

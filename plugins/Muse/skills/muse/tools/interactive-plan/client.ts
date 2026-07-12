@@ -174,17 +174,40 @@ export const interactivePlanClientScript = baseClientScript + `
     return true;
   };
 
+  const activateTab = (tab, moveFocus = false) => {
+    const id = tab.getAttribute("data-tab-target");
+    const group = tab.closest(".ve-ip-tabs");
+    group?.querySelectorAll("[role=tabpanel]").forEach((panel) => { panel.hidden = panel.id !== id; });
+    group?.querySelectorAll("[role=tab]").forEach((button) => {
+      const active = button === tab;
+      button.setAttribute("aria-selected", String(active));
+      button.setAttribute("tabindex", active ? "0" : "-1");
+    });
+    if (moveFocus) tab.focus();
+  };
+
+  document.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.matches('[role="tab"][data-tab-target]')) return;
+    const group = target.closest(".ve-ip-tabs");
+    const tabs = Array.from(group?.querySelectorAll('[role="tab"][data-tab-target]') || []);
+    const currentIndex = tabs.indexOf(target);
+    let nextIndex;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    if (nextIndex === undefined) return;
+    event.preventDefault();
+    activateTab(tabs[nextIndex], true);
+  });
+
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
 
     const tab = target.closest("[data-tab-target]");
-    if (tab) {
-      const id = tab.getAttribute("data-tab-target");
-      const group = tab.closest(".ve-ip-tabs");
-      group?.querySelectorAll("[role=tabpanel]").forEach((panel) => { panel.hidden = panel.id !== id; });
-      group?.querySelectorAll("[role=tab]").forEach((button) => button.setAttribute("aria-selected", String(button === tab)));
-    }
+    if (tab) activateTab(tab);
 
     if (target.closest("[data-needs-revision]")) {
       try {
