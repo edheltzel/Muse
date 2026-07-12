@@ -32,21 +32,26 @@ const baseClientScript = `
     const filters = Array.from(explorer.querySelectorAll("[data-component-filter]"));
     const results = explorer.querySelector("[data-component-results]");
     const blocks = Array.from(document.querySelectorAll(".ve-ip-block[data-component-category]"));
+    const canonicalCount = Number(explorer.getAttribute("data-component-canonical-count")) || 0;
     let activeCategory = "";
 
     const applyComponentFilters = () => {
       const query = search?.value.trim().toLowerCase() || "";
       let visibleCount = 0;
+      const visibleTypes = new Set();
       blocks.forEach((block) => {
         const category = block.getAttribute("data-component-category") || "";
-        const searchableText = ((block.getAttribute("data-block-type") || "") + " " + (block.textContent || "")).toLowerCase();
+        const searchableText = (block.getAttribute("data-component-search-text") || "").toLowerCase();
         const visible = (!activeCategory || category === activeCategory) && (!query || searchableText.includes(query));
         block.hidden = !visible;
         const navLink = Array.from(document.querySelectorAll(".ve-ip-nav a")).find((link) => link.getAttribute("href") === "#" + block.id);
         if (navLink) navLink.hidden = !visible;
-        if (visible) visibleCount += 1;
+        if (visible) {
+          visibleCount += 1;
+          visibleTypes.add(block.getAttribute("data-block-type") || "");
+        }
       });
-      if (results) results.textContent = visibleCount + (visibleCount === 1 ? " component" : " components");
+      if (results) results.textContent = visibleCount + (visibleCount === 1 ? " example" : " examples") + " · " + visibleTypes.size + " unique of canonical " + canonicalCount;
     };
 
     search?.addEventListener("input", applyComponentFilters);

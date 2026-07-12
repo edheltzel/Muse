@@ -102,6 +102,8 @@ code, pre, .ve-ip-label, .ve-ip-kicker, .ve-ip-nav, .code-file__header { font-fa
   flex-direction: column;
   gap: .45rem;
   z-index: 5;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .ve-ip-nav strong {
   color: var(--accent);
@@ -557,6 +559,7 @@ tr:last-child td { border-bottom: 0; }
     margin: .75rem;
     flex-direction: row;
     overflow-x: auto;
+    overflow-y: hidden;
   }
   .ve-ip-nav a { flex: 0 0 auto; white-space: nowrap; }
   .ve-ip-main {
@@ -594,7 +597,10 @@ function componentExplorerFor(plan: LoadedPlanFolder): string {
     `<button type="button" data-component-filter="" aria-pressed="true">All</button>`,
     ...categories.map((category) => `<button type="button" data-component-filter="${escapeHtml(category)}" aria-pressed="false">${escapeHtml(category)}</button>`),
   ].join("");
-  return `<section class="ve-ip-explorer" data-component-explorer data-component-count="${MDX_COMPONENT_NAMES.length}" aria-labelledby="component-explorer-title"><div class="ve-ip-explorer-intro"><div><p class="ve-ip-label">Component reference</p><h2 id="component-explorer-title">Catalog</h2><p>Browse all ${MDX_COMPONENT_NAMES.length} renderer-owned MDX components. Search by component name or purpose, filter by family, inspect the rendered result, then copy the exact MDX source.</p></div><label class="ve-ip-search"><span>Search components</span><input type="search" data-component-search placeholder="Try “diagram”, “risk”, or “review”" autocomplete="off" /></label></div><div class="ve-ip-filter-row" role="group" aria-label="Component families">${filters}</div><p class="ve-ip-results" data-component-results aria-live="polite">${MDX_COMPONENT_NAMES.length} components</p></section>`;
+  const exampleCount = plan.plan.blocks.length;
+  const uniqueCount = new Set(plan.plan.blocks.map((block) => block.type)).size;
+  const countLabel = `${exampleCount} ${exampleCount === 1 ? "example" : "examples"} · ${uniqueCount} unique of canonical ${MDX_COMPONENT_NAMES.length}`;
+  return `<section class="ve-ip-explorer" data-component-explorer data-component-example-count="${exampleCount}" data-component-count="${uniqueCount}" data-component-canonical-count="${MDX_COMPONENT_NAMES.length}" aria-labelledby="component-explorer-title"><div class="ve-ip-explorer-intro"><div><p class="ve-ip-label">Component reference</p><h2 id="component-explorer-title">Catalog</h2><p>Browse ${countLabel}. Search by component name or purpose, filter by family, inspect the rendered result, then copy the exact MDX source.</p></div><label class="ve-ip-search"><span>Search components</span><input type="search" data-component-search placeholder="Try “diagram”, “risk”, or “review”" autocomplete="off" /></label></div><div class="ve-ip-filter-row" role="group" aria-label="Component families">${filters}</div><p class="ve-ip-results" data-component-results aria-live="polite">${countLabel}</p></section>`;
 }
 
 function navFor(plan: LoadedPlanFolder): string {

@@ -31,7 +31,8 @@ function title(block: MdxBlock): string {
 }
 
 function card(block: MdxBlock, className: string, body?: string): string {
-  return `<section class="ve-ip-block ${className}" id="${escapeHtml(block.id)}" data-block-id="${escapeHtml(block.id)}" data-block-type="${escapeHtml(block.type)}"><div class="ve-ip-label">${escapeHtml(block.type)}</div><h2>${title(block)}</h2><div class="ve-ip-body">${body ?? `<p>${markdownish(block.body)}</p>`}</div></section>`;
+  const titleId = escapeHtml(`${block.id}-title`);
+  return `<section class="ve-ip-block ${className}" id="${escapeHtml(block.id)}" data-block-id="${escapeHtml(block.id)}" data-block-type="${escapeHtml(block.type)}" aria-labelledby="${titleId}"><div class="ve-ip-label">${escapeHtml(block.type)}</div><h2 id="${titleId}">${title(block)}</h2><div class="ve-ip-body">${body ?? `<p>${markdownish(block.body)}</p>`}</div></section>`;
 }
 
 function mdxSourceFor(block: MdxBlock): string {
@@ -48,8 +49,9 @@ function decorateExplorerBlock(block: MdxBlock, html: string): string {
   const componentName = block.type as MdxComponentName;
   const meta = MDX_COMPONENT_META[componentName];
   const source = mdxSourceFor(block);
+  const searchText = `${componentName} ${meta.category} ${meta.summary}`;
   const details = `<div class="ve-ip-component-meta"><span>${escapeHtml(meta.category)}</span><p>${escapeHtml(meta.summary)}</p></div><details class="ve-ip-source"><summary>MDX source</summary><div class="ve-ip-source-toolbar"><button type="button" data-copy-mdx>Copy MDX</button></div><pre><code data-mdx-source>${escapeHtml(source)}</code></pre></details>`;
-  const section = html.replace("<section ", `<section data-component-category="${escapeHtml(meta.category)}" `);
+  const section = html.replace("<section ", `<section data-component-category="${escapeHtml(meta.category)}" data-component-search-text="${escapeHtml(searchText)}" `);
   const closingIndex = section.lastIndexOf("</section>");
   return closingIndex === -1 ? section : `${section.slice(0, closingIndex)}${details}${section.slice(closingIndex)}`;
 }

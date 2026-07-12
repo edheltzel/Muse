@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
 import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
-import { MDX_COMPONENT_NAMES } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
+import { MDX_COMPONENT_META, MDX_COMPONENT_NAMES } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
 import {
   addComment,
   approvePlan,
@@ -156,18 +156,63 @@ describe("interactive plan rendering", () => {
       expect(indexHtml).toContain("class=\"ve-ip-source\"");
       expect(indexHtml).toContain("navigator.clipboard");
       expect(staticHtml).toContain("data-component-explorer");
-      expect(indexHtml).toContain(`<h2 id="component-explorer-title">Catalog</h2>`);
-      expect(indexHtml).toContain("<h2>Review Scenario</h2>");
-      expect(indexHtml).toContain("<h2>QA / reference inventory</h2>");
-      expect(indexHtml).toContain(`data-component-count="${MDX_COMPONENT_NAMES.length}"`);
-      expect(indexHtml).toContain(`${MDX_COMPONENT_NAMES.length} components`);
-      expect(indexHtml).toContain("Canonical denominator: MDX_COMPONENT_NAMES");
-      expect(indexHtml).not.toContain("18/18");
+      const canonicalTypes = [...MDX_COMPONENT_NAMES].sort();
+      const renderedTypes = Array.from(
+        indexHtml.matchAll(/<section[^>]*data-component-category="[^"]+"[^>]*data-block-type="([^"]+)"/g),
+        (match) => match[1],
+      ).sort();
+      const declaredCount = Number(indexHtml.match(/data-component-count="(\d+)"/)?.[1]);
 
-      for (const componentName of MDX_COMPONENT_NAMES) {
-        expect(indexHtml).toContain(`data-block-type="${componentName}"`);
+      expect(renderedTypes).toEqual(canonicalTypes);
+      expect(new Set(renderedTypes).size).toBe(MDX_COMPONENT_NAMES.length);
+      expect(declaredCount).toBe(MDX_COMPONENT_NAMES.length);
+      expect(indexHtml).toContain(`${MDX_COMPONENT_NAMES.length} examples · ${MDX_COMPONENT_NAMES.length} unique of canonical ${MDX_COMPONENT_NAMES.length}`);
+      expect(indexHtml).toContain(`data-component-search-text="PlanSummary ${MDX_COMPONENT_META.PlanSummary.category} ${MDX_COMPONENT_META.PlanSummary.summary}"`);
+      expect(indexHtml).toContain("Canonical denominator: MDX_COMPONENT_NAMES");
+
+      for (const html of [indexHtml, staticHtml]) {
+        expect(html).toContain(`<h2 id="component-explorer-title">Catalog</h2>`);
+        expect(html).toContain(`aria-labelledby="summary-title"`);
+        expect(html).toContain(`<h2 id="summary-title">Review Scenario</h2>`);
+        expect(html).toContain(`aria-labelledby="component-table-title"`);
+        expect(html).toContain(`<h2 id="component-table-title">QA / reference inventory</h2>`);
+        expect(html).not.toMatch(/<strong>\d+\s*\/\s*\d+<\/strong><span>Review coverage/);
       }
     });
+  });
+  test("reports rendered and canonical inventory counts for partial and duplicate style guides", async () => {
+    const cases = [
+      {
+        name: "partial",
+        blocks: `<PlanSummary id="summary" title="Summary">\nPartial catalog.\n</PlanSummary>`,
+        examples: 1,
+        unique: 1,
+      },
+      {
+        name: "duplicate",
+        blocks: `<PlanSummary id="summary-a" title="First summary">\nFirst example.\n</PlanSummary>\n\n<PlanSummary id="summary-b" title="Second summary">\nSecond example.\n</PlanSummary>`,
+        examples: 2,
+        unique: 1,
+      },
+    ];
+
+    for (const inventory of cases) {
+      await withFixture("component-library-showcase", async (planDir) => {
+        await writeFile(join(planDir, "plan.mdx"), `---\ntitle: ${inventory.name} component library\nkind: styleguide\nslug: ${inventory.name}-component-library\n---\n\n${inventory.blocks}\n`);
+        const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
+        const htmlOutputs = [
+          await readFile(indexPath, "utf8"),
+          await readFile(staticExportPath, "utf8"),
+        ];
+
+        for (const html of htmlOutputs) {
+          expect(html).toContain(`data-component-example-count="${inventory.examples}"`);
+          expect(html).toContain(`data-component-count="${inventory.unique}"`);
+          expect(html).toContain(`data-component-canonical-count="${MDX_COMPONENT_NAMES.length}"`);
+          expect(html).toContain(`${inventory.examples} ${inventory.examples === 1 ? "example" : "examples"} · ${inventory.unique} unique of canonical ${MDX_COMPONENT_NAMES.length}`);
+        }
+      });
+    }
   });
 
 });
