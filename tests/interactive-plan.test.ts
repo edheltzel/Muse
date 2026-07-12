@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
 import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
+import { servePlan } from "../plugins/Muse/skills/muse/tools/interactive-plan/server.ts";
 import {
   addComment,
   approvePlan,
@@ -143,18 +144,24 @@ describe("interactive plan rendering", () => {
 });
 
 describe("interactive plan review state and handoff", () => {
-  test("persists answers, checklist values, comment resolution, and approval handoff files", async () => {
+  async function setReadinessPolicy(planDir: string): Promise<void> {
+    const path = join(planDir, "plan.mdx");
+    const source = await readFile(path, "utf8");
+    await writeFile(
+      path,
+      source
+        .replace("runtime | Which lightweight runtime should U2 choose? | freeform", "runtime | Which lightweight runtime should U2 choose? | freeform | required")
+        .replace("schema | Schema validates", "schema | Schema validates | required")
+        .replace("render | HTML renders", "render | HTML renders | advisory"),
+    );
+  }
+
+  test("persists review values and comment resolution", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await updateReviewState(planDir, {
         answers: { runtime: "Use the local Vite Plus bridge with Bun." },
         checklist: { schema: true, render: true },
       });
-
-      let state = await readReviewState(planDir);
-      expect(state.status).toBe("draft");
-      expect(state.answers.runtime).toBe("Use the local Vite Plus bridge with Bun.");
-      expect(state.checklist).toEqual({ schema: true, render: true });
-
       const comment = await addComment(planDir, {
         id: "c-review-scope",
         blockId: "summary",
@@ -162,45 +169,120 @@ describe("interactive plan review state and handoff", () => {
         body: "Clarify whether approval is local-only before handoff.",
       });
       expect(comment.status).toBe("open");
-
-      state = await readReviewState(planDir);
-      expect(state.unresolvedCommentIds).toEqual(["c-review-scope"]);
+      expect((await readReviewState(planDir)).unresolvedCommentIds).toEqual(["c-review-scope"]);
 
       const resolvedComments = await resolveComment(planDir, "c-review-scope");
-      expect(resolvedComments).toHaveLength(1);
       expect(resolvedComments[0]).toMatchObject({ id: "c-review-scope", status: "resolved", blockId: "summary" });
       expect(resolvedComments[0].resolvedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(await readComments(planDir)).toEqual(resolvedComments);
+      expect((await readReviewState(planDir)).unresolvedCommentIds).toEqual([]);
+    });
+  });
 
-      state = await readReviewState(planDir);
-      expect(state.unresolvedCommentIds).toEqual([]);
+  test("required questions and checks gate approval while advisory blanks do not", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await setReadinessPolicy(planDir);
+      const priorState = {
+        status: "needs_revision" as const,
+        approvedAt: "2026-07-01T12:00:00.000Z",
+        reviewer: "prior-reviewer",
+        answers: { runtime: "  " },
+        checklist: { schema: false, render: false },
+        unresolvedCommentIds: [],
+      };
+      await updateReviewState(planDir, priorState);
 
+      await expect(approvePlan(planDir, "tester")).rejects.toThrow(/runtime.*schema|schema.*runtime/s);
+      expect(await readReviewState(planDir)).toEqual(priorState);
+      expect(await Bun.file(join(planDir, "agent-handoff.json")).exists()).toBe(false);
+      expect(await Bun.file(join(planDir, "agent-handoff.md")).exists()).toBe(false);
+
+      await updateReviewState(planDir, {
+        answers: { runtime: "Use the local Vite Plus bridge with Bun." },
+        checklist: { schema: true },
+      });
       const handoff = await approvePlan(planDir, "tester");
+
       expect(handoff.status).toBe("approved");
-      expect(handoff.planSlug).toBe("minimal-plan");
-      expect(handoff.answers).toEqual({ runtime: "Use the local Vite Plus bridge with Bun." });
+      expect(handoff.verification).toEqual([
+        "schema | Schema validates | required",
+        "render | HTML renders | advisory",
+      ]);
       expect(handoff.decisions).toEqual([
         "Use local MDX | Keeps source portable | accepted",
         "Use Vite Plus | Keeps browser pipeline explicit | accepted",
       ]);
-      expect(handoff.verification).toEqual(["schema | Schema validates", "render | HTML renders"]);
       expect(handoff.openRisks).toEqual([]);
-
       const approvedState = await readReviewState(planDir);
       expect(approvedState).toMatchObject({ status: "approved", reviewer: "tester" });
       expect(approvedState.approvedAt).toBe(handoff.approvedAt);
-
-      const handoffJson = JSON.parse(await readFile(join(planDir, "agent-handoff.json"), "utf8"));
-      expect(handoffJson).toEqual(handoff);
-
-      const handoffMarkdown = await readFile(join(planDir, "agent-handoff.md"), "utf8");
-      expect(handoffMarkdown).toContain("# Agent Handoff: minimal-plan");
-      expect(handoffMarkdown).toContain("Status: approved");
-      expect(handoffMarkdown).toContain("Use local MDX | Keeps source portable | accepted");
-      expect(handoffMarkdown).toContain('"runtime": "Use the local Vite Plus bridge with Bun."');
-      expect(handoffMarkdown).toContain("schema | Schema validates");
-      expect(handoffMarkdown).toContain("## Open Risks\n\n- None recorded");
+      expect(JSON.parse(await readFile(join(planDir, "agent-handoff.json"), "utf8"))).toEqual(handoff);
+      const markdown = await readFile(join(planDir, "agent-handoff.md"), "utf8");
+      expect(markdown).toContain(`Approved: ${approvedState.approvedAt}`);
+      expect(markdown).toContain("Use local MDX | Keeps source portable | accepted");
+      expect(markdown).toContain("## Open Risks\n\n- None recorded");
+      expect(markdown).toContain('"runtime": "Use the local Vite Plus bridge with Bun."');
     });
+  });
+
+  test("unresolved blockers reject through the approval route before state mutation", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const priorState = {
+        status: "in_review" as const,
+        reviewer: "prior-reviewer",
+        answers: {},
+        checklist: {},
+        unresolvedCommentIds: ["c-blocking"],
+      };
+      await updateReviewState(planDir, priorState);
+      const server = await servePlan(planDir, 0);
+      try {
+        const response = await fetch(`http://localhost:${server.port}/api/approve`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reviewer: "tester" }),
+        });
+        expect(response.ok).toBe(false);
+        expect(await response.text()).toMatch(/unresolved blocking comments/i);
+      } finally {
+        server.stop(true);
+      }
+
+      expect(await readReviewState(planDir)).toEqual(priorState);
+      expect(await Bun.file(join(planDir, "agent-handoff.json")).exists()).toBe(false);
+      expect(await Bun.file(join(planDir, "agent-handoff.md")).exists()).toBe(false);
+    });
+  });
+
+  test("publication failure preserves prior state and the prior handoff pair", async () => {
+    for (const failedStep of ["handoff-json", "handoff-markdown", "state"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await setReadinessPolicy(planDir);
+        const priorState = {
+          status: "needs_revision" as const,
+          approvedAt: "2026-07-01T12:00:00.000Z",
+          reviewer: "prior-reviewer",
+          answers: { runtime: "Use Bun." },
+          checklist: { schema: true },
+          unresolvedCommentIds: [],
+        };
+        const priorJson = '{"status":"approved","approvedAt":"prior"}\n';
+        const priorMarkdown = "# Prior matching handoff\n\nApproved: prior\n";
+        await updateReviewState(planDir, priorState);
+        await writeFile(join(planDir, "agent-handoff.json"), priorJson);
+        await writeFile(join(planDir, "agent-handoff.md"), priorMarkdown);
+
+        await expect(approvePlan(planDir, "tester", {
+          beforePublish(step) {
+            if (step === failedStep) throw new Error(`Injected ${step} publication failure`);
+          },
+        })).rejects.toThrow(`Injected ${failedStep} publication failure`);
+
+        expect(await readReviewState(planDir)).toEqual(priorState);
+        expect(await readFile(join(planDir, "agent-handoff.json"), "utf8")).toBe(priorJson);
+        expect(await readFile(join(planDir, "agent-handoff.md"), "utf8")).toBe(priorMarkdown);
+      });
+    }
   });
 });
 

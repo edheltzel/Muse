@@ -1,8 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { generateAgentHandoff, formatAgentHandoffMarkdown } from "./handoff";
 import { loadPlanFolder } from "./mdx-loader";
-import { createDefaultReviewState, type CommentThread, type ReviewState, validateReviewState } from "./schema";
+import { createDefaultReviewState, type CommentThread, type ReviewState, validateApprovalReadiness, validateReviewState } from "./schema";
 
 async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
   try {
@@ -17,6 +17,71 @@ async function atomicWrite(path: string, value: unknown): Promise<void> {
   const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`);
   await rename(temp, path);
+}
+type ApprovalPublicationStep = "handoff-json" | "handoff-markdown" | "state";
+
+export interface ApprovalPublicationHooks {
+  beforePublish?(step: ApprovalPublicationStep): void | Promise<void>;
+}
+
+interface PublicationFile {
+  step: ApprovalPublicationStep;
+  path: string;
+  stagedPath: string;
+  content: string;
+  priorContent?: Uint8Array;
+}
+
+async function readOptionalBytes(path: string): Promise<Uint8Array | undefined> {
+  try {
+    return await readFile(path);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function restoreFile(file: PublicationFile): Promise<void> {
+  if (file.priorContent === undefined) {
+    await rm(file.path, { force: true });
+    return;
+  }
+  const restorePath = `${file.path}.${process.pid}.${Date.now()}.restore`;
+  await writeFile(restorePath, file.priorContent);
+  await rename(restorePath, file.path);
+}
+
+async function publishApproval(files: PublicationFile[], hooks: ApprovalPublicationHooks): Promise<void> {
+  const staged: PublicationFile[] = [];
+  try {
+    for (const file of files) {
+      file.priorContent = await readOptionalBytes(file.path);
+      await writeFile(file.stagedPath, file.content);
+      staged.push(file);
+    }
+  } catch (error) {
+    await Promise.allSettled(staged.map((file) => rm(file.stagedPath, { force: true })));
+    throw error;
+  }
+
+  const published: PublicationFile[] = [];
+  try {
+    for (const file of files) {
+      await hooks.beforePublish?.(file.step);
+      await rename(file.stagedPath, file.path);
+      published.push(file);
+    }
+  } catch (error) {
+    const rollbackResults = await Promise.allSettled(published.reverse().map(restoreFile));
+    await Promise.allSettled(files.map((file) => rm(file.stagedPath, { force: true })));
+    const rollbackFailures = rollbackResults
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
+    if (rollbackFailures.length) {
+      throw new AggregateError([error, ...rollbackFailures], "Approval publication failed and rollback was incomplete");
+    }
+    throw error;
+  }
 }
 
 export function statePath(planDir: string): string {
@@ -90,12 +155,43 @@ export async function resolveComment(planDir: string, id: string): Promise<Comme
   return next;
 }
 
-export async function approvePlan(planDir: string, reviewer = "local-reviewer") {
-  const approvedAt = new Date().toISOString();
-  const state = await updateReviewState(planDir, { status: "approved", approvedAt, reviewer });
+export async function approvePlan(
+  planDir: string,
+  reviewer = "local-reviewer",
+  hooks: ApprovalPublicationHooks = {},
+) {
+  const current = await readReviewState(planDir);
   const plan = await loadPlanFolder(planDir);
+  const readinessErrors = [
+    ...(current.unresolvedCommentIds.length ? ["AgentHandoff cannot be generated while unresolved blocking comments remain"] : []),
+    ...validateApprovalReadiness(plan.plan.blocks, current),
+  ];
+  if (readinessErrors.length) throw new Error(readinessErrors.join("\n"));
+
+  const approvedAt = new Date().toISOString();
+  const state = mergeReviewState(current, { status: "approved", approvedAt, reviewer });
   const handoff = generateAgentHandoff(plan, state);
-  await atomicWrite(join(planDir, "agent-handoff.json"), handoff);
-  await writeFile(join(planDir, "agent-handoff.md"), formatAgentHandoffMarkdown(handoff));
+  const suffix = `${process.pid}.${Date.now()}.approval`;
+  const files: PublicationFile[] = [
+    {
+      step: "handoff-json",
+      path: join(planDir, "agent-handoff.json"),
+      stagedPath: join(planDir, `agent-handoff.json.${suffix}`),
+      content: `${JSON.stringify(handoff, null, 2)}\n`,
+    },
+    {
+      step: "handoff-markdown",
+      path: join(planDir, "agent-handoff.md"),
+      stagedPath: join(planDir, `agent-handoff.md.${suffix}`),
+      content: formatAgentHandoffMarkdown(handoff),
+    },
+    {
+      step: "state",
+      path: statePath(planDir),
+      stagedPath: join(planDir, `plan-state.json.${suffix}`),
+      content: `${JSON.stringify(state, null, 2)}\n`,
+    },
+  ];
+  await publishApproval(files, hooks);
   return handoff;
 }

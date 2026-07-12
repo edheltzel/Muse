@@ -1,4 +1,4 @@
-import { KNOWN_MDX_COMPONENTS } from "./shared";
+import { KNOWN_MDX_COMPONENTS, splitLines, splitPipeFields } from "./shared";
 
 export type VisualPlanKind = "plan" | "recap" | "styleguide";
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -84,6 +84,26 @@ export function validateReviewState(value: unknown): string[] {
   return errors;
 }
 
+export function validateApprovalReadiness(blocks: MdxBlock[], state: ReviewState): string[] {
+  const errors: string[] = [];
+  for (const block of blocks) {
+    for (const line of splitLines(block.body)) {
+      const fields = splitPipeFields(line);
+      if (block.type === "QuestionForm" && fields[3] === "required") {
+        const answer = state.answers[fields[0]];
+        const answered = typeof answer === "string"
+          ? answer.trim().length > 0
+          : Array.isArray(answer) && answer.some((item) => item.trim().length > 0);
+        if (!answered) errors.push(`Required question '${fields[0]}' must be answered`);
+      }
+      if (block.type === "Checklist" && fields[2] === "required" && state.checklist[fields[0]] !== true) {
+        errors.push(`Required checklist item '${fields[0]}' must be checked`);
+      }
+    }
+  }
+  return errors;
+}
+
 export function validateBlocks(blocks: MdxBlock[]): string[] {
   const errors: string[] = [];
   const seen = new Set<string>();
@@ -100,6 +120,15 @@ export function validateBlocks(blocks: MdxBlock[]): string[] {
     }
     if (block.type === "Wireframe" && /<\/?(?:html|head|body|script)\b/i.test(block.body)) {
       errors.push(`Wireframe '${block.id}' must be an HTML fragment without html/head/body/script tags`);
+    }
+    if (block.type === "QuestionForm" || block.type === "Checklist") {
+      const policyIndex = block.type === "QuestionForm" ? 3 : 2;
+      for (const line of splitLines(block.body)) {
+        const policy = splitPipeFields(line)[policyIndex];
+        if (policy && policy !== "required" && policy !== "advisory") {
+          errors.push(`${block.type} '${block.id}' has invalid readiness policy '${policy}'`);
+        }
+      }
     }
   }
   return errors;
