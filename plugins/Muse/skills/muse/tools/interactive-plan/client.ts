@@ -136,6 +136,7 @@ const baseClientScript = `
         event.altKey
         || event.ctrlKey
         || event.metaKey
+        || event.shiftKey
         || (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)))
       ) return;
       const state = stateFor(wrap);

@@ -15,7 +15,7 @@ Use these components to make plans visually informative and interactive.
 - `PlanSummary` — hero summary with goal, scope, audience, and status.
 - `StatusDashboard` — KPI/status cards.
 - `DecisionMatrix` — decision/rationale/status table.
-- `ArchitectureDiagram` — Mermaid diagram with named zoom/expand controls and a focusable, arrow-key-pannable viewport.
+- `ArchitectureDiagram` — Mermaid diagram with named zoom/expand controls, Ctrl/Command-scroll zoom, and a focusable, arrow-key-pannable viewport.
 - `ImplementationTimeline` — ordered implementation units.
 - `RiskRegister` — risk/mitigation/severity table.
 
@@ -27,6 +27,8 @@ Use these components to make plans visually informative and interactive.
 - `ApiSurface` — API/command/route contract table; the first pipe-separated row defines column headers.
 - `DataModel` — schema/entity table; the first pipe-separated row defines column headers.
 - `Table` — generic data table; the first pipe-separated row defines column headers.
+
+Generic tables may be empty or contain only a header row. Every body row must have the same number of pipe-separated cells as the header; ragged rows fail with the component type, block ID, row number, actual count, and expected count.
 
 ## UI/product components
 

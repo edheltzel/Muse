@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runInNewContext } from "node:vm";
+import { Browser } from "happy-dom";
 
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
 import { staticPlanClientScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
@@ -177,6 +177,21 @@ describe("generic table and Mermaid accessibility", () => {
     expect(headerOnly).toContain("<thead><tr><th scope=\"col\">Name</th><th scope=\"col\">Type</th></tr></thead><tbody></tbody>");
   });
 
+  test.each([
+    ["ApiSurface", "Endpoint | Method\n/api/state | POST | extra", 3, 2],
+    ["DataModel", "Field | Type | Notes\nstatus | string", 2, 3],
+    ["Table", "Name | Type\nstatus | string | extra", 3, 2],
+  ])("%s rejects ragged row widths", (type, body, actualColumns, expectedColumns) => {
+    expect(() => renderBlock({
+      id: `${type.toLowerCase()}-ragged`,
+      type,
+      props: { title: `${type} ragged test` },
+      body: String(body),
+    }, { staticMode: false })).toThrow(
+      `${type} '${type.toLowerCase()}-ragged' row 2 has ${actualColumns} columns; expected ${expectedColumns}`,
+    );
+  });
+
   test("diagram controls and viewport expose descriptive keyboard affordances", () => {
     const html = renderBlock({
       id: "keyboard-diagram",
@@ -192,85 +207,71 @@ describe("generic table and Mermaid accessibility", () => {
     expect(html).toContain("tabindex=\"0\"");
     expect(html).toContain("aria-describedby=\"keyboard-diagram-instructions\"");
     expect(html).toContain("id=\"keyboard-diagram-instructions\"");
-    expect(html).toContain("Use arrow keys to pan");
+    expect(html).toContain("Use arrow keys to pan. Hold Ctrl or Command while scrolling to zoom");
   });
 
-  test("focused diagram viewports pan with arrow keys without hijacking editable targets", () => {
-    class FakeElement {
-      listeners = new Map<string, (event: Record<string, unknown>) => void>();
-      style: Record<string, string> = {};
-      textContent = "";
-      isContentEditable = false;
+  test("focused diagram viewports pan through real focus and keyboard event dispatch", async () => {
+    const browser = new Browser();
+    const page = browser.newPage();
+    try {
+      page.content = renderBlock({
+        id: "keyboard-runtime-diagram",
+        type: "ArchitectureDiagram",
+        props: { title: "Keyboard runtime diagram" },
+        body: "flowchart LR\nA --> B",
+      }, { staticMode: false });
+      Object.assign(page.mainFrame.window, { Math, WeakMap });
+      page.evaluate(staticPlanClientScript);
+      const window = page.mainFrame.window;
 
-      constructor(
-        readonly tagName: string,
-        private readonly children: Record<string, FakeElement> = {},
-      ) {}
+      const viewport = window.document.querySelector<HTMLElement>(".mermaid-viewport");
+      const canvas = window.document.querySelector<HTMLElement>(".mermaid-canvas");
+      expect(viewport).not.toBeNull();
+      expect(canvas).not.toBeNull();
+      if (!viewport || !canvas) throw new Error("Rendered diagram is missing its viewport or canvas");
 
-      addEventListener(type: string, listener: (event: Record<string, unknown>) => void) {
-        this.listeners.set(type, listener);
+      viewport.focus();
+      expect(window.document.activeElement).toBe(viewport);
+      expect(canvas.style.transform).toBe("translate(0px, 0px) scale(1)");
+
+      const right = new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+      viewport.dispatchEvent(right);
+      expect(right.defaultPrevented).toBe(true);
+      expect(canvas.style.transform).toBe("translate(-40px, 0px) scale(1)");
+
+      const down = new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
+      viewport.dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(true);
+      expect(canvas.style.transform).toBe("translate(-40px, -40px) scale(1)");
+
+      for (const modifier of ["altKey", "ctrlKey", "metaKey", "shiftKey"] as const) {
+        const modifiedArrow = new window.KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          bubbles: true,
+          cancelable: true,
+          [modifier]: true,
+        });
+        viewport.dispatchEvent(modifiedArrow);
+        expect(modifiedArrow.defaultPrevented).toBe(false);
+        expect(canvas.style.transform).toBe("translate(-40px, -40px) scale(1)");
       }
 
-      querySelector(selector: string) {
-        return this.children[selector] ?? null;
-      }
+      const unrelated = new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      viewport.dispatchEvent(unrelated);
+      expect(unrelated.defaultPrevented).toBe(false);
+      expect(canvas.style.transform).toBe("translate(-40px, -40px) scale(1)");
 
-      querySelectorAll() {
-        return [];
-      }
-
-      setAttribute() {}
-      setPointerCapture() {}
+      const input = window.document.createElement("input");
+      viewport.appendChild(input);
+      input.focus();
+      expect(window.document.activeElement).toBe(input);
+      const editableArrow = new window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true });
+      input.dispatchEvent(editableArrow);
+      expect(editableArrow.defaultPrevented).toBe(false);
+      expect(canvas.style.transform).toBe("translate(-40px, -40px) scale(1)");
+    } finally {
+      await browser.close();
     }
-
-    const canvas = new FakeElement("DIV");
-    const source = new FakeElement("PRE");
-    source.textContent = "flowchart LR\nA --> B";
-    const reset = new FakeElement("BUTTON");
-    const viewport = new FakeElement("DIV");
-    const wrap = new FakeElement("DIV", {
-      ".mermaid-canvas": canvas,
-      ".mermaid-source": source,
-      ".mermaid-viewport": viewport,
-      '[data-zoom="reset"]': reset,
-    });
-    const documentListeners = new Map<string, (event: Record<string, unknown>) => void>();
-    const document = {
-      documentElement: { dataset: {} as Record<string, string> },
-      querySelector: () => null,
-      querySelectorAll: (selector: string) => selector === ".mermaid-wrap" ? [wrap] : [],
-      addEventListener: (type: string, listener: (event: Record<string, unknown>) => void) => {
-        documentListeners.set(type, listener);
-      },
-    };
-    const window = {
-      matchMedia: () => ({ matches: false }),
-      mermaid: undefined,
-      open: () => null,
-    };
-
-    runInNewContext(staticPlanClientScript, {
-      document,
-      window,
-      localStorage: { getItem: () => null, setItem: () => {} },
-      HTMLElement: FakeElement,
-      HTMLInputElement: FakeElement,
-      console,
-    });
-
-    const keydown = viewport.listeners.get("keydown");
-    expect(keydown).toBeFunction();
-    const initialTransform = canvas.style.transform;
-    let prevented = false;
-    keydown?.({ key: "ArrowRight", target: viewport, preventDefault: () => { prevented = true; } });
-    expect(canvas.style.transform).not.toBe(initialTransform);
-    expect(prevented).toBe(true);
-
-    const pannedTransform = canvas.style.transform;
-    keydown?.({ key: "Enter", target: viewport, preventDefault: () => {} });
-    expect(canvas.style.transform).toBe(pannedTransform);
-    keydown?.({ key: "ArrowLeft", target: new FakeElement("INPUT"), preventDefault: () => {} });
-    expect(canvas.style.transform).toBe(pannedTransform);
   });
 });
 
