@@ -6,6 +6,9 @@
 - **Natural-language triggers for skill auto-invocation.** Added "visual explainer", "visualize this", "visualize a plan", "make it visual", "show me this visually", and "explain this visually" to the trigger vocabulary so Muse activates without a slash command. Updated the canonical `SKILL.md` `description:` (drives Claude Code + Oh-My-Pi + Pi native loading) plus the rules-based guidance in `configs/cursor/muse.mdc`, `configs/openclaw/AGENTS.md`, `configs/codex/AGENTS.md`, and `configs/pi/AGENTS.md`. Documented the behavior in `README.md`.
 - **Native Codex plugin support.** Added `.codex-plugin/plugin.json` and Codex skill UI metadata, moved direct user-skill installation to the documented `~/.agents/skills` location, added Codex marketplace guidance, and introduced packaging tests that keep OMP, Pi, Claude Code, Codex, and marketplace identities and versions synchronized.
 
+### Changed
+- **Renamed the visual recap command.** `/visual-recap` is now `/generate-visual-recap` so the interactive recap command follows the same verb-first naming pattern as `/generate-visual-plan`. Claude Code users should invoke `/muse:generate-visual-recap`.
+
 ## [0.9.2] - 2026-07-07
 
 ### Removed

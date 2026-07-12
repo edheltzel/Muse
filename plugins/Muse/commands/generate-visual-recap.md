@@ -9,7 +9,7 @@ Create an interactive Muse recap for work that already exists. This is the rever
 ## Usage
 
 ```text
-/visual-recap [branch | commit | PR number | range | diff file]
+/generate-visual-recap [branch | commit | PR number | range | diff file]
 ```
 
 Default scope: compare the current branch against its merge base with the default branch.
