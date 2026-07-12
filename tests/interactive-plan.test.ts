@@ -156,6 +156,13 @@ describe("interactive plan rendering", () => {
       expect(indexHtml).toContain("class=\"ve-ip-source\"");
       expect(indexHtml).toContain("navigator.clipboard");
       expect(staticHtml).toContain("data-component-explorer");
+      expect(indexHtml).toContain(`<h2 id="component-explorer-title">Catalog</h2>`);
+      expect(indexHtml).toContain("<h2>Review Scenario</h2>");
+      expect(indexHtml).toContain("<h2>QA / reference inventory</h2>");
+      expect(indexHtml).toContain(`data-component-count="${MDX_COMPONENT_NAMES.length}"`);
+      expect(indexHtml).toContain(`${MDX_COMPONENT_NAMES.length} components`);
+      expect(indexHtml).toContain("Canonical denominator: MDX_COMPONENT_NAMES");
+      expect(indexHtml).not.toContain("18/18");
 
       for (const componentName of MDX_COMPONENT_NAMES) {
         expect(indexHtml).toContain(`data-block-type="${componentName}"`);

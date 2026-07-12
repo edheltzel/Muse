@@ -563,7 +563,12 @@ tr:last-child td { border-bottom: 0; }
     width: min(100% - 1.5rem, 74rem);
     padding: 1rem 0 4rem;
   }
-  .ve-ip-chrome { top: auto; bottom: 1rem; }
+  .ve-ip-chrome {
+    position: static;
+    display: flex;
+    width: max-content;
+    margin: .75rem .75rem 0 auto;
+  }
   .ve-ip-page-header { min-height: 24rem; }
   .ve-ip-explorer-intro { grid-template-columns: 1fr; }
   .ve-ip-component-meta { grid-template-columns: 1fr; gap: .25rem; }
@@ -589,7 +594,7 @@ function componentExplorerFor(plan: LoadedPlanFolder): string {
     `<button type="button" data-component-filter="" aria-pressed="true">All</button>`,
     ...categories.map((category) => `<button type="button" data-component-filter="${escapeHtml(category)}" aria-pressed="false">${escapeHtml(category)}</button>`),
   ].join("");
-  return `<section class="ve-ip-explorer" data-component-explorer data-component-count="${MDX_COMPONENT_NAMES.length}" aria-labelledby="component-explorer-title"><div class="ve-ip-explorer-intro"><div><p class="ve-ip-label">Human reference</p><h2 id="component-explorer-title">Browse every Muse component</h2><p>Search by component name or purpose, filter by family, inspect the rendered result, then copy the exact MDX source.</p></div><label class="ve-ip-search"><span>Search components</span><input type="search" data-component-search placeholder="Try “diagram”, “risk”, or “review”" autocomplete="off" /></label></div><div class="ve-ip-filter-row" role="group" aria-label="Component families">${filters}</div><p class="ve-ip-results" data-component-results aria-live="polite">${MDX_COMPONENT_NAMES.length} components</p></section>`;
+  return `<section class="ve-ip-explorer" data-component-explorer data-component-count="${MDX_COMPONENT_NAMES.length}" aria-labelledby="component-explorer-title"><div class="ve-ip-explorer-intro"><div><p class="ve-ip-label">Component reference</p><h2 id="component-explorer-title">Catalog</h2><p>Browse all ${MDX_COMPONENT_NAMES.length} renderer-owned MDX components. Search by component name or purpose, filter by family, inspect the rendered result, then copy the exact MDX source.</p></div><label class="ve-ip-search"><span>Search components</span><input type="search" data-component-search placeholder="Try “diagram”, “risk”, or “review”" autocomplete="off" /></label></div><div class="ve-ip-filter-row" role="group" aria-label="Component families">${filters}</div><p class="ve-ip-results" data-component-results aria-live="polite">${MDX_COMPONENT_NAMES.length} components</p></section>`;
 }
 
 function navFor(plan: LoadedPlanFolder): string {
