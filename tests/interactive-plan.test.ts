@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
+import { staticPlanClientScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
+import { renderBlock } from "../plugins/Muse/skills/muse/tools/interactive-plan/components.ts";
 import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 import {
   addComment,
@@ -139,6 +142,135 @@ describe("interactive plan rendering", () => {
       expectNoForbiddenRuntimeReferences(indexHtml);
       expectNoForbiddenRuntimeReferences(staticHtml);
     });
+  });
+});
+
+describe("generic table and Mermaid accessibility", () => {
+  test.each(["ApiSurface", "DataModel", "Table"])("%s uses its first row as column headers", (type) => {
+    const html = renderBlock({
+      id: `${type.toLowerCase()}-test`,
+      type,
+      props: { title: `${type} test` },
+      body: "Name | Type\nstatus | string",
+    }, { staticMode: false });
+
+    expect(html).toContain("<thead><tr><th scope=\"col\">Name</th><th scope=\"col\">Type</th></tr></thead>");
+    expect(html).toContain("<tbody><tr><td>status</td><td>string</td></tr></tbody>");
+  });
+
+  test("generic tables remain valid with empty or header-only input", () => {
+    const empty = renderBlock({
+      id: "empty-table",
+      type: "Table",
+      props: { title: "Empty table" },
+      body: "",
+    }, { staticMode: false });
+    const headerOnly = renderBlock({
+      id: "header-only-table",
+      type: "Table",
+      props: { title: "Header-only table" },
+      body: "Name | Type",
+    }, { staticMode: false });
+
+    expect(empty).toContain("<table><tbody></tbody></table>");
+    expect(empty).not.toContain("<thead>");
+    expect(headerOnly).toContain("<thead><tr><th scope=\"col\">Name</th><th scope=\"col\">Type</th></tr></thead><tbody></tbody>");
+  });
+
+  test("diagram controls and viewport expose descriptive keyboard affordances", () => {
+    const html = renderBlock({
+      id: "keyboard-diagram",
+      type: "ArchitectureDiagram",
+      props: { title: "Keyboard diagram" },
+      body: "flowchart LR\nA --> B",
+    }, { staticMode: false });
+
+    expect(html).toContain("aria-label=\"Zoom out\"");
+    expect(html).toContain("aria-label=\"Reset zoom and position\"");
+    expect(html).toContain("aria-label=\"Zoom in\"");
+    expect(html).toContain("aria-label=\"Expand diagram\"");
+    expect(html).toContain("tabindex=\"0\"");
+    expect(html).toContain("aria-describedby=\"keyboard-diagram-instructions\"");
+    expect(html).toContain("id=\"keyboard-diagram-instructions\"");
+    expect(html).toContain("Use arrow keys to pan");
+  });
+
+  test("focused diagram viewports pan with arrow keys without hijacking editable targets", () => {
+    class FakeElement {
+      listeners = new Map<string, (event: Record<string, unknown>) => void>();
+      style: Record<string, string> = {};
+      textContent = "";
+      isContentEditable = false;
+
+      constructor(
+        readonly tagName: string,
+        private readonly children: Record<string, FakeElement> = {},
+      ) {}
+
+      addEventListener(type: string, listener: (event: Record<string, unknown>) => void) {
+        this.listeners.set(type, listener);
+      }
+
+      querySelector(selector: string) {
+        return this.children[selector] ?? null;
+      }
+
+      querySelectorAll() {
+        return [];
+      }
+
+      setAttribute() {}
+      setPointerCapture() {}
+    }
+
+    const canvas = new FakeElement("DIV");
+    const source = new FakeElement("PRE");
+    source.textContent = "flowchart LR\nA --> B";
+    const reset = new FakeElement("BUTTON");
+    const viewport = new FakeElement("DIV");
+    const wrap = new FakeElement("DIV", {
+      ".mermaid-canvas": canvas,
+      ".mermaid-source": source,
+      ".mermaid-viewport": viewport,
+      '[data-zoom="reset"]': reset,
+    });
+    const documentListeners = new Map<string, (event: Record<string, unknown>) => void>();
+    const document = {
+      documentElement: { dataset: {} as Record<string, string> },
+      querySelector: () => null,
+      querySelectorAll: (selector: string) => selector === ".mermaid-wrap" ? [wrap] : [],
+      addEventListener: (type: string, listener: (event: Record<string, unknown>) => void) => {
+        documentListeners.set(type, listener);
+      },
+    };
+    const window = {
+      matchMedia: () => ({ matches: false }),
+      mermaid: undefined,
+      open: () => null,
+    };
+
+    runInNewContext(staticPlanClientScript, {
+      document,
+      window,
+      localStorage: { getItem: () => null, setItem: () => {} },
+      HTMLElement: FakeElement,
+      HTMLInputElement: FakeElement,
+      console,
+    });
+
+    const keydown = viewport.listeners.get("keydown");
+    expect(keydown).toBeFunction();
+    const initialTransform = canvas.style.transform;
+    let prevented = false;
+    keydown?.({ key: "ArrowRight", target: viewport, preventDefault: () => { prevented = true; } });
+    expect(canvas.style.transform).not.toBe(initialTransform);
+    expect(prevented).toBe(true);
+
+    const pannedTransform = canvas.style.transform;
+    keydown?.({ key: "Enter", target: viewport, preventDefault: () => {} });
+    expect(canvas.style.transform).toBe(pannedTransform);
+    keydown?.({ key: "ArrowLeft", target: new FakeElement("INPUT"), preventDefault: () => {} });
+    expect(canvas.style.transform).toBe(pannedTransform);
   });
 });
 

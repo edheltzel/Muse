@@ -130,6 +130,34 @@ const baseClientScript = `
     const viewport = wrap.querySelector(".mermaid-viewport");
     if (!viewport) return;
     let drag = null;
+    viewport.addEventListener("keydown", (event) => {
+      const target = event.target;
+      if (
+        event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)))
+      ) return;
+      const state = stateFor(wrap);
+      switch (event.key) {
+        case "ArrowLeft":
+          state.x += 40;
+          break;
+        case "ArrowRight":
+          state.x -= 40;
+          break;
+        case "ArrowUp":
+          state.y += 40;
+          break;
+        case "ArrowDown":
+          state.y -= 40;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      applyTransform(wrap);
+    });
     viewport.addEventListener("wheel", (event) => {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();

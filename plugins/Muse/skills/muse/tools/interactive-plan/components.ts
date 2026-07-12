@@ -47,7 +47,8 @@ function renderDecisionMatrix(block: MdxBlock): string {
 }
 
 function renderArchitectureDiagram(block: MdxBlock): string {
-  return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint">Scroll to zoom, drag to pan, expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}"><div class="zoom-controls"><button type="button" data-zoom="out">−</button><button type="button" data-zoom="reset">100%</button><button type="button" data-zoom="in">+</button><button type="button" data-expand>⛶</button></div><div class="mermaid-viewport"><pre class="mermaid-source">${escapeHtml(block.body)}</pre><div class="mermaid-canvas" aria-label="${title(block)} diagram"></div></div></div></div>`);
+  const instructionsId = `${escapeHtml(block.id)}-instructions`;
+  return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint" id="${instructionsId}">Use arrow keys to pan. Scroll to zoom, drag to pan, or expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}"><div class="zoom-controls"><button type="button" data-zoom="out" aria-label="Zoom out">−</button><button type="button" data-zoom="reset" aria-label="Reset zoom and position">100%</button><button type="button" data-zoom="in" aria-label="Zoom in">+</button><button type="button" data-expand aria-label="Expand diagram">⛶</button></div><div class="mermaid-viewport" tabindex="0" role="region" aria-label="${title(block)} interactive diagram" aria-describedby="${instructionsId}"><pre class="mermaid-source">${escapeHtml(block.body)}</pre><div class="mermaid-canvas" aria-label="${title(block)} diagram"></div></div></div></div>`);
 }
 
 function renderTimeline(block: MdxBlock): string {
@@ -121,8 +122,13 @@ function renderStatusDashboard(block: MdxBlock): string {
 }
 
 function renderTableLike(block: MdxBlock): string {
-  const rows = splitLines(block.body).map((line) => `<tr>${splitPipeFields(line).map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("");
-  return card(block, "ve-ip-card", `<table><tbody>${rows}</tbody></table>`);
+  const rows = splitLines(block.body);
+  const header = rows.shift();
+  const head = header
+    ? `<thead><tr>${splitPipeFields(header).map((cell) => `<th scope="col">${escapeHtml(cell)}</th>`).join("")}</tr></thead>`
+    : "";
+  const body = rows.map((line) => `<tr>${splitPipeFields(line).map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("");
+  return card(block, "ve-ip-card", `<table>${head}<tbody>${body}</tbody></table>`);
 }
 
 const renderers: Readonly<Record<string, Renderer | undefined>> = {

@@ -15,7 +15,7 @@ Use these components to make plans visually informative and interactive.
 - `PlanSummary` — hero summary with goal, scope, audience, and status.
 - `StatusDashboard` — KPI/status cards.
 - `DecisionMatrix` — decision/rationale/status table.
-- `ArchitectureDiagram` — Mermaid diagram wrapped with Muse diagram chrome.
+- `ArchitectureDiagram` — Mermaid diagram with named zoom/expand controls and a focusable, arrow-key-pannable viewport.
 - `ImplementationTimeline` — ordered implementation units.
 - `RiskRegister` — risk/mitigation/severity table.
 
@@ -24,8 +24,9 @@ Use these components to make plans visually informative and interactive.
 - `FileMap` / `FileTree` — repo-relative file footprints.
 - `AnnotatedCode` — focused code with file header.
 - `DiffTabs` — key changes grouped in tabs.
-- `ApiSurface` — API/command/route contract table.
-- `DataModel` — schema/entity table.
+- `ApiSurface` — API/command/route contract table; the first pipe-separated row defines column headers.
+- `DataModel` — schema/entity table; the first pipe-separated row defines column headers.
+- `Table` — generic data table; the first pipe-separated row defines column headers.
 
 ## UI/product components
 
