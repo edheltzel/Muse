@@ -441,8 +441,29 @@ async function assertPersistenceContract(baseUrl: string): Promise<void> {
   const revision = await waitForAuthoritativeState("revision transition", (state) => state.status === "needs_revision");
   assert.equal(revision.status, "needs_revision");
 
+  await browser(
+    "wait",
+    "--fn",
+    "document.body.dataset.reviewAuthority === 'ready' && document.querySelector('[data-persistence-key=\"revision\"]')?.dataset.persistenceState === 'saved' && document.querySelector('[data-approve-plan]')?.disabled === false",
+  );
+  assert.equal(
+    await evaluate<boolean>("document.querySelector('[data-approve-plan]')?.disabled === false"),
+    true,
+    "approval pointer target must be enabled before clicking",
+  );
+  await browser("network", "requests", "--clear");
+
   await pointerClick("[data-approve-plan]");
   const approved = await waitForAuthoritativeState("approval transition", (state) => state.status === "approved");
+  const approvalNetwork = JSON.parse(await browser("network", "requests", "--json")) as NetworkLog;
+  assert.equal(approvalNetwork.success, true, "approval network observation must succeed");
+  assert.equal(
+    approvalNetwork.data.requests.some((request) =>
+      request.method.toUpperCase() === "POST" && new URL(request.url).pathname === "/api/approve"
+    ),
+    true,
+    "approval pointer click must emit POST /api/approve",
+  );
   const handoff = await evaluate<{ status: string; answers: Record<string, string>; verification: string[] }>("fetch('/agent-handoff.json').then((response) => response.json())");
   assert.equal(approved.status, "approved");
   assert.equal(approved.reviewer, "local-reviewer");

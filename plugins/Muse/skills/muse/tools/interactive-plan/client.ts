@@ -204,9 +204,14 @@ const baseClientScript = `
       applyTransform(wrap);
     }
     if (target.closest("[data-expand]")) {
-      const svg = wrap.querySelector(".mermaid-canvas svg")?.outerHTML || wrap.querySelector(".mermaid-source")?.textContent || "";
+      const renderedSvg = wrap.querySelector(".mermaid-canvas svg")?.outerHTML;
+      let content = renderedSvg;
+      if (!content) {
+        const source = wrap.querySelector(".mermaid-source")?.textContent || "";
+        content = "<pre style='white-space:pre-wrap;color:#f1f3f5'>" + source.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;") + "</pre>";
+      }
       const popup = window.open("", "_blank");
-      popup?.document.write("<!doctype html><title>Muse diagram</title><body style='margin:0;background:#101418;display:grid;place-items:center;min-height:100vh;padding:32px'>" + svg + "</body>");
+      popup?.document.write("<!doctype html><title>Muse diagram</title><body style='margin:0;background:#101418;display:grid;place-items:center;min-height:100vh;padding:32px'>" + content + "</body>");
       popup?.document.close();
     }
   });
@@ -486,6 +491,11 @@ export const interactivePlanInteractionScript = `
     throw new Error("Review state and comments changed while loading. Retry.");
   };
 
+  const applyCoherentServerTruth = async () => {
+    const truth = await fetchServerTruth();
+    applyServerTruth(truth.state, truth.comments);
+  };
+
   const updateSyncNotice = (state, title, detail, retry) => {
     document.body.dataset.reviewAuthority = state;
     const sync = document.querySelector("[data-review-sync]");
@@ -685,7 +695,7 @@ export const interactivePlanInteractionScript = `
       const operation = {
         key: "revision",
         write: () => postJson("/api/state", { status: "needs_revision" }),
-        apply: (state) => applyServerTruth(state, committedComments),
+        apply: applyCoherentServerTruth,
         matchesCommitted: () => committedState?.status === "needs_revision",
       };
       await runPersistenceOperation(operation);
@@ -719,7 +729,7 @@ export const interactivePlanInteractionScript = `
       const operation = {
         key: "checklist:" + id,
         write: () => postJson("/api/state", { checklist: { [id]: checked } }),
-        apply: (state) => applyServerTruth(state, committedComments),
+        apply: applyCoherentServerTruth,
         matchesCommitted: () => committedState?.checklist[id] === checked,
       };
       await runPersistenceOperation(operation);
@@ -731,7 +741,7 @@ export const interactivePlanInteractionScript = `
       const operation = {
         key: "answer:" + id,
         write: () => postJson("/api/state", { answers: { [id]: answer } }),
-        apply: (state) => applyServerTruth(state, committedComments),
+        apply: applyCoherentServerTruth,
         matchesCommitted: () => committedState?.answers[id] === answer,
       };
       await runPersistenceOperation(operation);

@@ -11,6 +11,7 @@ import {
   type Document as HappyDocument,
   type Element as HappyElement,
   type HTMLElement as HappyHTMLElement,
+  type HTMLInputElement as HappyHTMLInputElement,
   type IKeyboardEventInit,
   type KeyboardEvent as HappyKeyboardEvent,
 } from "happy-dom";
@@ -1476,11 +1477,11 @@ describe("generic table and Mermaid accessibility", () => {
     }
   });
 
-  test("missing Mermaid runtime marks the fallback and expands authored source", async () => {
+  test("missing Mermaid runtime expands authored markup as inert source text", async () => {
     const browser = new Browser();
     const page = browser.newPage();
     const writes: string[] = [];
-    const source = "flowchart LR\nA --> B";
+    const source = "flowchart LR\nA --> <img id=\"fallback-injection\" alt=\"injected fallback\">";
     try {
       page.content = renderBlock({
         id: "fallback-diagram",
@@ -1506,7 +1507,9 @@ describe("generic table and Mermaid accessibility", () => {
       expect(window.document.querySelector(".mermaid-wrap")?.getAttribute("data-render-state")).toBe("missing-runtime");
       queryHtml(window.document, "[data-expand]")?.click();
       expect(writes).toHaveLength(1);
-      expect(writes[0]).toContain(source);
+      expect(writes[0]).toContain("<pre");
+      expect(writes[0]).toContain("&lt;img id=\"fallback-injection\" alt=\"injected fallback\"&gt;");
+      expect(writes[0]).not.toContain("<img");
       expect(writes[0]).not.toContain("<svg");
     } finally {
       await browser.close();
@@ -1967,6 +1970,89 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
+  test("retries failed answer and checklist writes and reconciles coherent server truth", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await updateReviewState(planDir, {
+        answers: { runtime: "Committed runtime" },
+        checklist: { schema: false },
+      });
+      const server = await servePlan(planDir, 0);
+      let window: Window | undefined;
+      try {
+        if (server.port === undefined) throw new Error("Test server did not bind a port");
+        const baseUrl = `http://localhost:${server.port}/`;
+        let answerWrites = 0;
+        let checklistWrites = 0;
+        const clientFetch: ClientFetch = async (url, init) => {
+          const requestUrl = new URL(url, baseUrl);
+          if (requestUrl.pathname === "/api/state" && init?.method === "POST") {
+            const patch = JSON.parse(String(init.body)) as Partial<ReviewState>;
+            if (patch.answers && answerWrites++ === 0) {
+              return new Response("Injected answer write failure", { status: 503 });
+            }
+            if (patch.checklist && checklistWrites++ === 0) {
+              return new Response("Injected checklist write failure", { status: 503 });
+            }
+          }
+          return fetch(requestUrl, init);
+        };
+        const tracker = trackClientFetch(baseUrl, clientFetch);
+        window = installReviewClient(await (await fetch(baseUrl)).text(), baseUrl, tracker.fetch);
+        await settleClientRequests(tracker, 2);
+
+        const answer = window.document.querySelector('[data-plan-questions] input[name="runtime"]') as HappyHTMLInputElement;
+        const answerFeedback = queryHtml(window.document, '[data-persistence-key="answer:runtime"]')!;
+        answer.value = "Retried runtime";
+        answer.dispatchEvent(new window.Event("change", { bubbles: true }));
+        expect(answerFeedback.dataset.persistenceState).toBe("pending");
+        expect(answerFeedback.querySelector("[data-persistence-message]")?.textContent).toBe("Saving…");
+
+        await settleClientRequests(tracker, 5);
+        expect(answer.value).toBe("Committed runtime");
+        expect((await readReviewState(planDir)).answers.runtime).toBe("Committed runtime");
+        expect(answerFeedback.querySelector("[data-persistence-message]")?.textContent).toContain("Injected answer write failure");
+        expect(queryHtml(window.document, '[data-persistence-key="answer:runtime"] [data-persistence-retry]')?.hidden).toBe(false);
+
+        await addComment(planDir, {
+          id: "c-concurrent-retry",
+          blockId: "summary",
+          body: "Concurrent blocker added before retry.",
+        });
+        clickReviewControl(window, '[data-persistence-key="answer:runtime"] [data-persistence-retry]');
+        expect(answerFeedback.dataset.persistenceState).toBe("pending");
+        await settleClientRequests(tracker, 8);
+        expect((await readReviewState(planDir)).answers.runtime).toBe("Retried runtime");
+        expect(answer.value).toBe("Retried runtime");
+        expect(window.document.querySelector("[data-review-comments]")?.textContent).toContain("Concurrent blocker added before retry. — Blocking");
+        expect(window.document.querySelector("[data-approval-readiness]")?.textContent).toContain("1 unresolved blocking comment");
+
+        const checklist = window.document.querySelector('[data-checklist-id="schema"]') as HappyHTMLInputElement;
+        const checklistFeedback = queryHtml(window.document, '[data-persistence-key="checklist:schema"]')!;
+        checklist.checked = true;
+        checklist.dispatchEvent(new window.Event("change", { bubbles: true }));
+        expect(checklistFeedback.dataset.persistenceState).toBe("pending");
+        expect(checklistFeedback.querySelector("[data-persistence-message]")?.textContent).toBe("Saving…");
+
+        await settleClientRequests(tracker, 11);
+        expect(checklist.checked).toBe(false);
+        expect((await readReviewState(planDir)).checklist.schema).toBe(false);
+        expect(checklistFeedback.querySelector("[data-persistence-message]")?.textContent).toContain("Injected checklist write failure");
+        expect(queryHtml(window.document, '[data-persistence-key="checklist:schema"] [data-persistence-retry]')?.hidden).toBe(false);
+
+        clickReviewControl(window, '[data-persistence-key="checklist:schema"] [data-persistence-retry]');
+        expect(checklistFeedback.dataset.persistenceState).toBe("pending");
+        await settleClientRequests(tracker, 14);
+        expect((await readReviewState(planDir)).checklist.schema).toBe(true);
+        expect(checklist.checked).toBe(true);
+        expect(answerWrites).toBe(2);
+        expect(checklistWrites).toBe(2);
+      } finally {
+        window?.close();
+        server.stop(true);
+      }
+    });
+  });
+
   test("updates the review sync banner after every canonical mutation", async () => {
     await withFixture("component-library-showcase", async (planDir) => {
       await updateReviewState(planDir, {
@@ -1994,11 +2080,11 @@ describe("interactive plan review state and handoff", () => {
         expect(detail()).toBe("Draft · 0 unresolved blocking comments");
 
         clickReviewControl(window, "[data-needs-revision]");
-        await settleClientRequests(tracker, 9);
+        await settleClientRequests(tracker, 11);
         expect(detail()).toBe("Needs Revision · 0 unresolved blocking comments");
 
         clickReviewControl(window, "[data-approve-plan]");
-        await settleClientRequests(tracker, 12);
+        await settleClientRequests(tracker, 14);
         expect(detail()).toBe("Approved · 0 unresolved blocking comments");
       } finally {
         window?.close();
