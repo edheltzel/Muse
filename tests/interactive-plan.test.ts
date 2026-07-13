@@ -5,7 +5,9 @@ import type { PathLike } from "node:fs";
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Window } from "happy-dom";
 
+import { interactivePlanReviewScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
 import { decodeMarkdownText, encodeMarkdownText, formatAgentHandoffMarkdown, parseAgentHandoffMarkdown } from "../plugins/Muse/skills/muse/tools/interactive-plan/handoff.ts";
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
 import { acquirePlanLock, tryUnixFlockForTesting } from "../plugins/Muse/skills/muse/tools/interactive-plan/plan-lock.ts";
@@ -49,6 +51,86 @@ function expectNoForbiddenRuntimeReferences(html: string): void {
   expect(html).not.toMatch(/\bAgent Native\b/);
   expect(html).not.toMatch(/\breact\b/i);
   expect(html).not.toMatch(/\breact-dom\b/i);
+}
+
+type ClientFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+function installReviewClient(
+  html: string,
+  baseUrl: string,
+  clientFetch: ClientFetch,
+  prompt: () => string | null = () => null,
+): Window {
+  const window = new Window({ url: baseUrl });
+  window.document.write(html);
+  const install = new Function(
+    "window",
+    "document",
+    "fetch",
+    "CSS",
+    "crypto",
+    "HTMLElement",
+    "HTMLInputElement",
+    "prompt",
+    interactivePlanReviewScript,
+  ) as (...args: unknown[]) => void;
+  install(
+    window,
+    window.document,
+    clientFetch,
+    window.CSS,
+    window.crypto,
+    window.HTMLElement,
+    window.HTMLInputElement,
+    prompt,
+  );
+  return window;
+}
+
+function clickReviewControl(window: Window, selector: string): void {
+  const control = window.document.querySelector(selector);
+  if (!control) throw new Error(`Missing review control: ${selector}`);
+  control.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+}
+
+interface ClientFetchTracker {
+  fetch: ClientFetch;
+  waitForCompleted(count: number): Promise<void>;
+}
+
+function trackClientFetch(
+  baseUrl: string,
+  request: ClientFetch = (url, init) => fetch(new URL(url, baseUrl), init),
+): ClientFetchTracker {
+  let completed = 0;
+  const waiters: Array<{ count: number; resolve: () => void }> = [];
+  return {
+    async fetch(url, init) {
+      try {
+        return await request(url, init);
+      } finally {
+        completed += 1;
+        for (let index = waiters.length - 1; index >= 0; index -= 1) {
+          if (completed < waiters[index].count) continue;
+          waiters[index].resolve();
+          waiters.splice(index, 1);
+        }
+      }
+    },
+    waitForCompleted(count) {
+      if (completed >= count) return Promise.resolve();
+      const pending = Promise.withResolvers<void>();
+      waiters.push({ count, resolve: pending.resolve });
+      return pending.promise;
+    },
+  };
+}
+
+async function settleClientRequests(tracker: ClientFetchTracker, completed: number): Promise<void> {
+  await tracker.waitForCompleted(completed);
+  const turn = Promise.withResolvers<void>();
+  setImmediate(turn.resolve);
+  await turn.promise;
 }
 
 describe("interactive plan MDX loading", () => {
@@ -210,8 +292,6 @@ describe("interactive plan rendering", () => {
       expect(indexHtml).toContain("Review controls unlock after server state and comments load.");
       expect(indexHtml).toMatch(/data-review-control[^>]*disabled|disabled[^>]*data-review-control/);
       expect(indexHtml).toContain('data-review-retry');
-      expect(indexHtml).toContain('getJson("/plan-state.json")');
-      expect(indexHtml).toContain('getJson("/comments.json")');
 
       expect(staticHtml).toContain('data-review-authority="static"');
       expect(staticHtml).not.toContain("Loading saved review");
@@ -231,9 +311,6 @@ describe("interactive plan rendering", () => {
       expect(indexHtml).toContain("Saving…");
       expect(indexHtml).toContain("Saved");
       expect(indexHtml).toContain("Save failed; saved value restored.");
-      expect(indexHtml).toContain("reconcileServerTruth");
-      expect(indexHtml).toContain("matchesCommitted");
-      expect(indexHtml).toContain("persistenceQueue.then");
       expect(indexHtml).toContain('data-approval-readiness');
       expect(indexHtml).toContain("Required values gate approval; advisory values are saved but never block it.");
       expect(indexHtml).toContain('data-approval-receipt');
@@ -350,6 +427,139 @@ describe("interactive plan review state and handoff", () => {
           unresolvedCommentIds: [],
         });
       } finally {
+        server.stop(true);
+      }
+    });
+  });
+
+  test("keeps review authority loading until interleaved hydration reads agree", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await setReadinessPolicy(planDir);
+      await updateReviewState(planDir, {
+        answers: { runtime: "Bun" },
+        checklist: { schema: true },
+      });
+      const staleState = await readReviewState(planDir);
+      await addComment(planDir, {
+        id: "c-interleaved-hydration",
+        blockId: "summary",
+        body: "Concurrent blocking comment.",
+      });
+      const server = await servePlan(planDir, 0);
+      let window: Window | undefined;
+      try {
+        if (server.port === undefined) throw new Error("Test server did not bind a port");
+        const baseUrl = `http://localhost:${server.port}/`;
+        const html = await (await fetch(baseUrl)).text();
+        let stateReads = 0;
+        const secondStateRead = Promise.withResolvers<void>();
+        const coherentStateReleased = Promise.withResolvers<void>();
+        const clientFetch: ClientFetch = async (url, init) => {
+          const requestUrl = new URL(url, baseUrl);
+          if (requestUrl.pathname === "/plan-state.json") {
+            stateReads += 1;
+            if (stateReads === 1) return Response.json(staleState);
+            if (stateReads === 2) {
+              secondStateRead.resolve();
+              await coherentStateReleased.promise;
+            }
+          }
+          return fetch(requestUrl, init);
+        };
+
+        const tracker = trackClientFetch(baseUrl, clientFetch);
+        window = installReviewClient(html, baseUrl, tracker.fetch);
+        await settleClientRequests(tracker, 2);
+        expect(window.document.body.dataset.reviewAuthority).toBe("loading");
+        expect(window.document.querySelector("[data-approve-plan]")?.hasAttribute("disabled")).toBe(true);
+
+        await secondStateRead.promise;
+        coherentStateReleased.resolve();
+        await settleClientRequests(tracker, 4);
+        expect(window.document.body.dataset.reviewAuthority).toBe("ready");
+
+        expect(window.document.querySelector("[data-review-comments]")?.textContent).toContain("Concurrent blocking comment. — Blocking");
+        expect(window.document.querySelector("[data-approval-readiness]")?.textContent).toBe("Not ready: 1 unresolved blocking comment.");
+        expect(window.document.querySelector("[data-approval-readiness]")?.getAttribute("data-ready")).toBe("false");
+        expect(window.document.querySelector("[data-approve-plan]")?.hasAttribute("disabled")).toBe(true);
+      } finally {
+        window?.close();
+        server.stop(true);
+      }
+    });
+  });
+
+  test("updates the review sync banner after every canonical mutation", async () => {
+    await withFixture("component-library-showcase", async (planDir) => {
+      await updateReviewState(planDir, {
+        answers: { palette: "Keep the restrained palette." },
+        checklist: { "all-components": true },
+      });
+      const server = await servePlan(planDir, 0);
+      let window: Window | undefined;
+      try {
+        if (server.port === undefined) throw new Error("Test server did not bind a port");
+        const baseUrl = `http://localhost:${server.port}/`;
+        const html = await (await fetch(baseUrl)).text();
+        const tracker = trackClientFetch(baseUrl);
+        window = installReviewClient(html, baseUrl, tracker.fetch, () => "Canonical blocker");
+        const detail = () => window?.document.querySelector("[data-review-sync-detail]")?.textContent;
+        await settleClientRequests(tracker, 2);
+        expect(detail()).toBe("Draft · 0 unresolved blocking comments");
+
+        clickReviewControl(window, '[data-comment-anchor="component-anchor"]');
+        await settleClientRequests(tracker, 5);
+        expect(detail()).toBe("Draft · 1 unresolved blocking comment");
+
+        clickReviewControl(window, "[data-resolve-comment]");
+        await settleClientRequests(tracker, 8);
+        expect(detail()).toBe("Draft · 0 unresolved blocking comments");
+
+        clickReviewControl(window, "[data-needs-revision]");
+        await settleClientRequests(tracker, 9);
+        expect(detail()).toBe("Needs Revision · 0 unresolved blocking comments");
+
+        clickReviewControl(window, "[data-approve-plan]");
+        await settleClientRequests(tracker, 12);
+        expect(detail()).toBe("Approved · 0 unresolved blocking comments");
+      } finally {
+        window?.close();
+        server.stop(true);
+      }
+    });
+  });
+
+  test("keeps visible readiness aligned with the approval 422 gate", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await setReadinessPolicy(planDir);
+      await updateReviewState(planDir, {
+        answers: { runtime: "Bun" },
+        checklist: { schema: true },
+      });
+      await addComment(planDir, {
+        id: "c-approval-gate",
+        blockId: "summary",
+        body: "Block approval.",
+      });
+      const server = await servePlan(planDir, 0);
+      let window: Window | undefined;
+      try {
+        if (server.port === undefined) throw new Error("Test server did not bind a port");
+        const baseUrl = `http://localhost:${server.port}/`;
+        const tracker = trackClientFetch(baseUrl);
+        window = installReviewClient(await (await fetch(baseUrl)).text(), baseUrl, tracker.fetch);
+        await settleClientRequests(tracker, 2);
+        expect(window.document.body.dataset.reviewAuthority).toBe("ready");
+
+        const readiness = window.document.querySelector("[data-approval-readiness]");
+        expect(readiness?.getAttribute("data-ready")).toBe("false");
+        expect(readiness?.textContent).toBe("Not ready: 1 unresolved blocking comment.");
+        expect(window.document.querySelector("[data-approve-plan]")?.hasAttribute("disabled")).toBe(true);
+        const response = await post(server, "/api/approve", { reviewer: "browser-contract" });
+        expect(response.status).toBe(422);
+        expect(await response.text()).toMatch(/unresolved blocking comments/i);
+      } finally {
+        window?.close();
         server.stop(true);
       }
     });
