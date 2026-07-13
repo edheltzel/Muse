@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { interactivePlanClientScript, staticPlanClientScript } from "./client";
 import { escapeHtml, renderBlocks } from "./components";
 import { loadPlanFolder, type LoadedPlanFolder } from "./mdx-loader";
+import { validateRenderedHtmlIds } from "./schema";
+import { splitTabPanels } from "./shared";
 
 const defaultShell = `<!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -567,7 +569,7 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
   const reviewSync = staticMode
     ? ""
     : `<section class="ve-ip-review-sync" data-review-sync aria-live="polite"><strong data-review-sync-title>Loading saved review…</strong><span data-review-sync-detail>Review controls unlock after server state and comments load.</span><button type="button" data-review-retry hidden>Retry</button></section>`;
-  return template
+  const html = template
     .replaceAll("{{TITLE}}", escapeHtml(plan.manifest.title))
     .replaceAll("{{KIND}}", escapeHtml(plan.manifest.kind))
     .replaceAll("{{SUBTITLE}}", staticMode ? "Static export. Interactive persistence requires the local review bridge." : "Local interactive review surface.")
@@ -577,6 +579,20 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
     .replaceAll("{{CONTENT}}", content)
     .replaceAll("{{STYLE}}", style)
     .replaceAll("{{CLIENT}}", staticMode ? staticPlanClientScript : interactivePlanClientScript);
+  const blocks = [...plan.plan.blocks, ...(plan.canvas?.blocks ?? [])];
+  const expectedIds = blocks.map(({ id }) => id);
+  if (plan.canvas) expectedIds.push("canvas");
+  if (!staticMode) {
+    for (const block of blocks) {
+      if (block.type !== "Tabs" && block.type !== "DiffTabs") continue;
+      splitTabPanels(block.body).forEach((_, index) => {
+        expectedIds.push(`${block.id}-tab-${index}`, `${block.id}-panel-${index}`);
+      });
+    }
+  }
+  const idErrors = validateRenderedHtmlIds(html, expectedIds);
+  if (idErrors.length) throw new Error(`Invalid rendered HTML:\n${idErrors.join("\n")}`);
+  return html;
 }
 
 export async function renderPlanFolder(rootDir: string): Promise<{ indexPath: string; staticExportPath: string }> {

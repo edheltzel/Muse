@@ -91,6 +91,14 @@ file: shell.html
 + Mermaid runtime script
 </DiffTabs>
 
+<Tabs id="tabs" title="Delivery evidence">
+Interactive
+Arrow keys move and activate tabs; Home and End jump to the boundaries.
+---
+Static export
+Every labeled panel remains visible in authored order without tab controls.
+</Tabs>
+
 <ApiSurface id="api" title="Local bridge API">
 Endpoint | Method | Purpose
 /api/state | POST | Persist answers, checklist values, and revision status
@@ -146,7 +154,8 @@ ImplementationTimeline | Planning | Launch sequence
 RiskRegister | Planning | Rollout risks
 FileMap / FileTree | Evidence | Source and generated packet lists
 AnnotatedCode | Evidence | Renderer contract snippet
-DiffTabs / Tabs | Evidence | File-specific change tabs
+DiffTabs | Evidence | File-specific change tabs
+Tabs | Evidence | Labeled delivery evidence
 ApiSurface / DataModel / Table | Contracts | Local bridge tables
 Wireframe / StateGallery / BeforeAfter | Product UI | Review app examples
 QuestionForm / Checklist / ApprovalGate | Interactive review | Reviewer state and handoff controls

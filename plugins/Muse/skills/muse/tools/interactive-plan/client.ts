@@ -155,7 +155,7 @@ const baseClientScript = `
 
 export const staticPlanClientScript = baseClientScript;
 
-export const interactivePlanReviewScript = `
+export const interactivePlanInteractionScript = `
 (() => {
   const getJson = async (url) => {
     const response = await fetch(url);
@@ -448,16 +448,72 @@ export const interactivePlanReviewScript = `
     return execution;
   };
 
+  const ownedTabset = (tab) => {
+    const tablist = tab.parentElement;
+    const group = tablist?.parentElement;
+    if (!tablist?.matches('[role="tablist"]') || !group?.matches(".ve-ip-tabs")) return null;
+    const tabs = Array.from(tablist.children).filter((item) => item.matches('[role="tab"][data-tab-target]'));
+    const panels = Array.from(group.children).filter((item) => item.matches('[role="tabpanel"]'));
+    return tabs.includes(tab) ? { group, panels, tablist, tabs } : null;
+  };
+  const activateTab = (tab, moveFocus = false) => {
+    const owner = ownedTabset(tab);
+    const id = tab.getAttribute("data-tab-target");
+    const matchingPanels = owner?.panels.filter((panel) => panel.id === id) || [];
+    const matchingTabs = owner?.tabs.filter((button) => button.getAttribute("data-tab-target") === id) || [];
+    if (!owner || !id || matchingPanels.length !== 1 || matchingTabs.length !== 1) return false;
+    owner.panels.forEach((panel) => { panel.hidden = panel.id !== id; });
+    owner.tabs.forEach((button) => {
+      const active = button === tab;
+      button.setAttribute("aria-selected", String(active));
+      button.setAttribute("tabindex", active ? "0" : "-1");
+    });
+    if (moveFocus) tab.focus();
+    return true;
+  };
+  const pointerFocus = new WeakMap();
+
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const tab = target.closest('[role="tab"][data-tab-target]');
+    if (tab && document.activeElement instanceof HTMLElement) {
+      pointerFocus.set(tab, document.activeElement);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (
+      !(target instanceof HTMLElement)
+      || !target.matches('[role="tab"][data-tab-target]')
+      || event.altKey
+      || event.ctrlKey
+      || event.metaKey
+      || event.shiftKey
+    ) return;
+    const owner = ownedTabset(target);
+    if (!owner) return;
+    const currentIndex = owner.tabs.indexOf(target);
+    let nextIndex;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % owner.tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + owner.tabs.length) % owner.tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = owner.tabs.length - 1;
+    if (nextIndex === undefined || !activateTab(owner.tabs[nextIndex], true)) return;
+    event.preventDefault();
+  });
+
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
 
-    const tab = target.closest("[data-tab-target]");
+    const tab = target.closest('[role="tab"][data-tab-target]');
     if (tab) {
-      const id = tab.getAttribute("data-tab-target");
-      const group = tab.closest(".ve-ip-tabs");
-      group?.querySelectorAll("[role=tabpanel]").forEach((panel) => { panel.hidden = panel.id !== id; });
-      group?.querySelectorAll("[role=tab]").forEach((button) => button.setAttribute("aria-selected", String(button === tab)));
+      const activated = activateTab(tab);
+      const previousFocus = pointerFocus.get(tab);
+      pointerFocus.delete(tab);
+      if (!activated && previousFocus instanceof HTMLElement) previousFocus.focus();
     }
 
     const hydrationRetry = target.closest("[data-review-retry]");
@@ -571,4 +627,5 @@ export const interactivePlanReviewScript = `
   hydrateReviewState();
 })();`;
 
-export const interactivePlanClientScript = baseClientScript + interactivePlanReviewScript;
+export const interactivePlanReviewScript = interactivePlanInteractionScript;
+export const interactivePlanClientScript = baseClientScript + interactivePlanInteractionScript;
