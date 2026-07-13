@@ -621,18 +621,18 @@ async function quarantineCommittedPointer(
   } catch (error) {
     classificationError = error;
   }
-  if (
-    movedReference
-    && movedReference.id === expected.id
-    && sameGeneration(movedReference.directory, expected.directory)
-  ) {
-    return true;
-  }
   if (moved.stats && sameIdentity(moved.stats, expected.pointer)) {
     if (classificationError !== undefined) {
       throw new AggregateError([classificationError], "Moved expected review pointer could not be verified");
     }
-    throw new Error("Moved expected review pointer resolved a different publication");
+    if (
+      !movedReference
+      || movedReference.id !== expected.id
+      || !sameGeneration(movedReference.directory, expected.directory)
+    ) {
+      throw new Error("Moved expected review pointer resolved a different publication");
+    }
+    return true;
   }
   try {
     if (moved.kind !== "symlink") {
@@ -1390,23 +1390,24 @@ async function recoverCompletedMutation(
   assertCanonicalOwned: AssertLockOwned,
 ): Promise<void> {
   await assertCanonicalOwned();
-  const current = await resolveCurrentBundleIfPresent(planDir);
-  if (
-    !current
-    || current.id !== published.id
-    || !sameGeneration(current.directory, published.directory)
-  ) {
-    return;
+  let store: string;
+  try {
+    store = await resolveStoreDirectory(planDir, false);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
+    throw error;
   }
+  const currentPath = join(store, CURRENT_LINK);
+  const current = await captureCompatibilityPath(currentPath);
+  if (current.kind === "missing" || !current.stats || !sameIdentity(current.stats, published.pointer)) return;
   try {
     await verifyDirectoryBinding(priorBinding);
   } catch (priorError) {
-    const store = await resolveStoreDirectory(planDir, false);
     const storeBinding = await openDirectoryBinding(store);
     try {
       const quarantined = await quarantineCommittedPointer(
         storeBinding,
-        join(store, CURRENT_LINK),
+        currentPath,
         published,
         assertCanonicalOwned,
       );

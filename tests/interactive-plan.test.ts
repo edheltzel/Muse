@@ -2412,17 +2412,75 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
-  test("restores a successor moved during rejected approval quarantine", async () => {
+  test("quarantines a rejected approval when published bundle metadata changes after commit", async () => {
     if (process.platform === "win32") return;
     mock.restore();
     await withFixture("minimal-plan", async (planDir) => {
-      const successorHandoff = await approvePlan(planDir, "first");
+      await approvePlan(planDir, "first");
+      const store = join(planDir, ".muse-review");
+      const pointer = join(store, "current");
+      const lockPath = join(planDir, ".muse-review.lock");
+      const displacedLock = `${lockPath}.displaced`;
+      const originalRename = fs.rename;
+      const originalLstat = fs.lstat;
+      let rejectedTarget: string | undefined;
+      let rejectedPointer: { dev: bigint; ino: bigint } | undefined;
+      let metadataChanged = false;
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        const result = await originalRename(from, to);
+        if (rejectedTarget === undefined && String(to) === pointer) {
+          rejectedTarget = await readlink(pointer);
+          const committed = await originalLstat(pointer, { bigint: true });
+          rejectedPointer = { dev: committed.dev, ino: committed.ino };
+        }
+        return result;
+      });
+      spyOn(fs, "lstat").mockImplementation((async (path: PathLike, options?: object) => {
+        if (!metadataChanged && rejectedTarget !== undefined && String(path) === planDir) {
+          metadataChanged = true;
+          await fs.utimes(join(store, rejectedTarget), new Date(0), new Date(0));
+          await originalRename(lockPath, displacedLock);
+          await writeFile(lockPath, "replacement lock\n");
+        }
+        return originalLstat(path, options as never);
+      }) as typeof fs.lstat);
+
+      await expect(approvePlan(planDir, "second")).rejects.toThrow();
+
+      mock.restore();
+      expect(rejectedTarget).toBeDefined();
+      expect(rejectedPointer).toBeDefined();
+      await expect(lstat(pointer)).rejects.toThrow();
+      const quarantined = (await readdir(store))
+        .filter((entry) => entry.startsWith("current.") && entry.endsWith(".invalid"));
+      expect(quarantined).toHaveLength(1);
+      const quarantinedPointer = join(store, quarantined[0]!);
+      expect(await readlink(quarantinedPointer)).toBe(rejectedTarget!);
+      const quarantinedIdentity = await lstat(quarantinedPointer, { bigint: true });
+      expect({ dev: quarantinedIdentity.dev, ino: quarantinedIdentity.ino }).toEqual(rejectedPointer!);
+      const recoveredState = await readReviewState(planDir);
+      expect(recoveredState.status).toBe("needs_revision");
+      expect(recoveredState.reviewer).toBeUndefined();
+      await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow(
+        /no coherent approved handoff/i,
+      );
+      await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow(
+        /no coherent approved handoff/i,
+      );
+    });
+  });
+
+  async function verifyRejectedApprovalSuccessorRestoration(successorUsesRejectedBundle: boolean): Promise<void> {
+    if (process.platform === "win32") return;
+    mock.restore();
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "first");
       const store = join(planDir, ".muse-review");
       const pointer = join(store, "current");
       const priorBundle = join(store, await readlink(pointer));
-      const successorTarget = "bundles/00000000-0000-4000-8000-000000000001";
-      const successorBundle = join(store, successorTarget);
-      await cp(priorBundle, successorBundle, { recursive: true });
+      let successorTarget = "bundles/00000000-0000-4000-8000-000000000001";
+      let successorBundle = join(store, successorTarget);
+      if (!successorUsesRejectedBundle) await cp(priorBundle, successorBundle, { recursive: true });
       const lockPath = join(planDir, ".muse-review.lock");
       const displacedLock = `${lockPath}.displaced`;
       const rejectedQuarantine = join(store, "current.00000000-0000-4000-8000-000000000002.invalid");
@@ -2443,6 +2501,10 @@ describe("interactive plan review state and handoff", () => {
           const rejected = await lstat(pointer, { bigint: true });
           rejectedPointer = { dev: rejected.dev, ino: rejected.ino };
           await originalRename(pointer, rejectedQuarantine);
+          if (successorUsesRejectedBundle) {
+            successorTarget = rejectedTarget;
+            successorBundle = join(store, successorTarget);
+          }
           await fs.symlink(successorTarget, pointer);
           const successor = await lstat(pointer, { bigint: true });
           successorPointer = { dev: successor.dev, ino: successor.ino };
@@ -2465,14 +2527,12 @@ describe("interactive plan review state and handoff", () => {
       expect(rejectedPointer).toBeDefined();
       expect(successorPointer).toBeDefined();
       expect(await readlink(pointer)).toBe(successorTarget);
-      expect(JSON.parse(await readPublishedArtifact(planDir, "agent-handoff.json"))).toEqual(successorHandoff);
-      expect(await readPublishedArtifact(planDir, "agent-handoff.md")).toBe(
-        await readFile(join(successorBundle, "agent-handoff.md"), "utf8"),
-      );
-      expect(JSON.parse(await readFile(join(planDir, "agent-handoff.json"), "utf8"))).toEqual(successorHandoff);
-      expect(await readFile(join(planDir, "agent-handoff.md"), "utf8")).toBe(
-        await readFile(join(successorBundle, "agent-handoff.md"), "utf8"),
-      );
+      const successorHandoffJson = await readFile(join(successorBundle, "agent-handoff.json"), "utf8");
+      const successorHandoffMarkdown = await readFile(join(successorBundle, "agent-handoff.md"), "utf8");
+      expect(await readPublishedArtifact(planDir, "agent-handoff.json")).toBe(successorHandoffJson);
+      expect(await readPublishedArtifact(planDir, "agent-handoff.md")).toBe(successorHandoffMarkdown);
+      expect(await readFile(join(planDir, "agent-handoff.json"), "utf8")).toBe(successorHandoffJson);
+      expect(await readFile(join(planDir, "agent-handoff.md"), "utf8")).toBe(successorHandoffMarkdown);
       const quarantined = (await readdir(store))
         .filter((entry) => entry.startsWith("current.") && entry.endsWith(".invalid"));
       expect(quarantined).toEqual([rejectedQuarantine.split("/").at(-1)!]);
@@ -2480,6 +2540,14 @@ describe("interactive plan review state and handoff", () => {
       const quarantinedRejection = await lstat(rejectedQuarantine, { bigint: true });
       expect({ dev: quarantinedRejection.dev, ino: quarantinedRejection.ino }).toEqual(rejectedPointer!);
     });
+  }
+
+  test("restores a successor moved during rejected approval quarantine", async () => {
+    await verifyRejectedApprovalSuccessorRestoration(false);
+  });
+
+  test("restores a same-bundle successor moved during rejected approval quarantine", async () => {
+    await verifyRejectedApprovalSuccessorRestoration(true);
   });
 
   test("fails closed when the prior bundle is rebound at rollback commit", async () => {
