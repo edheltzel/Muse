@@ -273,6 +273,93 @@ describe("generic table and Mermaid accessibility", () => {
       await browser.close();
     }
   });
+
+  test("theme transitions rerender Mermaid once with the stable theme while preserving transforms", async () => {
+    const browser = new Browser();
+    const page = browser.newPage();
+    try {
+      page.content = `<button type="button" data-theme-toggle><span data-theme-toggle-label></span></button>${renderBlock({
+        id: "theme-runtime-diagram",
+        type: "ArchitectureDiagram",
+        props: { title: "Theme runtime diagram" },
+        body: "flowchart LR\nA --> B",
+      }, { staticMode: false })}`;
+      const renderedColors: string[] = [];
+      const pendingRenders: Array<() => void> = [];
+      let initializedColor = "";
+      Object.assign(page.mainFrame.window, {
+        Array,
+        Math,
+        String,
+        WeakMap,
+        mermaid: {
+          initialize(config: { themeVariables: { lineColor: string } }) {
+            initializedColor = config.themeVariables.lineColor;
+          },
+          render() {
+            const color = initializedColor;
+            renderedColors.push(color);
+            return new Promise<{ svg: string }>((resolve) => {
+              pendingRenders.push(() => resolve({ svg: `<svg data-line-color="${color}"></svg>` }));
+            });
+          },
+        },
+      });
+      const window = page.mainFrame.window;
+      window.localStorage.setItem("ve-ip-theme", "light");
+      const completeRender = async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(pendingRenders).toHaveLength(1);
+        pendingRenders.shift()?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      };
+      page.evaluate(staticPlanClientScript);
+      await completeRender();
+
+      const toggle = window.document.querySelector<HTMLElement>("[data-theme-toggle]");
+      const zoomIn = window.document.querySelector<HTMLElement>('[data-zoom="in"]');
+      const canvas = window.document.querySelector<HTMLElement>(".mermaid-canvas");
+      const source = window.document.querySelector<HTMLElement>(".mermaid-source");
+      expect(toggle).not.toBeNull();
+      expect(zoomIn).not.toBeNull();
+      expect(canvas).not.toBeNull();
+      expect(source).not.toBeNull();
+      if (!toggle || !zoomIn || !canvas) throw new Error("Rendered diagram is missing theme or zoom controls");
+
+      zoomIn.click();
+      const transform = canvas.style.transform;
+      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#278195");
+
+      toggle.click();
+      await completeRender();
+      expect(window.document.documentElement.dataset.theme).toBe("dark");
+      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#66b9c9");
+      expect(canvas.style.transform).toBe(transform);
+
+      toggle.click();
+      await completeRender();
+      expect(window.document.documentElement.dataset.theme).toBe("light");
+      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#278195");
+      expect(canvas.style.transform).toBe(transform);
+
+      toggle.click();
+      toggle.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(pendingRenders).toHaveLength(0);
+      expect(window.document.documentElement.dataset.theme).toBe("light");
+      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#278195");
+      expect(canvas.style.transform).toBe(transform);
+      expect(renderedColors).toEqual(["#278195", "#66b9c9", "#278195"]);
+      expect(source?.textContent?.trim()).toBe("flowchart LR\nA --> B");
+    } finally {
+      await browser.close();
+    }
+  });
 });
 
 describe("interactive plan review state and handoff", () => {
