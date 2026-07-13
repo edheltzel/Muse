@@ -128,10 +128,9 @@ export function getRendererOwnedIds(block: RendererOwnedIdContext): string[] {
   const roles = RENDERER_OWNED_ID_INVENTORY[
     block.type as keyof typeof RENDERER_OWNED_ID_INVENTORY
   ] as RendererOwnedIdRoles | undefined;
-  return [
-    ...getRendererOwnedIdsByRole(block, "title"),
-    ...(roles ? Object.values(roles).flatMap((createIds) => createIds(block)) : []),
-  ];
+  const ids = roles ? Object.values(roles).flatMap((createIds) => createIds(block)) : [];
+  if (block.type !== "CommentAnchor") ids.unshift(...getRendererOwnedIdsByRole(block, "title"));
+  return ids;
 }
 export function splitLines(body: string): string[] {
   return body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);

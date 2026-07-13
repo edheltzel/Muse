@@ -1011,15 +1011,22 @@ describe("interactive plan rendering", () => {
       expectNoForbiddenRuntimeReferences(staticHtml);
     });
   });
-  test("renders non-styleguide CommentAnchor blocks in interactive and static output", async () => {
+  test("scopes CommentAnchor title IDs to component explorer cards", async () => {
     const planDir = await mkdtemp(join(tmpdir(), "ve-ip-comment-anchor-render-"));
+    const source = '<CommentAnchor id="comment-target" />\n<Callout id="comment-target-title">Valid sibling</Callout>';
     try {
-      await writeFile(join(planDir, "plan.mdx"), '<CommentAnchor id="comment-target" />');
+      await writeFile(join(planDir, "plan.mdx"), source);
       const plan = await loadPlanFolder(planDir);
       for (const staticMode of [false, true]) {
         const html = await renderPlanHtml(plan, staticMode);
         expect(html).toContain('id="comment-target"');
-        expect(html).not.toContain('id="comment-target-title"');
+        expect(validateRenderedHtmlIds(html, ["comment-target", "comment-target-title", "comment-target-title-title"])).toEqual([]);
+      }
+
+      await writeFile(join(planDir, "visual-explainer.json"), JSON.stringify({ kind: "styleguide" }));
+      const styleguide = await loadPlanFolder(planDir);
+      for (const staticMode of [false, true]) {
+        await expect(renderPlanHtml(styleguide, staticMode)).rejects.toThrow("Rendered HTML contains duplicate id 'comment-target-title'");
       }
     } finally {
       await rm(planDir, { recursive: true, force: true });
