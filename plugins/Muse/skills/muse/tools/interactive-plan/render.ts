@@ -749,10 +749,13 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
     .replaceAll("{{MERMAID_SRI}}", MERMAID_SHA384)
     .replaceAll("{{CLIENT}}", staticMode ? staticPlanClientScript : interactivePlanClientScript);
   const blocks = [...plan.plan.blocks, ...(plan.canvas?.blocks ?? [])];
+  const componentExplorerBlocks = componentExplorer ? new Set(plan.plan.blocks) : undefined;
   const expectedIds = blocks.map(({ id }) => id);
   if (plan.canvas) expectedIds.push("canvas");
   for (const block of blocks) {
-    expectedIds.push(...getRendererOwnedIdsByRole(block, "title"));
+    if (block.type !== "CommentAnchor" || componentExplorerBlocks?.has(block)) {
+      expectedIds.push(...getRendererOwnedIdsByRole(block, "title"));
+    }
     expectedIds.push(...getRendererOwnedIdsByRole(block, "instructions"));
     if (staticMode) continue;
     expectedIds.push(...getRendererOwnedIdsByRole(block, "tabs"), ...getRendererOwnedIdsByRole(block, "panels"));

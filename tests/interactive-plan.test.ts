@@ -1011,6 +1011,21 @@ describe("interactive plan rendering", () => {
       expectNoForbiddenRuntimeReferences(staticHtml);
     });
   });
+  test("renders non-styleguide CommentAnchor blocks in interactive and static output", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-comment-anchor-render-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), '<CommentAnchor id="comment-target" />');
+      const plan = await loadPlanFolder(planDir);
+      for (const staticMode of [false, true]) {
+        const html = await renderPlanHtml(plan, staticMode);
+        expect(html).toContain('id="comment-target"');
+        expect(html).not.toContain('id="comment-target-title"');
+      }
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
   test("renders explicit accessible readiness policies in interactive and static output", async () => {
     await withFixture("component-library-showcase", async (planDir) => {
       const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
