@@ -1,51 +1,45 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { access } from "node:fs/promises";
-import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import puppeteer, { type Browser, type Page } from "puppeteer";
 
 import { renderBlock } from "../plugins/Muse/skills/muse/tools/interactive-plan/components.ts";
 import { interactivePlanInteractionScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
+import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 
-const chromeCandidates = [
-  process.env.CHROME_BIN,
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/usr/bin/google-chrome",
-  "/usr/bin/chromium",
-].filter((candidate): candidate is string => Boolean(candidate));
+type TabType = "Tabs" | "DiffTabs";
 
-async function findChrome(): Promise<string> {
-  for (const candidate of chromeCandidates) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      // Try the next conventional installation path.
-    }
-  }
-  throw new Error("Real Chromium tab tests require Chrome; set CHROME_BIN to its executable");
-}
-
-function tabBlock(type: "Tabs" | "DiffTabs"): string {
+function tabBlock(type: TabType): string {
   return renderBlock({
     id: type.toLowerCase(),
     type,
-    props: { title: `${type} pointer contract` },
-    body: "First\nfirst body\n---\nSecond\nsecond body\n---\nThird\nthird body",
+    props: { title: `${type} interaction contract` },
+    body: "file: alpha.ts\nalpha body\n---\nfile: beta.ts\nbeta body\n---\nfile: gamma.ts\ngamma body",
   }, { staticMode: false });
 }
 
-async function installPage(page: Page, type: "Tabs" | "DiffTabs"): Promise<void> {
-  await page.setContent(`<!doctype html><html><body>${tabBlock(type)}<script>${interactivePlanInteractionScript}</script></body></html>`);
+async function installPage(page: Page, type: TabType): Promise<void> {
+  await page.setContent(`<!doctype html><html><body>${tabBlock(type)}<button id="after-tabs">After tabs</button><script>${interactivePlanInteractionScript}</script></body></html>`);
+  await page.evaluate(() => {
+    document.addEventListener("keydown", (event) => {
+      document.body.dataset.keyDefaultPrevented = String(event.defaultPrevented);
+    });
+  });
 }
 
-async function tabState(page: Page, type: "Tabs" | "DiffTabs") {
+async function tabState(page: Page, type: TabType) {
   return page.evaluate((blockId) => {
     const block = document.getElementById(blockId);
     const tabs = [...(block?.querySelectorAll(':scope > .ve-ip-body > .ve-ip-tabs > [role="tablist"] > [role="tab"]') ?? [])];
     const panels = [...(block?.querySelectorAll(':scope > .ve-ip-body > .ve-ip-tabs > [role="tabpanel"]') ?? [])];
     return {
       activeId: document.activeElement?.id,
+      defaultPrevented: document.body.dataset.keyDefaultPrevented,
       tabs: tabs.map((tab) => ({
         id: tab.id,
+        label: tab.textContent,
         selected: tab.getAttribute("aria-selected"),
         tabindex: tab.getAttribute("tabindex"),
       })),
@@ -54,46 +48,98 @@ async function tabState(page: Page, type: "Tabs" | "DiffTabs") {
   }, type.toLowerCase());
 }
 
-describe("interactive plan tabs in real Chromium", () => {
-  let browser: Browser;
+function expectedState(type: TabType, activeIndex: number, activeId: string, defaultPrevented?: string) {
+  const blockId = type.toLowerCase();
+  return {
+    activeId,
+    defaultPrevented,
+    tabs: ["alpha.ts", "beta.ts", "gamma.ts"].map((label, index) => ({
+      id: `${blockId}-tab-${index}`,
+      label,
+      selected: String(index === activeIndex),
+      tabindex: index === activeIndex ? "0" : "-1",
+    })),
+    panels: [0, 1, 2].map((index) => ({
+      id: `${blockId}-panel-${index}`,
+      hidden: index !== activeIndex,
+    })),
+  };
+}
+
+describe("interactive plan tabs in managed Chrome for Testing", () => {
+  let browser: Browser | undefined;
+  let primaryFailure: unknown;
+
+  async function withPage(run: (page: Page) => Promise<void>): Promise<void> {
+    const page = await browser!.newPage();
+    let testFailure: unknown;
+    try {
+      await run(page);
+    } catch (error) {
+      testFailure = error;
+      primaryFailure ??= error;
+      throw error;
+    } finally {
+      try {
+        if (!page.isClosed()) await page.close({ runBeforeUnload: false });
+      } catch (error) {
+        if (!testFailure && browser?.connected) throw error;
+      }
+    }
+  }
 
   beforeAll(async () => {
-    browser = await puppeteer.launch({ executablePath: await findChrome(), headless: true });
+    browser = await puppeteer.launch({
+      executablePath: await puppeteer.executablePath(),
+      headless: true,
+    });
   });
 
   afterAll(async () => {
-    await browser?.close();
+    if (!browser?.connected) return;
+    try {
+      await browser.close();
+    } catch (error) {
+      if (!primaryFailure) throw error;
+    }
   });
 
   test.each(["Tabs", "DiffTabs"] as const)("%s pointer click focuses and activates exactly one panel", async (type) => {
-    const page = await browser.newPage();
-    try {
+    await withPage(async (page) => {
       await installPage(page, type);
       const blockId = type.toLowerCase();
       await page.focus(`#${blockId}-tab-0`);
       await page.click(`#${blockId}-tab-1`);
 
-      expect(await tabState(page, type)).toEqual({
-        activeId: `${blockId}-tab-1`,
-        tabs: [
-          { id: `${blockId}-tab-0`, selected: "false", tabindex: "-1" },
-          { id: `${blockId}-tab-1`, selected: "true", tabindex: "0" },
-          { id: `${blockId}-tab-2`, selected: "false", tabindex: "-1" },
-        ],
-        panels: [
-          { id: `${blockId}-panel-0`, hidden: true },
-          { id: `${blockId}-panel-1`, hidden: false },
-          { id: `${blockId}-panel-2`, hidden: true },
-        ],
-      });
-    } finally {
-      await page.close();
-    }
+      expect(await tabState(page, type)).toEqual(expectedState(type, 1, `${blockId}-tab-1`));
+    });
+  });
+
+  test.each(["Tabs", "DiffTabs"] as const)("%s implements the complete composite keyboard contract", async (type) => {
+    await withPage(async (page) => {
+      await installPage(page, type);
+      const blockId = type.toLowerCase();
+      await page.focus(`#${blockId}-tab-0`);
+
+      for (const [key, activeIndex] of [["ArrowLeft", 2], ["ArrowRight", 0], ["End", 2], ["Home", 0]] as const) {
+        await page.keyboard.press(key);
+        expect(await tabState(page, type)).toEqual(expectedState(type, activeIndex, `${blockId}-tab-${activeIndex}`, "true"));
+      }
+
+      for (const modifier of ["Alt", "Control", "Meta", "Shift"] as const) {
+        await page.keyboard.down(modifier);
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.up(modifier);
+        expect(await tabState(page, type)).toEqual(expectedState(type, 0, `${blockId}-tab-0`, "false"));
+      }
+
+      await page.keyboard.press("Tab");
+      expect(await tabState(page, type)).toEqual(expectedState(type, 0, "after-tabs", "false"));
+    });
   });
 
   test.each(["Tabs", "DiffTabs"] as const)("%s ignores pointer clicks with duplicate direct-child targets", async (type) => {
-    const page = await browser.newPage();
-    try {
+    await withPage(async (page) => {
       await installPage(page, type);
       const blockId = type.toLowerCase();
       await page.evaluate((id) => {
@@ -113,8 +159,48 @@ describe("interactive plan tabs in real Chromium", () => {
 
       expect(await tabState(page, type)).toEqual(before);
       expect(await page.evaluate(() => document.body.dataset.clickDefaultPrevented)).toBe("false");
+    });
+  });
+
+  test.each(["Tabs", "DiffTabs"] as const)("%s static export lays out every panel in source order without controls", async (type) => {
+    const planDir = await mkdtemp(join(tmpdir(), `ve-ip-static-${type.toLowerCase()}-`));
+    let testFailure: unknown;
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<${type} id="${type.toLowerCase()}">\nfile: alpha.ts\nalpha body\n---\nfile: beta.ts\nbeta body\n---\nfile: gamma.ts\ngamma body\n</${type}>\n`);
+      const { staticExportPath } = await renderPlanFolder(planDir);
+      await withPage(async (page) => {
+        await page.goto(pathToFileURL(staticExportPath).href, { waitUntil: "domcontentloaded" });
+        const result = await page.evaluate((blockId) => {
+          const block = document.getElementById(blockId);
+          const panels = [...(block?.querySelectorAll(".ve-ip-static-tab-panel") ?? [])];
+          return {
+            controls: block?.querySelectorAll('button, [role="tablist"], [role="tab"], [role="tabpanel"], [data-tab-target]').length,
+            panels: panels.map((panel) => {
+              const rect = panel.getBoundingClientRect();
+              return {
+                heading: panel.querySelector("h3")?.textContent,
+                text: panel.textContent,
+                width: rect.width,
+                height: rect.height,
+              };
+            }),
+          };
+        }, type.toLowerCase());
+
+        expect(result.controls).toBe(0);
+        expect(result.panels.map(({ heading }) => heading)).toEqual(["alpha.ts", "beta.ts", "gamma.ts"]);
+        expect(result.panels.map(({ text }) => text?.includes("body"))).toEqual([true, true, true]);
+        expect(result.panels.every(({ width, height }) => width > 0 && height > 0)).toBe(true);
+      });
+    } catch (error) {
+      testFailure = error;
+      throw error;
     } finally {
-      await page.close();
+      try {
+        await rm(planDir, { recursive: true, force: true });
+      } catch (error) {
+        if (!testFailure) throw error;
+      }
     }
   });
 });

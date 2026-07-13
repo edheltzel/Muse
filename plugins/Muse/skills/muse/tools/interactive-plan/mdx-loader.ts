@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type MdxBlock, type ParsedPlanSource, type VisualPlanManifest, validateBlocks } from "./schema";
-import { findUnquotedTagEnd, KNOWN_MDX_COMPONENTS } from "./shared";
+import { findUnquotedTagEnd, KNOWN_MDX_COMPONENTS, RAW_BODY_MDX_COMPONENTS } from "./shared";
 
 export interface LoadedPlanFolder {
   rootDir: string;
@@ -51,15 +51,72 @@ interface OpenComponent {
   type: string;
 }
 
+interface RawClosingTag {
+  end: number;
+  start: number;
+}
+
+function findRawClosingTag(body: string, cursor: number, type: string): RawClosingTag | undefined {
+  const standalone = new RegExp(`^[\\t ]*</${type}\\s*>[\\t ]*\\r?$`, "gm");
+  standalone.lastIndex = cursor;
+  const match = standalone.exec(body);
+  if (match) {
+    const start = match.index + match[0].indexOf("<");
+    return { start, end: body.indexOf(">", start) };
+  }
+
+  const start = body.indexOf(`</${type}`, cursor);
+  if (start === -1 || !/[\s>]/.test(body[start + type.length + 2] ?? "")) return undefined;
+  const end = findUnquotedTagEnd(body, start + type.length + 2);
+  return end === -1 ? undefined : { start, end };
+}
+
 function scanComponentBlocks(body: string): MdxBlock[] {
   const blocks: MdxBlock[] = [];
   let open: OpenComponent | undefined;
 
   for (let cursor = 0; cursor < body.length;) {
+    if (open && RAW_BODY_MDX_COMPONENTS[open.type]) {
+      const closingTag = findRawClosingTag(body, cursor, open.type);
+      if (!closingTag) {
+        const mismatched = body.slice(cursor).match(/^[\t ]*<\/([A-Z][A-Za-z0-9]*)\s*>[\t ]*$/m);
+        if (mismatched && KNOWN_MDX_COMPONENTS[mismatched[1]]) {
+          throw new Error(`Malformed MDX component source: closing '${mismatched[1]}' does not match open '${open.type}'`);
+        }
+        break;
+      }
+      const suffix = body.slice(closingTag.start + open.type.length + 2, closingTag.end);
+      if (suffix.trim()) {
+        throw new Error(`Malformed MDX component source: malformed closing '${open.type}'`);
+      }
+      const props = parseAttrs(open.attrs);
+      blocks.push({
+        id: typeof props.id === "string" ? props.id : "",
+        type: open.type,
+        props,
+        body: body.slice(open.bodyStart, closingTag.start).trim(),
+      });
+      cursor = closingTag.end + 1;
+      open = undefined;
+      continue;
+    }
+
     const start = body.indexOf("<", cursor);
     if (start === -1) break;
-    const token = body.slice(start).match(/^<(\/?)([A-Z][A-Za-z0-9]*)(?=[\s/>])/);
+    const candidate = body.slice(start);
+    const token = candidate.match(/^<(\/?)([A-Z][A-Za-z0-9]*)(?=[\s/>])/);
     if (!token) {
+      const prefix = candidate.match(/^<(\/?)([A-Z][A-Za-z0-9]*)/);
+      if (prefix && KNOWN_MDX_COMPONENTS[prefix[2]]) {
+        const type = prefix[2];
+        const continuation = candidate[prefix[0].length];
+        if (continuation !== "." && continuation !== ":") {
+          const detail = continuation === undefined
+            ? `incomplete tag '<${prefix[1]}${type}'`
+            : `illegal continuation '${continuation}' after supported component name '${type}'`;
+          throw new Error(`Malformed MDX component source: ${detail}`);
+        }
+      }
       cursor = start + 1;
       continue;
     }
@@ -72,6 +129,7 @@ function scanComponentBlocks(body: string): MdxBlock[] {
       throw new Error(`Malformed MDX component source: incomplete tag '<${closing ? "/" : ""}${type}'`);
     }
     const suffix = body.slice(start + token[0].length, tagEnd);
+    const selfClosing = /\/\s*$/.test(suffix);
     cursor = tagEnd + 1;
 
     if (open && KNOWN_MDX_COMPONENTS[open.type] && !supported) continue;
@@ -95,7 +153,6 @@ function scanComponentBlocks(body: string): MdxBlock[] {
       continue;
     }
 
-    const selfClosing = /\/\s*$/.test(suffix);
     if (open) {
       if (supported) {
         throw new Error(`Malformed MDX component source: nested '${type}' inside '${open.type}' is not supported`);

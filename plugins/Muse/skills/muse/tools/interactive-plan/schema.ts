@@ -148,15 +148,20 @@ function* idAttributes(source: string): Generator<string | undefined> {
 }
 
 export function validateRenderedHtmlIds(html: string): string[] {
+  const ids: string[] = [];
+  new HTMLRewriter()
+    .on("[id]", {
+      element(element) {
+        ids.push(element.getAttribute("id") ?? "");
+      },
+    })
+    .transform(html);
+
   const errors: string[] = [];
   const emittedIds = new Set<string>();
-  for (const id of idAttributes(html)) {
-    if (id === undefined) {
-      errors.push("Rendered HTML contains an id attribute without a value");
-      continue;
-    }
+  for (const id of ids) {
     if (!id) {
-      errors.push("Rendered HTML contains an empty id attribute");
+      errors.push("Rendered HTML contains empty id");
       continue;
     }
     if (!HTML_ID_GRAMMAR.test(id)) errors.push(`Rendered HTML contains unsafe id '${id}'`);

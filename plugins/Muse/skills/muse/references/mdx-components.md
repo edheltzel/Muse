@@ -45,3 +45,5 @@ Interactive output uses a single tab stop. Unmodified Left/Right wrap and activa
 If a common plan element has a component, use the component. Raw HTML is reserved for exceptional one-off visuals.
 
 Component IDs require explicit string values and are document-wide HTML identifiers. Start with a letter and use only letters, numbers, underscores, or hyphens; IDs must not collide across `plan.mdx`, `canvas.mdx`, renderer-owned IDs, generated tab descendants, or raw `Wireframe` descendants. Component tags must be complete and have matching closing tags.
+
+Simple PascalCase tags matching the supported names above are Muse components. Dotted and namespaced JSX names such as `<Tabs.Panel>` and `<UI:Callout>` remain opaque authored content. An exact supported name followed by any other continuation, such as `<Tabs!>` or `<Callout=>`, is malformed and rejected. Literal-body components—including `AnnotatedCode`, `Tabs`, and `DiffTabs`—preserve supported-looking tags and template-literal examples as content rather than interpreting them as nested Muse blocks.

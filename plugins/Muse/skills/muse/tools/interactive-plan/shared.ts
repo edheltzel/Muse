@@ -29,6 +29,20 @@ export const KNOWN_MDX_COMPONENTS: Readonly<Record<string, true | undefined>> = 
   Object.fromEntries(MDX_COMPONENT_NAMES.map((name) => [name, true])) as Record<string, true>,
 );
 
+export const RAW_BODY_MDX_COMPONENTS: Readonly<Record<string, true | undefined>> = Object.freeze({
+  ArchitectureDiagram: true,
+  FileMap: true,
+  FileTree: true,
+  AnnotatedCode: true,
+  DiffTabs: true,
+  ApiSurface: true,
+  DataModel: true,
+  Wireframe: true,
+  StateGallery: true,
+  Tabs: true,
+  Table: true,
+});
+
 export function findUnquotedTagEnd(source: string, start: number): number {
   let quote = "";
   for (let index = start; index < source.length; index += 1) {

@@ -140,10 +140,45 @@ describe("interactive plan MDX loading", () => {
     }
   });
 
-  test("rejects unsafe, duplicate, renderer-owned, and generated id collisions", async () => {
+  test.each([
+    ["Tabs", "tab-0"],
+    ["Tabs", "panel-0"],
+    ["DiffTabs", "tab-0"],
+    ["DiffTabs", "panel-0"],
+  ])("rejects %s generated %s collisions during load and at the final HTML boundary", async (type, generatedSuffix) => {
     const planDir = await mkdtemp(join(tmpdir(), "ve-ip-id-collision-"));
+    const blockId = type.toLowerCase();
+    const generatedId = `${blockId}-${generatedSuffix}`;
     try {
-      await writeFile(join(planDir, "plan.mdx"), `<Tabs id="tabs">\nFirst\n---\nSecond\n</Tabs>\n<Callout id="shared">Plan block</Callout>\n<Callout id="tabs-panel-0">Authored collision</Callout>\n<Callout id="unsafe id">Unsafe identifier</Callout>\n<Callout id="canvas">Canvas wrapper collision</Callout>\n`);
+      await writeFile(join(planDir, "plan.mdx"), `<${type} id="${blockId}">\nfile: alpha.ts\nalpha\n---\nfile: beta.ts\nbeta\n</${type}>\n<Callout id="${generatedId}">Authored collision</Callout>\n`);
+
+      let loadMessage = "";
+      try {
+        await loadPlanFolder(planDir);
+      } catch (error) {
+        loadMessage = error instanceof Error ? error.message : String(error);
+      }
+      expect(loadMessage).toContain(`Generated HTML id '${generatedId}' for ${type} '${blockId}' collides with an authored block id`);
+
+      await writeFile(join(planDir, "plan.mdx"), `<${type} id="${blockId}">\nfile: alpha.ts\nalpha\n---\nfile: beta.ts\nbeta\n</${type}>\n`);
+      const plan = await loadPlanFolder(planDir);
+      const shell = `<!doctype html><html><body><div id="${generatedId}"></div>{{CONTENT}}<script>{{CLIENT}}</script></body></html>`;
+      let renderMessage = "";
+      try {
+        await renderPlanHtml(plan, false, shell);
+      } catch (error) {
+        renderMessage = error instanceof Error ? error.message : String(error);
+      }
+      expect(renderMessage).toContain(`Rendered HTML contains duplicate id '${generatedId}'`);
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects unsafe, duplicate, and renderer-owned authored ids", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-authored-ids-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<Callout id="shared">Plan block</Callout>\n<Callout id="unsafe id">Unsafe identifier</Callout>\n<Callout id="canvas">Renderer collision</Callout>\n`);
       await writeFile(join(planDir, "canvas.mdx"), `<Callout id="shared">Canvas block</Callout>\n`);
 
       let message = "";
@@ -154,7 +189,6 @@ describe("interactive plan MDX loading", () => {
       }
 
       expect(message).toContain("Duplicate MDX component id 'shared'");
-      expect(message).toContain("Generated HTML id 'tabs-panel-0' for Tabs 'tabs' collides with an authored block id");
       expect(message).toContain("MDX component 'Callout' has unsafe id 'unsafe id'");
       expect(message).toContain("MDX component id 'canvas' collides with renderer-owned id 'canvas'");
     } finally {
@@ -226,6 +260,42 @@ describe("interactive plan MDX loading", () => {
 
   test.each([
     {
+      type: "AnnotatedCode",
+      body: "const tabs = `<Tabs id=\"example\">Panel</Tabs>`;\nconst note = <Callout id=\"note\">Read me</Callout>;\nconst malformed = \"<Callout>\";",
+    },
+    {
+      type: "Tabs",
+      body: "file: example.tsx\nconst nested = `<Tabs id=\"example\">Panel</Tabs>`;\n---\nfile: callout.tsx\nconst note = <Callout id=\"note\">Read me</Callout>;",
+    },
+  ])("preserves supported Muse tags as literal content inside $type", async ({ type, body }) => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-literal-body-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<${type} id="literal">\n${body}\n</${type}>\n`);
+      const plan = await loadPlanFolder(planDir);
+      expect(plan.plan.blocks).toHaveLength(1);
+      expect(plan.plan.blocks[0].type).toBe(type);
+      expect(plan.plan.blocks[0].body).toBe(body);
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps dotted and namespaced JSX names opaque", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-opaque-jsx-"));
+    try {
+      const source = `<Tabs.Panel id="tab">Dotted</Tabs.Panel>\n<UI:Callout id="note">Namespaced</UI:Callout>`;
+      await writeFile(join(planDir, "plan.mdx"), source);
+      const plan = await loadPlanFolder(planDir);
+      expect(plan.plan.blocks).toHaveLength(1);
+      expect(plan.plan.blocks[0].type).toBe("Callout");
+      expect(plan.plan.blocks[0].body).toBe(source);
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    {
       name: "nested supported block",
       source: `<Callout id="outer"><Tabs id="inner">Panel</Tabs></Callout>`,
       error: "nested 'Tabs' inside 'Callout' is not supported",
@@ -249,6 +319,16 @@ describe("interactive plan MDX loading", () => {
       name: "component-like fallback",
       source: `<Tabs id="broken"`,
       error: "incomplete tag '<Tabs'",
+    },
+    {
+      name: "supported component bang continuation",
+      source: `<Tabs! id="broken">Panel</Tabs!>`,
+      error: "illegal continuation '!' after supported component name 'Tabs'",
+    },
+    {
+      name: "supported component equals continuation",
+      source: `<Callout="broken">Panel</Callout>`,
+      error: "illegal continuation '=' after supported component name 'Callout'",
     },
   ])("rejects $name instead of silently recovering", async ({ source, error }) => {
     const planDir = await mkdtemp(join(tmpdir(), "ve-ip-malformed-component-"));
@@ -340,12 +420,12 @@ describe("interactive plan MDX loading", () => {
     }
   });
 
-  test("audits shell and renderer ids at the final rendered HTML boundary", async () => {
+  test("audits only parsed HTML elements at the final rendered boundary", async () => {
     const planDir = await mkdtemp(join(tmpdir(), "ve-ip-final-html-ids-"));
     try {
       await writeFile(join(planDir, "plan.mdx"), `<Callout id="shell-owned">Body</Callout>`);
       const plan = await loadPlanFolder(planDir);
-      const shell = `<!doctype html><html><body><header id="shell-owned"></header><div id></div><div id=""></div><div id="unsafe id"></div>{{CONTENT}}<script>{{CLIENT}}</script></body></html>`;
+      const shell = `<!doctype html><html><head><title><div id="title-id"></div></title><style>#example[id="style-id"] { color: red; }</style></head><body><!-- <div id="comment-id"></div> --><textarea><div id="textarea-id"></div></textarea><xmp><div id="xmp-id"></div></xmp><script>const example = '<div id="script-id"></div>';</script><header id="shell-owned"></header><div id></div><div id="unsafe id"></div>{{CONTENT}}<script>{{CLIENT}}</script></body></html>`;
       let message = "";
       try {
         await renderPlanHtml(plan, false, shell);
@@ -353,11 +433,11 @@ describe("interactive plan MDX loading", () => {
         message = error instanceof Error ? error.message : String(error);
       }
       expect(message).toContain("Rendered HTML contains duplicate id 'shell-owned'");
-      expect(message).toContain("Rendered HTML contains an id attribute without a value");
-      expect(message).toContain("Rendered HTML contains an empty id attribute");
+      expect(message).toContain("Rendered HTML contains empty id");
       expect(message).toContain("Rendered HTML contains unsafe id 'unsafe id'");
-      const scriptOnlyShell = `<!doctype html><html><body>{{CONTENT}}<script>const example = '<div id="shell-owned"></div>';</script></body></html>`;
-      await expect(renderPlanHtml(plan, false, scriptOnlyShell)).resolves.toContain("shell-owned");
+      for (const opaqueId of ["title-id", "style-id", "comment-id", "textarea-id", "xmp-id", "script-id"]) {
+        expect(message).not.toContain(opaqueId);
+      }
     } finally {
       await rm(planDir, { recursive: true, force: true });
     }
@@ -406,7 +486,7 @@ describe("interactive plan rendering", () => {
       props: { title: `${type} contract` },
       body: "file: alpha.ts\nalpha body\n---\nfile: beta.ts\nbeta body\n---\nfile: gamma.ts\ngamma body",
     }, { staticMode: false });
-    const tabs = [...html.matchAll(/<button\b[^>]*role="tab"[^>]*>/g)].map(([tag]) => tag);
+    const tabs = [...html.matchAll(/<button\b[^>]*role="tab"[^>]*>.*?<\/button>/g)].map(([tag]) => tag);
     const panels = [...html.matchAll(/<div\b[^>]*role="tabpanel"[^>]*>/g)].map(([tag]) => tag);
 
     expect(tabs).toHaveLength(3);
@@ -421,6 +501,7 @@ describe("interactive plan rendering", () => {
       expect(tab).toContain(`aria-controls="${panelId}"`);
       expect(tab).toContain(`aria-selected="${index === 0}"`);
       expect(tab).toContain(`tabindex="${index === 0 ? 0 : -1}"`);
+      expect(tab).toContain(`>${["alpha.ts", "beta.ts", "gamma.ts"][index]}</button>`);
       expect(panels[index]).toContain(`id="${panelId}"`);
       expect(panels[index]).toContain(`aria-labelledby="${tabId}"`);
       expect(panels[index].includes(" hidden")).toBe(index !== 0);
