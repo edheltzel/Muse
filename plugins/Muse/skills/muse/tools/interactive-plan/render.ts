@@ -15,11 +15,12 @@ const defaultShell = `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Fragment+Mono&display=swap" rel="stylesheet">
 <style>{{STYLE}}</style>
 </head>
-<body data-review-status="draft">
+<body data-review-status="draft" data-review-authority="{{REVIEW_AUTHORITY}}">
   <aside class="ve-ip-nav"><strong>{{KIND}}</strong>{{NAV}}</aside>
   <div class="ve-ip-chrome" aria-label="Display settings"><span>Theme</span><button type="button" class="ve-ip-theme-toggle" data-theme-toggle aria-pressed="false"><span data-theme-toggle-label>Light</span></button></div>
   <main class="ve-ip-main">
     <header class="ve-ip-page-header"><p class="ve-ip-kicker">Muse interactive {{KIND}}</p><h1>{{TITLE}}</h1><p>{{SUBTITLE}}</p></header>
+    {{REVIEW_SYNC}}
     {{CONTENT}}
   </main>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
@@ -130,7 +131,7 @@ code, pre, .ve-ip-label, .ve-ip-kicker, .ve-ip-nav, .code-file__header { font-fa
   color: var(--text-dim);
   font-size: .86rem;
 }
-.ve-ip-theme-toggle, .ve-ip-actions button, .zoom-controls button {
+.ve-ip-theme-toggle, .ve-ip-actions button, .ve-ip-persistence button, .ve-ip-review-sync button, .zoom-controls button {
   border: 1px solid var(--border-strong);
   color: var(--text);
   background: var(--surface-elevated);
@@ -138,6 +139,24 @@ code, pre, .ve-ip-label, .ve-ip-kicker, .ve-ip-nav, .code-file__header { font-fa
   cursor: pointer;
 }
 .ve-ip-theme-toggle { padding: .35rem .75rem; }
+.ve-ip-review-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem 1rem;
+  margin: 0 0 1rem;
+  padding: .85rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent-teal);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+.ve-ip-review-sync strong { color: var(--text); }
+.ve-ip-review-sync span { flex: 1 1 22rem; color: var(--text-dim); }
+.ve-ip-review-sync button, .ve-ip-persistence button { padding: .3rem .65rem; }
+[data-review-authority="failed"] .ve-ip-review-sync { border-left-color: var(--danger); }
+[data-review-control]:disabled { cursor: not-allowed; opacity: .55; }
 .ve-ip-main {
   width: min(74rem, calc(100vw - 2rem));
   margin: 0 auto;
@@ -405,6 +424,63 @@ tr:last-child td { border-bottom: 0; }
   align-items: center;
 }
 .ve-ip-check input { width: 1.15rem; height: 1.15rem; accent-color: var(--accent-sage); }
+.ve-ip-field, .ve-ip-check-row { margin-bottom: .85rem; }
+.ve-ip-field .ve-ip-question, .ve-ip-check-row .ve-ip-check { margin-bottom: .3rem; }
+.ve-ip-readiness-copy {
+  margin: 0 0 1rem;
+  color: var(--text-dim);
+  font-size: .88rem;
+}
+.ve-ip-persistence {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  min-height: 1.5rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: .72rem;
+}
+.ve-ip-persistence[data-persistence-state="pending"] { color: var(--accent-teal); }
+.ve-ip-persistence[data-persistence-state="saved"] { color: var(--accent-sage); }
+.ve-ip-persistence[data-persistence-state="failed"] { color: var(--danger); }
+.ve-ip-comment-control { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .65rem; }
+.ve-ip-review-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem 1rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: .78rem;
+}
+.ve-ip-approval-readiness {
+  margin: .85rem 0;
+  padding: .7rem .8rem;
+  border-left: 3px solid var(--accent-gold);
+  background: var(--surface-recessed);
+}
+.ve-ip-approval-readiness[data-ready="true"] { border-left-color: var(--accent-sage); }
+.ve-ip-review-comments {
+  margin-top: 1rem;
+  padding-top: .85rem;
+  border-top: 1px solid var(--border);
+}
+.ve-ip-review-comments h3 { margin-top: 0; }
+.ve-ip-review-comments ul { padding-left: 1.2rem; }
+.ve-ip-review-comments li { margin-bottom: .65rem; }
+.ve-ip-approval-receipt {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--accent-sage);
+  border-radius: 14px;
+  background: color-mix(in oklch, var(--accent-sage) 9%, var(--surface));
+}
+.ve-ip-approval-receipt h3 { margin-top: 0; }
+.ve-ip-approval-receipt pre {
+  padding: .75rem;
+  background: var(--surface-recessed);
+  white-space: pre-wrap;
+  overflow: auto;
+}
 .ve-ip-actions {
   display: flex;
   flex-wrap: wrap;
@@ -417,14 +493,6 @@ tr:last-child td { border-bottom: 0; }
 .ve-ip-actions button:first-child {
   background: var(--text);
   color: var(--surface);
-}
-[data-approval-output] {
-  margin-top: 1rem;
-  padding: 1rem;
-  border-radius: 14px;
-  background: var(--surface-recessed);
-  white-space: pre-wrap;
-  overflow: auto;
 }
 .ve-ip-before-after {
   display: grid;
@@ -496,10 +564,15 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
     renderBlocks(plan.plan.blocks, { staticMode }),
     plan.canvas ? `<section class="ve-ip-block ve-ip-card" id="canvas"><div class="ve-ip-label">Canvas</div><h2>Canvas</h2>${renderBlocks(plan.canvas.blocks, { staticMode })}</section>` : "",
   ].join("\n");
+  const reviewSync = staticMode
+    ? ""
+    : `<section class="ve-ip-review-sync" data-review-sync aria-live="polite"><strong data-review-sync-title>Loading saved review…</strong><span data-review-sync-detail>Review controls unlock after server state and comments load.</span><button type="button" data-review-retry hidden>Retry</button></section>`;
   return template
     .replaceAll("{{TITLE}}", escapeHtml(plan.manifest.title))
     .replaceAll("{{KIND}}", escapeHtml(plan.manifest.kind))
     .replaceAll("{{SUBTITLE}}", staticMode ? "Static export. Interactive persistence requires the local review bridge." : "Local interactive review surface.")
+    .replaceAll("{{REVIEW_AUTHORITY}}", staticMode ? "static" : "loading")
+    .replaceAll("{{REVIEW_SYNC}}", reviewSync)
     .replaceAll("{{NAV}}", navFor(plan))
     .replaceAll("{{CONTENT}}", content)
     .replaceAll("{{STYLE}}", style)

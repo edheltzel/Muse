@@ -157,6 +157,11 @@ export const staticPlanClientScript = baseClientScript;
 
 export const interactivePlanClientScript = baseClientScript + `
 (() => {
+  const getJson = async (url) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  };
   const postJson = async (url, body, idempotencyKey) => {
     const headers = { "Content-Type": "application/json" };
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
@@ -168,21 +173,265 @@ export const interactivePlanClientScript = baseClientScript + `
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   };
-  const pendingCommentIds = new Map();
-  const postComment = async (comment) => {
-    const requestKey = JSON.stringify([comment.blockId, comment.anchor || null, comment.body]);
-    const id = pendingCommentIds.get(requestKey) || "c-" + crypto.randomUUID();
-    pendingCommentIds.set(requestKey, id);
-    const result = await postJson("/api/comments", { id, ...comment }, id);
-    pendingCommentIds.delete(requestKey);
-    return result;
+
+  let committedState;
+  let committedComments = [];
+  let hydrationPromise;
+  const operationStates = new Map();
+  let persistenceQueue = Promise.resolve();
+
+  const messageFor = (error) => error instanceof Error ? error.message : String(error);
+  const feedbackFor = (key) => document.querySelector('[data-persistence-key="' + CSS.escape(key) + '"]');
+  const renderFeedback = (key, feedback = feedbackFor(key)) => {
+    if (!feedback) return;
+    const operation = operationStates.get(key);
+    feedback.dataset.persistenceState = operation?.status || "saved";
+    const text = feedback.querySelector("[data-persistence-message]");
+    if (text) text.textContent = operation?.message || "Saved";
+    const button = feedback.querySelector("[data-persistence-retry]");
+    if (button) button.hidden = !operation?.retry;
   };
-  const writeApprovalOutput = (getText) => {
-    const output = document.querySelector("[data-approval-output]");
-    if (!output) return false;
-    output.hidden = false;
-    output.textContent = getText();
-    return true;
+  const setFeedback = (key, state, message, retry) => {
+    if (state === "saved") operationStates.delete(key);
+    else operationStates.set(key, { status: state, message, retry });
+    renderFeedback(key);
+  };
+  const formatStatus = (status) => String(status || "draft")
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  const formatDate = (value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
+  };
+
+  const showApprovalReceipt = (state, handoff) => {
+    const receipt = document.querySelector("[data-approval-receipt]");
+    if (!receipt) return;
+    if (state.status !== "approved") {
+      receipt.hidden = true;
+      return;
+    }
+    receipt.hidden = false;
+    const summary = receipt.querySelector("[data-approval-receipt-summary]");
+    if (summary) {
+      summary.textContent = "Approved by " + state.reviewer + " on " + formatDate(state.approvedAt) + ".";
+    }
+    const technical = receipt.querySelector("[data-approval-technical-json]");
+    if (technical) {
+      technical.textContent = JSON.stringify(handoff || {
+        status: state.status,
+        reviewer: state.reviewer,
+        approvedAt: state.approvedAt,
+        approvalDigest: state.approvalDigest,
+      }, null, 2);
+    }
+  };
+
+  const refreshApprovalReadiness = () => {
+    const output = document.querySelector("[data-approval-readiness]");
+    const approve = document.querySelector("[data-approve-plan]");
+    if (!output || !approve || !committedState) return;
+    const requiredQuestions = Array.from(document.querySelectorAll('[data-plan-questions] [data-readiness-policy="required"] input[name]'));
+    const missingQuestions = requiredQuestions.filter((input) => {
+      const answer = committedState.answers[input.name];
+      return Array.isArray(answer)
+        ? !answer.some((item) => item.trim().length > 0)
+        : typeof answer !== "string" || answer.trim().length === 0;
+    });
+    const requiredChecks = Array.from(document.querySelectorAll('[data-plan-checklist] [data-readiness-policy="required"] [data-checklist-id]'));
+    const missingChecks = requiredChecks.filter((input) => committedState.checklist[input.dataset.checklistId] !== true);
+    const missing = missingQuestions.length + missingChecks.length;
+    const blockers = committedState.unresolvedCommentIds.length;
+    let pending = 0;
+    let failed = 0;
+    for (const operation of operationStates.values()) {
+      if (operation.status === "pending") pending += 1;
+      if (operation.status === "failed") failed += 1;
+    }
+    const approved = committedState.status === "approved";
+    const ready = !approved && missing === 0 && blockers === 0 && pending === 0 && failed === 0;
+    output.dataset.ready = String(ready);
+    if (approved) {
+      output.textContent = "Approved. Mark the plan for revision or change a saved value before approving again.";
+    } else if (ready) {
+      output.textContent = "Ready to approve: all " + (requiredQuestions.length + requiredChecks.length) + " required values are saved and no blocking comments remain.";
+    } else {
+      const reasons = [];
+      if (missing) reasons.push(missing + " required value" + (missing === 1 ? "" : "s") + " missing");
+      if (blockers) reasons.push(blockers + " unresolved blocking comment" + (blockers === 1 ? "" : "s"));
+      if (pending) reasons.push(pending + " save" + (pending === 1 ? "" : "s") + " pending");
+      if (failed) reasons.push(failed + " failed operation" + (failed === 1 ? "" : "s") + " awaiting retry");
+      output.textContent = "Not ready: " + reasons.join("; ") + ".";
+    }
+    approve.disabled = document.body.dataset.reviewAuthority !== "ready" || !ready;
+  };
+
+  const syncControlAvailability = () => {
+    const authoritative = document.body.dataset.reviewAuthority === "ready";
+    document.querySelectorAll("[data-review-control]").forEach((control) => {
+      const operation = operationStates.get(control.dataset.operationKey);
+      control.disabled = !authoritative || operation?.status === "pending";
+    });
+    refreshApprovalReadiness();
+  };
+
+  const renderComments = (comments) => {
+    const container = document.querySelector("[data-review-comments]");
+    if (!container) return;
+    container.replaceChildren();
+    const heading = document.createElement("h3");
+    heading.textContent = "Review comments";
+    container.append(heading);
+    if (comments.length === 0) {
+      const empty = document.createElement("p");
+      empty.textContent = "No review comments.";
+      container.append(empty);
+      return;
+    }
+    const list = document.createElement("ul");
+    const template = document.querySelector("[data-persistence-template]");
+    for (const comment of comments) {
+      const item = document.createElement("li");
+      const body = document.createElement("span");
+      body.textContent = comment.body + " — " + (comment.status === "open" ? "Blocking" : "Resolved");
+      item.append(body);
+      if (comment.status === "open") {
+        const key = "resolve:" + comment.id;
+        const resolve = document.createElement("button");
+        resolve.type = "button";
+        resolve.dataset.resolveComment = comment.id;
+        resolve.dataset.operationKey = key;
+        resolve.dataset.reviewControl = "";
+        resolve.textContent = "Resolve";
+        item.append(" ", resolve);
+        const feedback = template?.content.firstElementChild?.cloneNode(true);
+        if (feedback instanceof HTMLElement) {
+          feedback.dataset.persistenceKey = key;
+          item.append(" ", feedback);
+          renderFeedback(key, feedback);
+        }
+      }
+      list.append(item);
+    }
+    container.append(list);
+  };
+
+  const applyServerTruth = (state, comments, handoff) => {
+    const commentsChanged = comments !== committedComments;
+    committedState = state;
+    committedComments = comments;
+    document.body.dataset.reviewStatus = state.status;
+    document.querySelectorAll("[data-plan-questions] input[name]").forEach((input) => {
+      const answer = state.answers[input.name];
+      input.value = Array.isArray(answer) ? answer.join(", ") : answer || "";
+    });
+    document.querySelectorAll("[data-checklist-id]").forEach((input) => {
+      input.checked = state.checklist[input.dataset.checklistId] === true;
+    });
+    const status = document.querySelector("[data-review-status-label]");
+    if (status) status.textContent = formatStatus(state.status);
+    const reviewer = document.querySelector("[data-review-reviewer]");
+    if (reviewer) {
+      reviewer.hidden = !state.reviewer;
+      const value = reviewer.querySelector("strong");
+      if (value) value.textContent = state.reviewer || "";
+    }
+    const approvedAt = document.querySelector("[data-review-approved-at]");
+    if (approvedAt) {
+      approvedAt.hidden = !state.approvedAt;
+      const value = approvedAt.querySelector("strong");
+      if (value) value.textContent = formatDate(state.approvedAt);
+    }
+    if (commentsChanged) renderComments(comments);
+    showApprovalReceipt(state, handoff);
+    syncControlAvailability();
+  };
+
+  const fetchServerTruth = async () => {
+    const [state, comments] = await Promise.all([
+      getJson("/plan-state.json"),
+      getJson("/comments.json"),
+    ]);
+    return { state, comments };
+  };
+
+  const updateSyncNotice = (state, title, detail, retry) => {
+    document.body.dataset.reviewAuthority = state;
+    const sync = document.querySelector("[data-review-sync]");
+    if (sync) {
+      const heading = sync.querySelector("[data-review-sync-title]");
+      const description = sync.querySelector("[data-review-sync-detail]");
+      const button = sync.querySelector("[data-review-retry]");
+      if (heading) heading.textContent = title;
+      if (description) description.textContent = detail;
+      if (button) button.hidden = !retry;
+    }
+    syncControlAvailability();
+  };
+
+  const hydrateReviewState = async () => {
+    if (hydrationPromise) return hydrationPromise;
+    updateSyncNotice("loading", "Loading saved review…", "Review controls unlock after server state and comments load.", false);
+    hydrationPromise = (async () => {
+      try {
+        const truth = await fetchServerTruth();
+        applyServerTruth(truth.state, truth.comments);
+        operationStates.clear();
+        document.querySelectorAll("[data-persistence-key]").forEach((feedback) => {
+          renderFeedback(feedback.dataset.persistenceKey, feedback);
+        });
+        const blockers = truth.state.unresolvedCommentIds.length;
+        updateSyncNotice(
+          "ready",
+          "Review synced",
+          formatStatus(truth.state.status) + " · " + blockers + " unresolved blocking comment" + (blockers === 1 ? "" : "s"),
+          false,
+        );
+      } catch (error) {
+        updateSyncNotice("failed", "Review state unavailable", messageFor(error), true);
+      }
+    })().finally(() => {
+      hydrationPromise = undefined;
+    });
+    return hydrationPromise;
+  };
+
+  const reconcileServerTruth = async () => {
+    try {
+      const truth = await fetchServerTruth();
+      applyServerTruth(truth.state, truth.comments);
+      return true;
+    } catch {
+      if (committedState) applyServerTruth(committedState, committedComments);
+      return false;
+    }
+  };
+
+  const runPersistenceOperation = (operation) => {
+    if (operationStates.get(operation.key)?.status === "pending") return persistenceQueue;
+    setFeedback(operation.key, "pending", "Saving…", undefined);
+    syncControlAvailability();
+    const execution = persistenceQueue.then(async () => {
+      try {
+        const result = await operation.write();
+        await operation.apply(result);
+        setFeedback(operation.key, "saved", "Saved", undefined);
+      } catch (error) {
+        const reconciled = await reconcileServerTruth();
+        if (reconciled && operation.matchesCommitted()) {
+          setFeedback(operation.key, "saved", "Saved", undefined);
+        } else {
+          const retry = () => runPersistenceOperation(operation);
+          setFeedback(operation.key, "failed", "Save failed; saved value restored. " + messageFor(error), retry);
+        }
+      } finally {
+        syncControlAvailability();
+      }
+    });
+    persistenceQueue = execution;
+    return execution;
   };
 
   document.addEventListener("click", async (event) => {
@@ -197,53 +446,113 @@ export const interactivePlanClientScript = baseClientScript + `
       group?.querySelectorAll("[role=tab]").forEach((button) => button.setAttribute("aria-selected", String(button === tab)));
     }
 
+    const hydrationRetry = target.closest("[data-review-retry]");
+    if (hydrationRetry) {
+      await hydrateReviewState();
+      return;
+    }
+
+    const persistenceRetry = target.closest("[data-persistence-retry]");
+    if (persistenceRetry) {
+      const feedback = persistenceRetry.closest("[data-persistence-key]");
+      const retry = feedback && operationStates.get(feedback.dataset.persistenceKey)?.retry;
+      if (retry) await retry();
+      return;
+    }
+
     const commentAnchor = target.closest("[data-comment-anchor]");
     if (commentAnchor) {
       const blockId = commentAnchor.getAttribute("data-comment-anchor");
       const body = prompt("Comment for this section:");
       if (blockId && body?.trim()) {
-        try {
-          await postComment({ blockId, anchor: blockId, body });
-        } catch (error) {
-          alert("Could not persist comment: " + error.message);
-        }
+        const id = "c-" + crypto.randomUUID();
+        const operation = {
+          key: "comment:" + blockId,
+          write: () => postJson("/api/comments", { id, blockId, anchor: blockId, body }, id),
+          apply: async () => {
+            const truth = await fetchServerTruth();
+            applyServerTruth(truth.state, truth.comments);
+          },
+          matchesCommitted: () => committedComments.some((comment) => comment.id === id),
+        };
+        await runPersistenceOperation(operation);
       }
+      return;
     }
 
-    if (target.closest("[data-needs-revision]")) {
-      try {
-        await postJson("/api/state", { status: "needs_revision" });
-        document.body.dataset.reviewStatus = "needs_revision";
-      } catch (error) {
-        alert("Could not persist revision status: " + error.message);
-      }
+    const resolve = target.closest("[data-resolve-comment]");
+    if (resolve) {
+      const id = resolve.dataset.resolveComment;
+      const operation = {
+        key: "resolve:" + id,
+        write: () => postJson("/api/comments", { resolveId: id }),
+        apply: async () => {
+          const truth = await fetchServerTruth();
+          applyServerTruth(truth.state, truth.comments);
+        },
+        matchesCommitted: () => committedComments.some((comment) => comment.id === id && comment.status === "resolved"),
+      };
+      await runPersistenceOperation(operation);
+      return;
     }
 
-    if (target.closest("[data-approve-plan]")) {
-      try {
-        const result = await postJson("/api/approve", { reviewer: "local-reviewer" });
-        document.body.dataset.reviewStatus = "approved";
-        writeApprovalOutput(() => JSON.stringify(result, null, 2));
-      } catch (error) {
-        if (!writeApprovalOutput(() => "Approval could not be persisted locally. Copy this page or rerun through the local bridge.\\n" + error.message)) {
-          alert("Could not approve plan: " + error.message);
-        }
-      }
+    const revision = target.closest("[data-needs-revision]");
+    if (revision) {
+      const operation = {
+        key: "revision",
+        write: () => postJson("/api/state", { status: "needs_revision" }),
+        apply: (state) => applyServerTruth(state, committedComments),
+        matchesCommitted: () => committedState?.status === "needs_revision",
+      };
+      await runPersistenceOperation(operation);
+      return;
+    }
+
+    const approve = target.closest("[data-approve-plan]");
+    if (approve) {
+      const priorDigest = committedState?.approvalDigest;
+      const operation = {
+        key: "approval",
+        write: () => postJson("/api/approve", { reviewer: "local-reviewer" }),
+        apply: async (handoff) => {
+          const truth = await fetchServerTruth();
+          applyServerTruth(truth.state, truth.comments, handoff);
+        },
+        matchesCommitted: () => committedState?.status === "approved"
+          && committedState.reviewer === "local-reviewer"
+          && committedState.approvalDigest !== priorDigest,
+      };
+      await runPersistenceOperation(operation);
     }
   });
 
   document.addEventListener("change", async (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLInputElement)) return;
-    try {
-      if (target.dataset.checklistId) {
-        await postJson("/api/state", { checklist: { [target.dataset.checklistId]: target.checked } });
-      }
-      if (target.name && target.closest("[data-plan-questions]")) {
-        await postJson("/api/state", { answers: { [target.name]: target.value } });
-      }
-    } catch (error) {
-      console.warn("Could not persist review state", error);
+    if (!(target instanceof HTMLInputElement) || document.body.dataset.reviewAuthority !== "ready") return;
+    if (target.dataset.checklistId) {
+      const id = target.dataset.checklistId;
+      const checked = target.checked;
+      const operation = {
+        key: "checklist:" + id,
+        write: () => postJson("/api/state", { checklist: { [id]: checked } }),
+        apply: (state) => applyServerTruth(state, committedComments),
+        matchesCommitted: () => committedState?.checklist[id] === checked,
+      };
+      await runPersistenceOperation(operation);
+      return;
+    }
+    if (target.name && target.closest("[data-plan-questions]")) {
+      const id = target.name;
+      const answer = target.value;
+      const operation = {
+        key: "answer:" + id,
+        write: () => postJson("/api/state", { answers: { [id]: answer } }),
+        apply: (state) => applyServerTruth(state, committedComments),
+        matchesCommitted: () => committedState?.answers[id] === answer,
+      };
+      await runPersistenceOperation(operation);
     }
   });
+
+  hydrateReviewState();
 })();`;

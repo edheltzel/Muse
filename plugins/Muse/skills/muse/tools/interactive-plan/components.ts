@@ -91,27 +91,43 @@ function readinessBadge(policy: string | undefined): { value: "required" | "advi
   };
 }
 
-function renderQuestionForm(block: MdxBlock): string {
+function persistenceFeedback(key: string): string {
+  return `<span class="ve-ip-persistence" data-persistence-key="${escapeHtml(key)}" data-persistence-state="loading" aria-live="polite"><span data-persistence-message>Loading…</span><button type="button" data-persistence-retry hidden>Retry</button></span>`;
+}
+
+function reviewControlAttributes(context: RenderContext, key: string): string {
+  return context.staticMode
+    ? "disabled"
+    : `data-operation-key="${escapeHtml(key)}" data-review-control disabled`;
+}
+
+
+function renderQuestionForm(block: MdxBlock, context: RenderContext): string {
   const questions = splitLines(block.body).map((line) => {
     const [id = line, prompt = line, mode = "freeform", policy] = splitPipeFields(line);
     const readiness = readinessBadge(policy);
-    return `<label class="ve-ip-question" data-question-id="${escapeHtml(id)}" data-readiness-policy="${readiness.value}"><span class="ve-ip-field-heading"><span>${escapeHtml(prompt)}</span>${readiness.html}</span><input name="${escapeHtml(id)}" data-question-mode="${escapeHtml(mode)}" /></label>`;
+    const feedback = context.staticMode ? "" : persistenceFeedback(`answer:${id}`);
+    return `<div class="ve-ip-field"><label class="ve-ip-question" data-question-id="${escapeHtml(id)}" data-readiness-policy="${readiness.value}"><span class="ve-ip-field-heading"><span>${escapeHtml(prompt)}</span>${readiness.html}</span><input name="${escapeHtml(id)}" data-question-mode="${escapeHtml(mode)}" ${reviewControlAttributes(context, `answer:${id}`)} /></label>${feedback}</div>`;
   }).join("");
-  return card(block, "ve-ip-card ve-ip-interactive", `<form data-plan-questions>${questions}</form>`);
+  return card(block, "ve-ip-card ve-ip-interactive", `<p class="ve-ip-readiness-copy">Required values gate approval; advisory values are saved but never block it.</p><form data-plan-questions>${questions}</form>`);
 }
 
-function renderChecklist(block: MdxBlock): string {
+function renderChecklist(block: MdxBlock, context: RenderContext): string {
   const items = splitLines(block.body).map((line, index) => {
     const [id = `item-${index + 1}`, label = line, policy] = splitPipeFields(line);
     const readiness = readinessBadge(policy);
-    return `<label class="ve-ip-check" data-readiness-policy="${readiness.value}"><input type="checkbox" data-checklist-id="${escapeHtml(id)}" /> <span>${escapeHtml(label)}</span>${readiness.html}</label>`;
+    const feedback = context.staticMode ? "" : persistenceFeedback(`checklist:${id}`);
+    return `<div class="ve-ip-check-row"><label class="ve-ip-check" data-readiness-policy="${readiness.value}"><input type="checkbox" data-checklist-id="${escapeHtml(id)}" ${reviewControlAttributes(context, `checklist:${id}`)} /> <span>${escapeHtml(label)}</span>${readiness.html}</label>${feedback}</div>`;
   }).join("");
-  return card(block, "ve-ip-card ve-ip-interactive", `<div data-plan-checklist>${items}</div>`);
+  return card(block, "ve-ip-card ve-ip-interactive", `<p class="ve-ip-readiness-copy">Required values gate approval; advisory values are saved but never block it.</p><div data-plan-checklist>${items}</div>`);
 }
 
 function renderApprovalGate(block: MdxBlock, context: RenderContext): string {
   const fallback = context.staticMode ? `<p class="ve-ip-muted">Static export: copy this page with the generated handoff packet. Agent-readable approval persistence requires the local bridge.</p>` : "";
-  return card(block, "ve-ip-card ve-ip-approval", `<p>${markdownish(block.body || "Approve this plan once the scope and open questions are settled.")}</p><div class="ve-ip-actions"><button type="button" data-approve-plan>Approve plan</button><button type="button" data-needs-revision>Needs revision</button></div>${fallback}<pre data-approval-output hidden></pre>`);
+  const reviewState = context.staticMode ? "" : `<div class="ve-ip-review-metadata" data-review-metadata><span>Status <strong data-review-status-label>Loading…</strong></span><span data-review-reviewer hidden>Reviewer <strong></strong></span><span data-review-approved-at hidden>Approved <strong></strong></span></div><p class="ve-ip-approval-readiness" data-approval-readiness>Loading approval readiness…</p><div class="ve-ip-review-comments" data-review-comments><h3>Review comments</h3><p>Loading comments…</p></div>`;
+  const feedback = context.staticMode ? "" : `${persistenceFeedback("approval")}${persistenceFeedback("revision")}<template data-persistence-template>${persistenceFeedback("")}</template>`;
+  const receipt = context.staticMode ? "" : `<section class="ve-ip-approval-receipt" data-approval-receipt hidden><h3>Approval recorded</h3><p data-approval-receipt-summary></p><p>Generated artifacts:</p><ul><li><a href="/agent-handoff.json">agent-handoff.json</a></li><li><a href="/agent-handoff.md">agent-handoff.md</a></li></ul><details data-approval-technical><summary>Technical details</summary><pre data-approval-technical-json></pre></details></section>`;
+  return card(block, "ve-ip-card ve-ip-approval", `<p>${markdownish(block.body || "Approve this plan once the scope and open questions are settled.")}</p>${reviewState}<div class="ve-ip-actions"><button type="button" data-approve-plan ${reviewControlAttributes(context, "approval")}>Approve plan</button><button type="button" data-needs-revision ${reviewControlAttributes(context, "revision")}>Needs revision</button></div>${feedback}${fallback}${receipt}`);
 }
 
 function renderWireframe(block: MdxBlock): string {
@@ -155,7 +171,9 @@ const renderers: Readonly<Record<string, Renderer | undefined>> = {
   ApprovalGate: renderApprovalGate,
   QuestionForm: renderQuestionForm,
   Checklist: renderChecklist,
-  CommentAnchor: (block) => `<button type="button" id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}">Add comment</button>`,
+  CommentAnchor: (block, context) => context.staticMode
+    ? `<button type="button" id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}" disabled>Add comment</button>`
+    : `<span class="ve-ip-comment-control"><button type="button" id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}" ${reviewControlAttributes(context, `comment:${block.id}`)}>Add comment</button>${persistenceFeedback(`comment:${block.id}`)}</span>`,
   Callout: (block) => card(block, `ve-ip-callout ve-ip-callout--${escapeHtml(block.props.tone ?? "note")}`),
   Tabs: renderDiffTabs,
   Table: renderTableLike,

@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Fragment+Mono&display=swap" rel="stylesheet">
 <style>{{STYLE}}</style>
 </head>
-<body data-review-status="draft">
+<body data-review-status="draft" data-review-authority="{{REVIEW_AUTHORITY}}">
   <aside class="ve-ip-nav">
     <strong>{{KIND}}</strong>
     {{NAV}}
@@ -26,6 +26,7 @@
       <h1>{{TITLE}}</h1>
       <p>{{SUBTITLE}}</p>
     </header>
+    {{REVIEW_SYNC}}
     {{CONTENT}}
   </main>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
