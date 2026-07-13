@@ -57,19 +57,29 @@ interface RawClosingTag {
 }
 
 function findRawClosingTags(body: string, cursor: number, type: string): RawClosingTag[] {
-  const standalone = new RegExp(`^[\\t ]*</${type}\\s*>[\\t ]*\\r?$`, "gm");
   const matches: RawClosingTag[] = [];
+  const starts = new Set<number>();
+  const addMatch = (start: number, end: number): void => {
+    if (end !== -1 && !starts.has(start)) {
+      starts.add(start);
+      matches.push({ start, end });
+    }
+  };
+
+  const standalone = new RegExp(`^[\\t ]*</${type}\\s*>[\\t ]*\\r?$`, "gm");
   standalone.lastIndex = cursor;
   for (let match = standalone.exec(body); match; match = standalone.exec(body)) {
     const start = match.index + match[0].indexOf("<");
-    matches.push({ start, end: body.indexOf(">", start) });
+    addMatch(start, body.indexOf(">", start));
   }
-  if (matches.length) return matches;
 
-  const start = body.indexOf(`</${type}`, cursor);
-  if (start === -1 || !/[\s>]/.test(body[start + type.length + 2] ?? "")) return [];
-  const end = findUnquotedTagEnd(body, start + type.length + 2);
-  return end === -1 ? [] : [{ start, end }];
+  const prefix = `</${type}`;
+  for (let start = body.indexOf(prefix, cursor); start !== -1; start = body.indexOf(prefix, start + prefix.length)) {
+    if (!/[\s>]/.test(body[start + prefix.length] ?? "")) continue;
+    addMatch(start, findUnquotedTagEnd(body, start + prefix.length));
+  }
+
+  return matches.sort((left, right) => left.start - right.start || left.end - right.end);
 }
 
 function scanComponentBlocks(body: string): MdxBlock[] {

@@ -9,6 +9,7 @@ import { interactivePlanInteractionScript } from "../plugins/Muse/skills/muse/to
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
 import { renderPlanFolder, renderPlanHtml } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 import { validateRenderedHtmlIds } from "../plugins/Muse/skills/muse/tools/interactive-plan/schema.ts";
+import { RAW_BODY_MDX_COMPONENTS } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
 import {
   addComment,
   approvePlan,
@@ -298,6 +299,75 @@ describe("interactive plan MDX loading", () => {
       expect(plan.plan.blocks[0].body).toContain("\n</AnnotatedCode>\n");
       expect(plan.plan.blocks[1].body).toContain("\n</Tabs>\n");
       expect(plan.plan.blocks[2].body).toContain("\n</DiffTabs>\n");
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(
+    ["\n", "\r\n"].flatMap((newline) =>
+      Object.keys(RAW_BODY_MDX_COMPONENTS).flatMap((type) => [
+        { newline, order: "inline then multiline", type },
+        { newline, order: "multiline then inline", type },
+      ]),
+    ),
+  )("materializes both $type blocks when $order with $newline line endings", async ({ newline, order, type }) => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-mixed-raw-"));
+    const first = `<${type} id="first">First</${type}>`;
+    const second = `<${type} id="second">${newline}Second${newline}</${type}>`;
+    const source = order === "inline then multiline"
+      ? `${first}${newline}${second}${newline}`
+      : `${second}${newline}${first}${newline}`;
+    try {
+      await writeFile(join(planDir, "plan.mdx"), source);
+      const plan = await loadPlanFolder(planDir);
+      const html = await renderPlanHtml(plan);
+
+      expect(plan.plan.blocks.map(({ id, type: blockType }) => ({ id, type: blockType }))).toEqual([
+        { id: order === "inline then multiline" ? "first" : "second", type },
+        { id: order === "inline then multiline" ? "second" : "first", type },
+      ]);
+      expect(html).toContain('id="first"');
+      expect(html).toContain('id="second"');
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["\n", "\r\n"])("preserves literal closers while mixed raw types retain source order with %j", async (newline) => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-mixed-raw-types-"));
+    const lines = [
+      '<AnnotatedCode id="code">const inline = "</AnnotatedCode>";',
+      "const standalone = `",
+      "</AnnotatedCode>",
+      "`;",
+      "</AnnotatedCode>",
+      '<Tabs id="tabs">First</Tabs>',
+      '<DiffTabs id="diffs">',
+      "file: before.ts",
+      "before",
+      "---",
+      "file: after.ts",
+      "after",
+      "</DiffTabs>",
+      '<Wireframe id="wireframe"><div>Preview</div></Wireframe>',
+    ];
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `${lines.join(newline)}${newline}`);
+      const plan = await loadPlanFolder(planDir);
+      const html = await renderPlanHtml(plan);
+
+      expect(plan.plan.blocks.map(({ id, type }) => ({ id, type }))).toEqual([
+        { id: "code", type: "AnnotatedCode" },
+        { id: "tabs", type: "Tabs" },
+        { id: "diffs", type: "DiffTabs" },
+        { id: "wireframe", type: "Wireframe" },
+      ]);
+      expect(plan.plan.blocks[0].body).toContain('"</AnnotatedCode>"');
+      expect(plan.plan.blocks[0].body).toContain(`${newline}</AnnotatedCode>${newline}`);
+      for (const id of ["code", "tabs", "diffs", "wireframe"]) {
+        expect(html).toContain(`id="${id}"`);
+      }
     } finally {
       await rm(planDir, { recursive: true, force: true });
     }
