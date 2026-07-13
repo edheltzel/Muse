@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type MdxBlock, type ParsedPlanSource, type VisualPlanManifest, validateBlocks } from "./schema";
+import { findUnquotedTagEnd, KNOWN_MDX_COMPONENTS } from "./shared";
 
 export interface LoadedPlanFolder {
   rootDir: string;
@@ -44,57 +45,80 @@ function parseAttrs(raw: string): Record<string, string | boolean | number> {
   return props;
 }
 
-function assertWellFormedComponentTags(body: string): void {
-  const tagPattern = /<(\/?)([A-Z][A-Za-z0-9]*)\b([^>]*)>/g;
-  const incompleteTagPattern = /<\/?[A-Z][A-Za-z0-9]*\b/;
-  const stack: string[] = [];
-  let cursor = 0;
+interface OpenComponent {
+  attrs: string;
+  bodyStart: number;
+  type: string;
+}
 
-  for (const match of body.matchAll(tagPattern)) {
-    const skipped = body.slice(cursor, match.index);
-    const incomplete = skipped.match(incompleteTagPattern);
-    if (incomplete) {
-      throw new Error(`Malformed MDX component source: incomplete tag '${incomplete[0]}'`);
+function scanComponentBlocks(body: string): MdxBlock[] {
+  const blocks: MdxBlock[] = [];
+  let open: OpenComponent | undefined;
+
+  for (let cursor = 0; cursor < body.length;) {
+    const start = body.indexOf("<", cursor);
+    if (start === -1) break;
+    const token = body.slice(start).match(/^<(\/?)([A-Z][A-Za-z0-9]*)(?=[\s/>])/);
+    if (!token) {
+      cursor = start + 1;
+      continue;
     }
-    cursor = (match.index ?? 0) + match[0].length;
 
-    const closing = match[1] === "/";
-    const type = match[2];
-    const selfClosing = /\/\s*$/.test(match[3] ?? "");
+    const closing = token[1] === "/";
+    const type = token[2];
+    const supported = Boolean(KNOWN_MDX_COMPONENTS[type]);
+    const tagEnd = findUnquotedTagEnd(body, start + token[0].length);
+    if (tagEnd === -1) {
+      throw new Error(`Malformed MDX component source: incomplete tag '<${closing ? "/" : ""}${type}'`);
+    }
+    const suffix = body.slice(start + token[0].length, tagEnd);
+    cursor = tagEnd + 1;
+
+    if (open && KNOWN_MDX_COMPONENTS[open.type] && !supported) continue;
+
     if (closing) {
-      const openType = stack.pop();
-      if (!openType) throw new Error(`Malformed MDX component source: unexpected closing '${type}'`);
-      if (openType !== type) {
-        throw new Error(`Malformed MDX component source: closing '${type}' does not match open '${openType}'`);
+      if (suffix.trim()) {
+        throw new Error(`Malformed MDX component source: malformed closing '${type}'`);
       }
-    } else if (!selfClosing) {
-      if (stack.length > 0) {
-        throw new Error(`Malformed MDX component source: nested '${type}' inside '${stack.at(-1)}' is not supported`);
+      if (!open) throw new Error(`Malformed MDX component source: unexpected closing '${type}'`);
+      if (open.type !== type) {
+        throw new Error(`Malformed MDX component source: closing '${type}' does not match open '${open.type}'`);
       }
-      stack.push(type);
+      const props = parseAttrs(open.attrs);
+      blocks.push({
+        id: typeof props.id === "string" ? props.id : "",
+        type,
+        props,
+        body: body.slice(open.bodyStart, start).trim(),
+      });
+      open = undefined;
+      continue;
+    }
+
+    const selfClosing = /\/\s*$/.test(suffix);
+    if (open) {
+      if (supported) {
+        throw new Error(`Malformed MDX component source: nested '${type}' inside '${open.type}' is not supported`);
+      }
+      continue;
+    }
+
+    const attrs = selfClosing ? suffix.replace(/\/\s*$/, "") : suffix;
+    if (selfClosing) {
+      const props = parseAttrs(attrs);
+      blocks.push({ id: typeof props.id === "string" ? props.id : "", type, props, body: "" });
+    } else {
+      open = { attrs, bodyStart: tagEnd + 1, type };
     }
   }
 
-  const incomplete = body.slice(cursor).match(incompleteTagPattern);
-  if (incomplete) throw new Error(`Malformed MDX component source: incomplete tag '${incomplete[0]}'`);
-  if (stack.length > 0) throw new Error(`Malformed MDX component source: unclosed '${stack.at(-1)}'`);
+  if (open) throw new Error(`Malformed MDX component source: unclosed '${open.type}'`);
+  return blocks;
 }
 
 export function parseMdxSource(source: string): ParsedPlanSource {
   const { frontmatter, body } = parseFrontmatter(source);
-  assertWellFormedComponentTags(body);
-  const blocks: MdxBlock[] = [];
-  const paired = /<([A-Z][A-Za-z0-9]*)\b([^>]*)>([\s\S]*?)<\/\1>/g;
-  const selfClosing = /<([A-Z][A-Za-z0-9]*)\b([^>]*)\/>/g;
-
-  for (const match of body.matchAll(paired)) {
-    const props = parseAttrs(match[2] ?? "");
-    blocks.push({ id: typeof props.id === "string" ? props.id : "", type: match[1], props, body: match[3].trim() });
-  }
-  for (const match of body.matchAll(selfClosing)) {
-    const props = parseAttrs(match[2] ?? "");
-    blocks.push({ id: typeof props.id === "string" ? props.id : "", type: match[1], props, body: "" });
-  }
+  const blocks = scanComponentBlocks(body);
 
   if (blocks.length === 0) {
     blocks.push({

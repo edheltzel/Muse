@@ -1,4 +1,4 @@
-import { KNOWN_MDX_COMPONENTS, splitTabPanels } from "./shared";
+import { findUnquotedTagEnd, KNOWN_MDX_COMPONENTS, splitTabPanels } from "./shared";
 
 export type VisualPlanKind = "plan" | "recap" | "styleguide";
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -84,6 +84,88 @@ export function validateReviewState(value: unknown): string[] {
   return errors;
 }
 
+const HTML_ID_GRAMMAR = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+function* openingTags(source: string): Generator<string> {
+  for (let cursor = 0; cursor < source.length;) {
+    const start = source.indexOf("<", cursor);
+    if (start === -1) return;
+    if (source.startsWith("<!--", start)) {
+      const commentEnd = source.indexOf("-->", start + 4);
+      cursor = commentEnd === -1 ? source.length : commentEnd + 3;
+      continue;
+    }
+    if (!/[A-Za-z]/.test(source[start + 1] ?? "")) {
+      cursor = start + 1;
+      continue;
+    }
+    const end = findUnquotedTagEnd(source, start + 1);
+    if (end === -1) return;
+    const tag = source.slice(start, end + 1);
+    yield tag;
+    cursor = end + 1;
+
+    const rawTextElement = tag.match(/^<(script|style)\b/i)?.[1];
+    if (rawTextElement) {
+      const closingStart = source.slice(cursor).search(new RegExp(`</${rawTextElement}\\s*>`, "i"));
+      if (closingStart === -1) return;
+      cursor += closingStart + source.slice(cursor + closingStart).indexOf(">") + 1;
+    }
+  }
+}
+
+function* idAttributes(source: string): Generator<string | undefined> {
+  for (const tag of openingTags(source)) {
+    let cursor = tag.search(/\s|\/?>/);
+    while (cursor !== -1 && cursor < tag.length - 1) {
+      while (/[\s/]/.test(tag[cursor] ?? "")) cursor += 1;
+      const nameStart = cursor;
+      while (cursor < tag.length && !/[\s=/>]/.test(tag[cursor])) cursor += 1;
+      if (cursor === nameStart) {
+        cursor += 1;
+        continue;
+      }
+      const name = tag.slice(nameStart, cursor).toLowerCase();
+      while (/\s/.test(tag[cursor] ?? "")) cursor += 1;
+      if (tag[cursor] !== "=") {
+        if (name === "id") yield undefined;
+        continue;
+      }
+      cursor += 1;
+      while (/\s/.test(tag[cursor] ?? "")) cursor += 1;
+      const quote = tag[cursor] === '"' || tag[cursor] === "'" ? tag[cursor++] : "";
+      const valueStart = cursor;
+      if (quote) {
+        while (cursor < tag.length && tag[cursor] !== quote) cursor += 1;
+      } else {
+        while (cursor < tag.length && !/[\s>]/.test(tag[cursor])) cursor += 1;
+      }
+      const value = tag.slice(valueStart, cursor);
+      if (quote && tag[cursor] === quote) cursor += 1;
+      if (name === "id") yield value;
+    }
+  }
+}
+
+export function validateRenderedHtmlIds(html: string): string[] {
+  const errors: string[] = [];
+  const emittedIds = new Set<string>();
+  for (const id of idAttributes(html)) {
+    if (id === undefined) {
+      errors.push("Rendered HTML contains an id attribute without a value");
+      continue;
+    }
+    if (!id) {
+      errors.push("Rendered HTML contains an empty id attribute");
+      continue;
+    }
+    if (!HTML_ID_GRAMMAR.test(id)) errors.push(`Rendered HTML contains unsafe id '${id}'`);
+    if (emittedIds.has(id)) errors.push(`Rendered HTML contains duplicate id '${id}'`);
+    emittedIds.add(id);
+  }
+  return errors;
+}
+
 export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[] = []): string[] {
   const errors: string[] = [];
   const authoredIds = new Set<string>();
@@ -95,7 +177,7 @@ export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[
     if (!block.id || typeof block.id !== "string") {
       errors.push(`MDX component '${block.type}' is missing required id`);
     } else {
-      if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(block.id)) {
+      if (!HTML_ID_GRAMMAR.test(block.id)) {
         errors.push(`MDX component '${block.type}' has unsafe id '${block.id}'; use a letter followed by letters, numbers, underscores, or hyphens`);
       }
       if (reservedIdSet.has(block.id)) {
@@ -129,28 +211,23 @@ export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[
   }
 
   for (const block of blocks) {
-    if (block.type !== "Wireframe") continue;
-    for (const tagMatch of block.body.matchAll(/<[a-z][^>]*>/gi)) {
-      const idPattern = /\sid\b(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/gi;
-      for (const idMatch of tagMatch[0].matchAll(idPattern)) {
-        const rawId = idMatch[1];
-        if (!rawId) {
-          errors.push(`Wireframe '${block.id}' contains an id attribute without a value`);
-          continue;
-        }
-        const id = rawId.replace(/^['"]|['"]$/g, "");
-        if (!id) {
-          errors.push(`Wireframe '${block.id}' contains an empty id attribute`);
-          continue;
-        }
-        if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(id)) {
-          errors.push(`Wireframe descendant has unsafe id '${id}' in '${block.id}'`);
-        }
-        if (emittedIds.has(id)) {
-          errors.push(`Wireframe descendant id '${id}' in '${block.id}' collides with another emitted id`);
-        }
-        emittedIds.add(id);
+    if (block.type !== "Wireframe" && block.type !== "StateGallery") continue;
+    for (const id of idAttributes(block.body)) {
+      if (id === undefined) {
+        errors.push(`${block.type} '${block.id}' contains an id attribute without a value`);
+        continue;
       }
+      if (!id) {
+        errors.push(`${block.type} '${block.id}' contains an empty id attribute`);
+        continue;
+      }
+      if (!HTML_ID_GRAMMAR.test(id)) {
+        errors.push(`${block.type} descendant has unsafe id '${id}' in '${block.id}'`);
+      }
+      if (emittedIds.has(id)) {
+        errors.push(`${block.type} descendant id '${id}' in '${block.id}' collides with another emitted id`);
+      }
+      emittedIds.add(id);
     }
   }
   return errors;

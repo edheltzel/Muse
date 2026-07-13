@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { interactivePlanClientScript, staticPlanClientScript } from "./client";
 import { escapeHtml, renderBlocks } from "./components";
 import { loadPlanFolder, type LoadedPlanFolder } from "./mdx-loader";
+import { validateRenderedHtmlIds } from "./schema";
 
 const defaultShell = `<!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -477,7 +478,7 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
     renderBlocks(plan.plan.blocks, { staticMode }),
     plan.canvas ? `<section class="ve-ip-block ve-ip-card" id="canvas"><div class="ve-ip-label">Canvas</div><h2>Canvas</h2>${renderBlocks(plan.canvas.blocks, { staticMode })}</section>` : "",
   ].join("\n");
-  return template
+  const html = template
     .replaceAll("{{TITLE}}", escapeHtml(plan.manifest.title))
     .replaceAll("{{KIND}}", escapeHtml(plan.manifest.kind))
     .replaceAll("{{SUBTITLE}}", staticMode ? "Static export. Interactive persistence requires the local review bridge." : "Local interactive review surface.")
@@ -485,6 +486,9 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
     .replaceAll("{{CONTENT}}", content)
     .replaceAll("{{STYLE}}", style)
     .replaceAll("{{CLIENT}}", staticMode ? staticPlanClientScript : interactivePlanClientScript);
+  const idErrors = validateRenderedHtmlIds(html);
+  if (idErrors.length) throw new Error(`Invalid rendered HTML:\n${idErrors.join("\n")}`);
+  return html;
 }
 
 export async function renderPlanFolder(rootDir: string): Promise<{ indexPath: string; staticExportPath: string }> {

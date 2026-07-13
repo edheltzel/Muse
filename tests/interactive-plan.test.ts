@@ -7,7 +7,7 @@ import { Window } from "happy-dom";
 import { renderBlock } from "../plugins/Muse/skills/muse/tools/interactive-plan/components.ts";
 import { interactivePlanInteractionScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
-import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
+import { renderPlanFolder, renderPlanHtml } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 import {
   addComment,
   approvePlan,
@@ -101,10 +101,10 @@ describe("interactive plan MDX loading", () => {
           "wireframe",
           "states",
           "component-table",
+          "component-anchor",
           "questions",
           "checks",
           "approval",
-          "component-anchor",
         ],
         hasCanvas: true,
       },
@@ -203,6 +203,70 @@ describe("interactive plan MDX loading", () => {
       await rm(planDir, { recursive: true, force: true });
     }
   });
+  test("parses quoted tag closers and opaque non-Muse JSX inside supported blocks", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-quoted-tags-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<Callout id="comparison" title="A > B">Comparison body</Callout>
+<AnnotatedCode id="button-code" file="Button.tsx">
+<Button title="A > B">Choose</Button>
+</AnnotatedCode>
+`);
+
+      const plan = await loadPlanFolder(planDir);
+      expect(plan.plan.blocks.map(({ id, type }) => ({ id, type }))).toEqual([
+        { id: "comparison", type: "Callout" },
+        { id: "button-code", type: "AnnotatedCode" },
+      ]);
+      expect(plan.plan.blocks[0].props.title).toBe("A > B");
+      expect(plan.plan.blocks[1].body).toContain('<Button title="A > B">Choose</Button>');
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    {
+      name: "nested supported block",
+      source: `<Callout id="outer"><Tabs id="inner">Panel</Tabs></Callout>`,
+      error: "nested 'Tabs' inside 'Callout' is not supported",
+    },
+    {
+      name: "unclosed supported block",
+      source: `<Tabs id="broken">Panel`,
+      error: "unclosed 'Tabs'",
+    },
+    {
+      name: "unexpected supported closing tag",
+      source: `Plain prose</Tabs>`,
+      error: "unexpected closing 'Tabs'",
+    },
+    {
+      name: "closing tag suffix",
+      source: `<Tabs id="broken">Panel</Tabs extra>`,
+      error: "malformed closing 'Tabs'",
+    },
+    {
+      name: "component-like fallback",
+      source: `<Tabs id="broken"`,
+      error: "incomplete tag '<Tabs'",
+    },
+  ])("rejects $name instead of silently recovering", async ({ source, error }) => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-malformed-component-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), source);
+      let message = "";
+      try {
+        await loadPlanFolder(planDir);
+      } catch (caught) {
+        message = caught instanceof Error ? caught.message : String(caught);
+      }
+      expect(message).toContain("Malformed MDX component source");
+      expect(message).toContain(error);
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects empty, separator-only, and blank tab panels", async () => {
     const planDir = await mkdtemp(join(tmpdir(), "ve-ip-empty-tabs-"));
     const cases = [
@@ -227,6 +291,78 @@ describe("interactive plan MDX loading", () => {
       await rm(planDir, { recursive: true, force: true });
     }
   });
+  test("inventories StateGallery ids with authored, generated, renderer, and canvas ids", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-state-gallery-ids-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<Tabs id="tabs">First\n---\nSecond</Tabs>
+<Callout id="shared">Authored block</Callout>
+<StateGallery id="states">
+<div title="A > B" id="tabs-panel-0"></div>
+<div id="shared"></div>
+<div id="canvas"></div>
+<div id="unsafe id"></div>
+<div id></div>
+</StateGallery>
+`);
+      await writeFile(join(planDir, "canvas.mdx"), `<Callout id="canvas-content">Canvas</Callout>`);
+
+      let message = "";
+      try {
+        await loadPlanFolder(planDir);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+
+      expect(message).toContain("StateGallery descendant id 'tabs-panel-0' in 'states' collides with another emitted id");
+      expect(message).toContain("StateGallery descendant id 'shared' in 'states' collides with another emitted id");
+      expect(message).toContain("StateGallery descendant id 'canvas' in 'states' collides with another emitted id");
+      expect(message).toContain("StateGallery descendant has unsafe id 'unsafe id' in 'states'");
+      expect(message).toContain("StateGallery 'states' contains an id attribute without a value");
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test("ignores id-like text in raw HTML comments and quoted attributes", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-opaque-ids-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<Callout id="shared">Authored block</Callout>
+<StateGallery id="states">
+<!-- <div id="shared"></div> -->
+<div title="example id=shared > comparison"></div>
+</StateGallery>
+`);
+
+      const plan = await loadPlanFolder(planDir);
+      expect(plan.plan.blocks.map((block) => block.id)).toEqual(["shared", "states"]);
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test("audits shell and renderer ids at the final rendered HTML boundary", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-final-html-ids-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<Callout id="shell-owned">Body</Callout>`);
+      const plan = await loadPlanFolder(planDir);
+      const shell = `<!doctype html><html><body><header id="shell-owned"></header><div id></div><div id=""></div><div id="unsafe id"></div>{{CONTENT}}<script>{{CLIENT}}</script></body></html>`;
+      let message = "";
+      try {
+        await renderPlanHtml(plan, false, shell);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).toContain("Rendered HTML contains duplicate id 'shell-owned'");
+      expect(message).toContain("Rendered HTML contains an id attribute without a value");
+      expect(message).toContain("Rendered HTML contains an empty id attribute");
+      expect(message).toContain("Rendered HTML contains unsafe id 'unsafe id'");
+      const scriptOnlyShell = `<!doctype html><html><body>{{CONTENT}}<script>const example = '<div id="shell-owned"></div>';</script></body></html>`;
+      await expect(renderPlanHtml(plan, false, scriptOnlyShell)).resolves.toContain("shell-owned");
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
 });
 
 describe("interactive plan rendering", () => {

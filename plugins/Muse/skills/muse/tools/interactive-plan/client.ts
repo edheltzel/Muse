@@ -186,7 +186,8 @@ export const interactivePlanInteractionScript = `
     const owner = ownedTabset(tab);
     const id = tab.getAttribute("data-tab-target");
     const matchingPanels = owner?.panels.filter((panel) => panel.id === id) || [];
-    if (!owner || !id || matchingPanels.length !== 1) return false;
+    const matchingTabs = owner?.tabs.filter((button) => button.getAttribute("data-tab-target") === id) || [];
+    if (!owner || !id || matchingPanels.length !== 1 || matchingTabs.length !== 1) return false;
     owner.panels.forEach((panel) => { panel.hidden = panel.id !== id; });
     owner.tabs.forEach((button) => {
       const active = button === tab;
@@ -196,6 +197,16 @@ export const interactivePlanInteractionScript = `
     if (moveFocus) tab.focus();
     return true;
   };
+  const pointerFocus = new WeakMap();
+
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const tab = target.closest('[role="tab"][data-tab-target]');
+    if (tab && document.activeElement instanceof HTMLElement) {
+      pointerFocus.set(tab, document.activeElement);
+    }
+  });
 
   document.addEventListener("keydown", (event) => {
     const target = event.target;
@@ -224,7 +235,12 @@ export const interactivePlanInteractionScript = `
     if (!(target instanceof HTMLElement)) return;
 
     const tab = target.closest('[role="tab"][data-tab-target]');
-    if (tab) activateTab(tab);
+    if (tab) {
+      const activated = activateTab(tab);
+      const previousFocus = pointerFocus.get(tab);
+      pointerFocus.delete(tab);
+      if (!activated && previousFocus instanceof HTMLElement) previousFocus.focus();
+    }
 
     if (target.closest("[data-needs-revision]")) {
       try {
