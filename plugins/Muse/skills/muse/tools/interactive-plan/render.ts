@@ -24,7 +24,7 @@ const defaultShell = `<!DOCTYPE html>
     {{EXPLORER}}
     {{CONTENT}}
   </main>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js"></script>
 <script type="module">{{CLIENT}}</script>
 </body>
 </html>`;

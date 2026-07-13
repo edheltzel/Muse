@@ -5,14 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { MDX_COMPONENT_NAMES } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
-import { servePlan } from "../plugins/Muse/skills/muse/tools/interactive-plan/server.ts";
 
 type Theme = "light" | "dark";
 type Viewport = "desktop" | "mobile";
 
 interface RunningServer {
-  port?: number;
-  stop(closeActiveConnections?: boolean): void;
+  port: number;
+  stop(): Promise<void>;
 }
 
 interface CleanupAction {
@@ -45,35 +44,86 @@ interface ReviewState {
   checklist: Record<string, boolean>;
 }
 
+interface NetworkRequest {
+  url: string;
+  status: number;
+  resourceType: string;
+  responseHeaders: Record<string, string>;
+}
+
+interface NetworkLog {
+  success: boolean;
+  data: { requests: NetworkRequest[] };
+}
+
+type ChildProcess = Bun.Subprocess<"ignore", "pipe", "pipe">;
+
 const repoRoot = join(import.meta.dir, "..");
 const sourceFixtureDir = join(repoRoot, "tests", "fixtures", "interactive-plans", "component-library-showcase");
 const session = `muse-component-explorer-${process.pid}`;
 const operationTimeoutMs = 30_000;
+const shutdownGraceMs = 2_000;
 const testedAgentBrowserVersion = "0.31.1";
+const expectedMermaidVersion = "11.16.0";
+const expectedMermaidUrl = `https://cdn.jsdelivr.net/npm/mermaid@${expectedMermaidVersion}/dist/mermaid.min.js`;
 let agentBrowserExecutable = "";
+
+async function bounded<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  const timeout = Promise.withResolvers<never>();
+  const timeoutId = setTimeout(() => timeout.reject(new Error(message)), timeoutMs);
+  try {
+    return await Promise.race([promise, timeout.promise]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function terminateChild(child: ChildProcess, label: string): Promise<void> {
+  child.kill("SIGTERM");
+  try {
+    await bounded(child.exited, shutdownGraceMs, `${label} ignored SIGTERM`);
+  } catch (termError) {
+    child.kill("SIGKILL");
+    try {
+      await bounded(child.exited, shutdownGraceMs, `${label} did not exit after SIGKILL`);
+    } catch (killError) {
+      throw new AggregateError([termError, killError], `${label} could not be terminated`);
+    }
+  }
+}
 
 async function runAgentBrowser(args: string[], sessionScoped: boolean): Promise<string> {
   const command = [agentBrowserExecutable, ...(sessionScoped ? ["--session", session] : []), ...args];
   const child = Bun.spawn(command, { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
   const stdout = new Response(child.stdout).text();
   const stderr = new Response(child.stderr).text();
-  const timeout = Promise.withResolvers<never>();
-  const timeoutId = setTimeout(
-    () => timeout.reject(new Error(`${command.join(" ")} exceeded ${operationTimeoutMs}ms`)),
-    operationTimeoutMs,
-  );
 
   try {
-    const exitCode = await Promise.race([child.exited, timeout.promise]);
-    const [stdoutText, stderrText] = await Promise.all([stdout, stderr]);
+    const exitCode = await bounded(child.exited, operationTimeoutMs, `${command.join(" ")} exceeded ${operationTimeoutMs}ms`);
+    const [stdoutText, stderrText] = await Promise.all([
+      bounded(stdout, shutdownGraceMs, `${command.join(" ")} stdout did not drain`),
+      bounded(stderr, shutdownGraceMs, `${command.join(" ")} stderr did not drain`),
+    ]);
     assert.equal(exitCode, 0, `${command.join(" ")} failed:\n${stderrText || stdoutText}`);
     return stdoutText.trim();
-  } catch (error) {
-    child.kill();
-    await Promise.allSettled([child.exited, stdout, stderr]);
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
+  } catch (primaryError) {
+    const cleanupErrors: unknown[] = [];
+    try {
+      await terminateChild(child, command.join(" "));
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    for (const [name, drain] of [["stdout", stdout], ["stderr", stderr]] as const) {
+      try {
+        await bounded(drain, shutdownGraceMs, `${command.join(" ")} ${name} did not drain after termination`);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError([primaryError, ...cleanupErrors], `${command.join(" ")} failed and cleanup was incomplete`);
+    }
+    throw primaryError;
   }
 }
 
@@ -86,31 +136,72 @@ async function evaluate<T>(expression: string): Promise<T> {
 }
 
 async function startServer(planDir: string): Promise<RunningServer> {
-  const controller = new AbortController();
-  const startup = servePlan(planDir, 0, controller.signal);
-  const timeout = Promise.withResolvers<never>();
-  const timeoutId = setTimeout(
-    () => timeout.reject(new Error(`Muse fixture server did not start within ${operationTimeoutMs}ms`)),
-    operationTimeoutMs,
-  );
+  const serverScript = join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "server.ts");
+  const command = [process.execPath, serverScript, planDir, "0"];
+  const child = Bun.spawn(command, { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
+  const stderr = new Response(child.stderr).text();
+  const reader = child.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+
+  const publishedPort = (async () => {
+    while (true) {
+      const chunk = await reader.read();
+      output += decoder.decode(chunk.value, { stream: !chunk.done });
+      const match = output.match(/Muse plan review: http:\/\/localhost:(\d+)\//);
+      if (match?.[1]) return Number(match[1]);
+      if (chunk.done) {
+        const exitCode = await child.exited;
+        throw new Error(`Muse fixture server exited with ${exitCode} before publishing a port:\n${await stderr || output}`);
+      }
+    }
+  })();
 
   try {
-    const server = await Promise.race([startup, timeout.promise]);
-    if (server.port === undefined) throw new Error("Muse fixture server did not publish a dynamic port");
-    return server;
-  } catch (error) {
-    controller.abort();
-    const containedStartup = startup.then(
-      (server) => { server.stop(true); },
-      () => {},
-    );
-    const containmentTimeout = Promise.withResolvers<void>();
-    const containmentTimeoutId = setTimeout(containmentTimeout.resolve, operationTimeoutMs);
-    await Promise.race([containedStartup, containmentTimeout.promise]);
-    clearTimeout(containmentTimeoutId);
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
+    const port = await bounded(publishedPort, operationTimeoutMs, `Muse fixture server did not start within ${operationTimeoutMs}ms`);
+    const stdout = (async () => {
+      while (true) {
+        const chunk = await reader.read();
+        output += decoder.decode(chunk.value, { stream: !chunk.done });
+        if (chunk.done) return output;
+      }
+    })();
+    return {
+      port,
+      async stop() {
+        const cleanupErrors: unknown[] = [];
+        try {
+          await terminateChild(child, "Muse fixture server");
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        for (const [name, drain] of [["stdout", stdout], ["stderr", stderr]] as const) {
+          try {
+            await bounded(drain, shutdownGraceMs, `Muse fixture server ${name} did not drain`);
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+        if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, "Muse fixture server cleanup failed");
+      },
+    };
+  } catch (primaryError) {
+    await reader.cancel().catch(() => {});
+    const cleanupErrors: unknown[] = [];
+    try {
+      await terminateChild(child, "Muse fixture server startup");
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await bounded(stderr, shutdownGraceMs, "Muse fixture server stderr did not drain after startup failure");
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError([primaryError, ...cleanupErrors], "Muse fixture server startup failed and cleanup was incomplete");
+    }
+    throw primaryError;
   }
 }
 
@@ -138,11 +229,45 @@ async function setThemeWithPointer(theme: Theme): Promise<void> {
 
 async function waitForProductionAssets(): Promise<void> {
   await browser("wait", "--fn", "document.fonts && document.fonts.status === 'loaded'");
-  const fonts = await evaluate<{ heading: boolean; mono: boolean }>(`document.fonts.ready.then(() => ({
-    heading: document.fonts.check('16px "Bricolage Grotesque"'),
-    mono: document.fonts.check('16px "Fragment Mono"'),
-  }))`);
-  assert.deepEqual(fonts, { heading: true, mono: true }, "production fonts must participate in geometry checks");
+  const assets = await evaluate<{
+    loadedFamilies: string[];
+    nonexistentLoaded: boolean;
+    mermaidScriptUrl: string | null;
+  }>(`document.fonts.ready.then(() => {
+    const normalizeFamily = (family) => family.replace(/^['"]|['"]$/g, '').toLowerCase();
+    const loadedFamilies = Array.from(document.fonts)
+      .filter((face) => face.status === 'loaded')
+      .map((face) => normalizeFamily(face.family));
+    return {
+      loadedFamilies,
+      nonexistentLoaded: loadedFamilies.includes('muse nonexistent oracle'),
+      mermaidScriptUrl: document.querySelector('script[src*="mermaid"]')?.src || null,
+    };
+  })`);
+  assert.ok(assets.loadedFamilies.includes("bricolage grotesque"), "Bricolage Grotesque must be a registered loaded FontFace");
+  assert.ok(assets.loadedFamilies.includes("fragment mono"), "Fragment Mono must be a registered loaded FontFace");
+  assert.equal(assets.nonexistentLoaded, false, "the loaded-FontFace oracle must reject a nonexistent family");
+
+  const network = JSON.parse(await browser("network", "requests", "--json")) as NetworkLog;
+  assert.equal(network.success, true, "agent-browser must expose successful response metadata");
+  const stylesheetResponse = network.data.requests.find((response) => response.url.startsWith("https://fonts.googleapis.com/css2?"));
+  assert.equal(stylesheetResponse?.status, 200, "the production Google Fonts stylesheet must return HTTP 200");
+  const fontResponses = network.data.requests.filter((response) => response.url.startsWith("https://fonts.gstatic.com/"));
+  assert.ok(fontResponses.length >= 2, "both production font families must load font resources");
+  assert.equal(fontResponses.every((response) => response.status === 200), true, "every production font response must return HTTP 200");
+
+  assert.equal(assets.mermaidScriptUrl, expectedMermaidUrl, "Mermaid must use the pinned production release URL");
+  const mermaidResponse = network.data.requests.find((response) => response.url === expectedMermaidUrl);
+  assert.deepEqual(
+    mermaidResponse && {
+      url: mermaidResponse.url,
+      status: mermaidResponse.status,
+      resourceType: mermaidResponse.resourceType,
+      version: mermaidResponse.responseHeaders["x-jsd-version"],
+    },
+    { url: expectedMermaidUrl, status: 200, resourceType: "Script", version: expectedMermaidVersion },
+    "the expected-origin and version Mermaid release must load successfully",
+  );
 
   await browser("wait", ".mermaid-canvas svg");
   const mermaid = await evaluate<{ renderState: string | null; groups: number; text: string; runtime: boolean }>(`(() => {
@@ -156,7 +281,7 @@ async function waitForProductionAssets(): Promise<void> {
     };
   })()`);
   assert.equal(mermaid.renderState, "rendered");
-  assert.equal(mermaid.runtime, true, "the production Mermaid runtime must load without a network stub");
+  assert.equal(mermaid.runtime, true, "the pinned production Mermaid runtime must be executable");
   assert.ok(mermaid.groups > 0, "real Mermaid output must contain rendered graph groups");
   assert.match(mermaid.text, /Agent writes plan\.mdx/);
 }
@@ -232,56 +357,65 @@ async function positionSearch(anchor: SearchPosition["anchor"]): Promise<SearchP
     const chromeRect = chrome.getBoundingClientRect();
     const overlapArea = Math.max(0, Math.min(searchRect.right, chromeRect.right) - Math.max(searchRect.left, chromeRect.left))
       * Math.max(0, Math.min(searchRect.bottom, chromeRect.bottom) - Math.max(searchRect.top, chromeRect.top));
-    const y = Math.round(searchRect.top + searchRect.height / 2);
-    const points = [searchRect.left + 6, searchRect.left + searchRect.width / 2, searchRect.right - 6].map((x) => ({
+    const xs = [searchRect.left + 6, searchRect.left + searchRect.width / 2, searchRect.right - 6];
+    const ys = [searchRect.top + 6, searchRect.top + searchRect.height / 2, searchRect.bottom - 6];
+    const points = ys.flatMap((y) => xs.map((x) => ({
       x: Math.round(x),
-      y,
+      y: Math.round(y),
       hit: document.elementFromPoint(x, y) === search,
-    }));
+    })));
     return { anchor: ${JSON.stringify(anchor)}, points, overlapArea };
   })()`);
 }
 
-async function assertMobileGeometry(surface: BrowserSurface, theme: Theme, runNegativeControl: boolean): Promise<void> {
+async function assertMobileGeometry(surface: BrowserSurface, theme: Theme): Promise<void> {
   for (const anchor of ["top", "middle", "bottom"] as const) {
-    for (const column of [0, 1, 2]) {
-      await browser("fill", "[data-component-search]", "");
-      const position = await positionSearch(anchor);
-      assert.equal(position.overlapArea, 0, `${surface.name} ${theme} ${anchor}: theme chrome overlaps search`);
-      assert.deepEqual(position.points.map((point) => point.hit), [true, true, true], `${surface.name} ${theme} ${anchor}: search is intercepted`);
-      const point = position.points[column];
-      assert.ok(point);
+    const position = await positionSearch(anchor);
+    assert.equal(position.overlapArea, 0, `${surface.name} ${theme} ${anchor}: theme chrome overlaps search`);
+    assert.deepEqual(position.points.map((point) => point.hit), Array(9).fill(true), `${surface.name} ${theme} ${anchor}: search is intercepted`);
+    for (const [pointIndex, point] of position.points.entries()) {
+      await evaluate(`(() => {
+        const search = document.querySelector('[data-component-search]');
+        search.value = '';
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
       await browser("mouse", "move", String(point.x), String(point.y));
       await browser("mouse", "down", "left");
       await browser("mouse", "up", "left");
       const focused = await evaluate<boolean>("document.activeElement === document.querySelector('[data-component-search]')");
-      assert.equal(focused, true, `${surface.name} ${theme} ${anchor}/${column}: coordinate click did not focus search`);
-      await browser("fill", "[data-component-search]", "P");
+      assert.equal(focused, true, `${surface.name} ${theme} ${anchor}/${pointIndex}: coordinate click did not focus search`);
+      await browser("keyboard", "type", "P");
       const value = await evaluate<string>("document.querySelector('[data-component-search]').value");
-      assert.equal(value, "P", `${surface.name} ${theme} ${anchor}/${column}: coordinate typing failed`);
+      assert.equal(value, "P", `${surface.name} ${theme} ${anchor}/${pointIndex}: raw focused keyboard typing failed`);
     }
   }
 
-  if (!runNegativeControl) return;
-  await browser("fill", "[data-component-search]", "");
+  await positionSearch("bottom");
   await evaluate(`(() => {
-    const style = document.createElement('style');
-    style.id = 'fixed-chrome-regression-probe';
-    style.textContent = '@media (max-width: 860px) { .ve-ip-chrome { position: fixed !important; top: auto !important; bottom: 1rem !important; } }';
-    document.head.append(style);
-    const search = document.querySelector('[data-component-search]');
-    const absoluteBottom = search.getBoundingClientRect().bottom + scrollY;
-    window.scrollTo({ top: Math.max(0, absoluteBottom - innerHeight + 8), behavior: 'instant' });
-    return true;
+    const searchRect = document.querySelector('[data-component-search]').getBoundingClientRect();
+    const obstruction = document.createElement('div');
+    obstruction.id = 'fixed-obstruction-regression-probe';
+    Object.assign(obstruction.style, {
+      position: 'fixed',
+      inset: searchRect.top + 'px auto auto ' + searchRect.left + 'px',
+      width: searchRect.width + 'px',
+      height: searchRect.height + 'px',
+      pointerEvents: 'auto',
+      zIndex: '2147483647',
+    });
+    document.body.append(obstruction);
   })()`);
-  const blocked = await evaluate<boolean>(`(() => {
-    const search = document.querySelector('[data-component-search]');
-    const rect = search.getBoundingClientRect();
-    const y = rect.top + rect.height / 2;
-    return [rect.left + 6, rect.left + rect.width / 2, rect.right - 6].some((x) => document.elementFromPoint(x, y) !== search);
-  })()`);
-  assert.equal(blocked, true, "fixed mobile chrome negative control must intercept at least one search probe");
-  await evaluate("document.getElementById('fixed-chrome-regression-probe').remove()");
+  try {
+    const blocked = await evaluate<boolean>(`(() => {
+      const rect = document.querySelector('[data-component-search]').getBoundingClientRect();
+      const xs = [rect.left + 6, rect.left + rect.width / 2, rect.right - 6];
+      const ys = [rect.top + 6, rect.top + rect.height / 2, rect.bottom - 6];
+      return ys.flatMap((y) => xs.map((x) => document.elementFromPoint(x, y))).some((element) => !element?.matches('[data-component-search]'));
+    })()`);
+    assert.equal(blocked, true, `${surface.name} ${theme}: fixed mobile chrome negative control must intercept the search grid`);
+  } finally {
+    await evaluate("document.getElementById('fixed-obstruction-regression-probe').remove()");
+  }
 }
 
 async function assertDesktopPointerNavigation(): Promise<void> {
@@ -311,14 +445,14 @@ async function assertDesktopPointerNavigation(): Promise<void> {
   }
 }
 
-async function runSurfaceCase(baseUrl: string, surface: BrowserSurface, viewport: Viewport, theme: Theme, negativeControl: boolean): Promise<void> {
+async function runSurfaceCase(baseUrl: string, surface: BrowserSurface, viewport: Viewport, theme: Theme): Promise<void> {
   await browser("open", `${baseUrl}${surface.path}`);
   await browser("set", "viewport", ...(viewport === "mobile" ? ["390", "844"] : ["1440", "900"]));
   await waitForProductionAssets();
   await setThemeWithPointer(theme);
   await assertSharedCatalogContract(surface);
   if (viewport === "mobile") {
-    await assertMobileGeometry(surface, theme, negativeControl);
+    await assertMobileGeometry(surface, theme);
   } else {
     await assertDesktopPointerNavigation();
   }
@@ -410,7 +544,7 @@ try {
   await cp(sourceFixtureDir, isolatedFixture, { recursive: true });
 
   const server = await startServer(isolatedFixture);
-  registerCleanup({ name: "server", run: () => server.stop(true) });
+  registerCleanup({ name: "server", run: () => server.stop() });
   const baseUrl = `http://127.0.0.1:${server.port}`;
 
   registerCleanup({ name: "browser", async run() { await browser("close"); } });
@@ -423,7 +557,7 @@ try {
   for (const surface of surfaces) {
     for (const viewport of ["desktop", "mobile"] as const) {
       for (const theme of ["light", "dark"] as const) {
-        await runSurfaceCase(baseUrl, surface, viewport, theme, surface.name === "interactive" && viewport === "mobile" && theme === "dark");
+        await runSurfaceCase(baseUrl, surface, viewport, theme);
       }
     }
   }
