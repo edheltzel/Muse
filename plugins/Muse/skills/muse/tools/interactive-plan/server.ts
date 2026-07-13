@@ -11,15 +11,17 @@ async function json(request: Request): Promise<Record<string, unknown>> {
   }
 }
 
-export async function servePlan(planDir: string, port = 7374) {
+export async function servePlan(planDir: string, port = 7374, signal?: AbortSignal) {
   await renderPlanFolder(planDir);
+  signal?.throwIfAborted();
   const server = Bun.serve({
     port,
     async fetch(request) {
       const url = new URL(request.url);
       try {
-        if (url.pathname === "/" || url.pathname === "/index.html") {
-          return new Response(await readFile(join(planDir, "dist", "index.html"), "utf8"), { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/static-export.html") {
+          const filename = url.pathname === "/static-export.html" ? "static-export.html" : "index.html";
+          return new Response(await readFile(join(planDir, "dist", filename), "utf8"), { headers: { "content-type": "text/html; charset=utf-8" } });
         }
         if (url.pathname === "/plan-state.json") {
           return Response.json(await readReviewState(planDir));
@@ -50,6 +52,12 @@ export async function servePlan(planDir: string, port = 7374) {
       }
     },
   });
+  const stopOnAbort = () => server.stop(true);
+  signal?.addEventListener("abort", stopOnAbort, { once: true });
+  if (signal?.aborted) {
+    stopOnAbort();
+    signal.throwIfAborted();
+  }
   return server;
 }
 
