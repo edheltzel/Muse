@@ -22,7 +22,7 @@ Detailed prompt templates live in `./commands/`. In Pi and OMP, these are slash 
 | ---------------------- | ----------------------------------------------------------------------- |
 | `generate-web-diagram` | Generate an HTML diagram for any topic                                  |
 | `generate-visual-plan` | Generate an interactive MDX plan with review state and agent handoff    |
-| `visual-recap`         | Generate an interactive recap for a branch, commit, PR, or diff         |
+| `generate-visual-recap` | Generate an interactive recap for a branch, commit, PR, or diff         |
 | `generate-slides`      | Generate a magazine-quality slide deck                                  |
 | `diff-review`          | Visual diff review with architecture comparison and code review         |
 | `plan-review`          | Compare a plan against the codebase with risk assessment                |

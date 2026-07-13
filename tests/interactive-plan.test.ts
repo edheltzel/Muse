@@ -4802,8 +4802,8 @@ describe("interactive command documentation contracts", () => {
     expect(doc).toMatch(/@agent-native\/\*/);
   });
 
-  test("/visual-recap documents MDX recap artifacts, local rendering, and dependency boundaries", async () => {
-    const doc = await readFile(join(repoRoot, "plugins", "Muse", "commands", "visual-recap.md"), "utf8");
+  test("/generate-visual-recap documents MDX recap artifacts, local rendering, and dependency boundaries", async () => {
+    const doc = await readFile(join(repoRoot, "plugins", "Muse", "commands", "generate-visual-recap.md"), "utf8");
 
     expect(doc).toMatch(/interactive Muse recap/i);
     expect(doc).toMatch(/plan\.mdx/);

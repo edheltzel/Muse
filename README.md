@@ -2,7 +2,7 @@
 
 # Muse
 
-> [! NOTE]
+> [!NOTE]
 > Big thanks to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) for the original idea and work but [Muse](https://github.com/edheltzel/Muse) been **heavily modified** to fit my personal needs and will continue to change with more features.
 
 **Turn dense agent output into beautiful browser-native pages people can actually understand.**
@@ -44,7 +44,7 @@ The explorer includes every current MDX component, search and family filters, co
 > draw a diagram of our authentication flow
 > /diff-review
 > /generate-visual-plan ~/docs/refactor-plan.md
-> /visual-recap main...HEAD
+> /generate-visual-recap main...HEAD
 > /project-recap --slides
 ```
 
@@ -82,7 +82,7 @@ Claude Code namespaces plugin commands. Use:
 ```text
 /muse:generate-web-diagram
 /muse:generate-visual-plan
-/muse:visual-recap
+/muse:generate-visual-recap
 /muse:diff-review
 /muse:plan-review
 ```
@@ -103,7 +103,7 @@ You should see Pi install the package and register the skill plus command templa
 $Muse
 /generate-web-diagram
 /generate-visual-plan
-/visual-recap
+/generate-visual-recap
 /diff-review
 /plan-review
 ```
@@ -165,7 +165,7 @@ Then start a fresh OMP session and use:
 $Muse
 /generate-web-diagram
 /generate-visual-plan
-/visual-recap
+/generate-visual-recap
 ```
 
 Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plans and recaps create local MDX review folders with state, comments, approval controls, and agent handoff files.
@@ -206,7 +206,7 @@ Codex scans `~/.agents/skills` for user skills and supports `$Muse` or `/skills`
 | ----------------------- | -------------------------------------------------------------------------- |
 | `/generate-web-diagram` | A styled HTML diagram for any topic                                        |
 | `/generate-visual-plan` | An interactive MDX implementation plan with review state and handoff files |
-| `/visual-recap`         | A visual recap for a branch, commit, PR, or diff                           |
+| `/generate-visual-recap` | A visual recap for a branch, commit, PR, or diff                          |
 | `/generate-slides`      | A magazine-quality slide deck                                              |
 | `/diff-review`          | A visual code-review page with architecture context                        |
 | `/plan-review`          | A plan-vs-codebase review with risks and gaps                              |

@@ -7,6 +7,9 @@
 - **Native Codex plugin support.** Added `.codex-plugin/plugin.json` and Codex skill UI metadata, moved direct user-skill installation to the documented `~/.agents/skills` location, added Codex marketplace guidance, and introduced packaging tests that keep OMP, Pi, Claude Code, Codex, and marketplace identities and versions synchronized.
 - **Human-facing component explorer.** The complete MDX component showcase now supports search, family filters, copyable source examples, explicit component metadata, and a dedicated render/serve workflow. Added the previously missing standalone `Tabs` example so every supported component has a live browser representation.
 
+### Changed
+- **Renamed the visual recap command.** `/visual-recap` is now `/generate-visual-recap` so the interactive recap command follows the same verb-first naming pattern as `/generate-visual-plan`. Claude Code users should invoke `/muse:generate-visual-recap`.
+
 ## [0.9.2] - 2026-07-07
 
 ### Removed
