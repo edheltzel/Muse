@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { MDX_COMPONENT_NAMES } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
+import {
+  bounded,
+  runProcess,
+  startServerProcess,
+  type LifecycleProcess,
+} from "./support/process-lifecycle.ts";
 
 type Theme = "light" | "dark";
 type Viewport = "desktop" | "mobile";
@@ -46,6 +53,7 @@ interface ReviewState {
 
 interface NetworkRequest {
   url: string;
+  method: string;
   status: number;
   resourceType: string;
   responseHeaders: Record<string, string>;
@@ -56,75 +64,41 @@ interface NetworkLog {
   data: { requests: NetworkRequest[] };
 }
 
-type ChildProcess = Bun.Subprocess<"ignore", "pipe", "pipe">;
 
 const repoRoot = join(import.meta.dir, "..");
 const sourceFixtureDir = join(repoRoot, "tests", "fixtures", "interactive-plans", "component-library-showcase");
-const session = `muse-component-explorer-${process.pid}`;
+const session = `muse-component-explorer-${process.pid}-${randomBytes(12).toString("hex")}`;
 const operationTimeoutMs = 30_000;
 const shutdownGraceMs = 2_000;
+const staticQuietWindowMs = 750;
 const testedAgentBrowserVersion = "0.31.1";
 const expectedMermaidVersion = "11.16.0";
 const expectedMermaidUrl = `https://cdn.jsdelivr.net/npm/mermaid@${expectedMermaidVersion}/dist/mermaid.min.js`;
+const expectedMermaidSha256 = "74d7c46dabca328c2294733910a8aa1ed0c37451776e8d5295da38a2b758fb9b";
+const expectedMermaidSri = "sha384-T/0lMUdJpd2S1ZHtRiofG3htU3xPCrFVeAQ1UUE2TJwlEJSV5NUwn30kP28n238E";
+const expectedFontFaces = [
+  { family: "Bricolage Grotesque", weight: "500", sha256: "b62688707e0820a9cf2a98e9b0349fbb348fd17f76b70a05b53e7a668e3f406f" },
+  { family: "Bricolage Grotesque", weight: "600", sha256: "b34fc8c1ef0ac8798455ac2979eae4b4f90f0d327e3584d1032fa77a8a9a66ca" },
+  { family: "Bricolage Grotesque", weight: "700", sha256: "4c373ce3c1cca41c864eb3e27c059a59fc6310547ab9c9b6cd780d387ba24206" },
+  { family: "Fragment Mono", weight: "400", sha256: "44c4e39bff5e76652a24a872cbebabccbcfb20f62c4633b27c1f2745cba86b56" },
+] as const;
 let agentBrowserExecutable = "";
-
-async function bounded<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  const timeout = Promise.withResolvers<never>();
-  const timeoutId = setTimeout(() => timeout.reject(new Error(message)), timeoutMs);
-  try {
-    return await Promise.race([promise, timeout.promise]);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function terminateChild(child: ChildProcess, label: string): Promise<void> {
-  child.kill("SIGTERM");
-  try {
-    await bounded(child.exited, shutdownGraceMs, `${label} ignored SIGTERM`);
-  } catch (termError) {
-    child.kill("SIGKILL");
-    try {
-      await bounded(child.exited, shutdownGraceMs, `${label} did not exit after SIGKILL`);
-    } catch (killError) {
-      throw new AggregateError([termError, killError], `${label} could not be terminated`);
-    }
-  }
-}
 
 async function runAgentBrowser(args: string[], sessionScoped: boolean): Promise<string> {
   const command = [agentBrowserExecutable, ...(sessionScoped ? ["--session", session] : []), ...args];
-  const child = Bun.spawn(command, { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
-  const stdout = new Response(child.stdout).text();
-  const stderr = new Response(child.stderr).text();
-
-  try {
-    const exitCode = await bounded(child.exited, operationTimeoutMs, `${command.join(" ")} exceeded ${operationTimeoutMs}ms`);
-    const [stdoutText, stderrText] = await Promise.all([
-      bounded(stdout, shutdownGraceMs, `${command.join(" ")} stdout did not drain`),
-      bounded(stderr, shutdownGraceMs, `${command.join(" ")} stderr did not drain`),
-    ]);
-    assert.equal(exitCode, 0, `${command.join(" ")} failed:\n${stderrText || stdoutText}`);
-    return stdoutText.trim();
-  } catch (primaryError) {
-    const cleanupErrors: unknown[] = [];
-    try {
-      await terminateChild(child, command.join(" "));
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-    for (const [name, drain] of [["stdout", stdout], ["stderr", stderr]] as const) {
-      try {
-        await bounded(drain, shutdownGraceMs, `${command.join(" ")} ${name} did not drain after termination`);
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError([primaryError, ...cleanupErrors], `${command.join(" ")} failed and cleanup was incomplete`);
-    }
-    throw primaryError;
-  }
+  const result = await runProcess({
+    command,
+    label: command.join(" "),
+    spawn: (spawnCommand) => Bun.spawn(spawnCommand, {
+      cwd: repoRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    }) as unknown as LifecycleProcess,
+    operationTimeoutMs,
+    cleanupTimeoutMs: shutdownGraceMs,
+  });
+  assert.equal(result.exitCode, 0, `${command.join(" ")} failed:\n${result.stderr || result.stdout}`);
+  return result.stdout.trim();
 }
 
 async function browser(...args: string[]): Promise<string> {
@@ -137,72 +111,18 @@ async function evaluate<T>(expression: string): Promise<T> {
 
 async function startServer(planDir: string): Promise<RunningServer> {
   const serverScript = join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "server.ts");
-  const command = [process.execPath, serverScript, planDir, "0"];
-  const child = Bun.spawn(command, { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
-  const stderr = new Response(child.stderr).text();
-  const reader = child.stdout.getReader();
-  const decoder = new TextDecoder();
-  let output = "";
-
-  const publishedPort = (async () => {
-    while (true) {
-      const chunk = await reader.read();
-      output += decoder.decode(chunk.value, { stream: !chunk.done });
-      const match = output.match(/Muse plan review: http:\/\/localhost:(\d+)\//);
-      if (match?.[1]) return Number(match[1]);
-      if (chunk.done) {
-        const exitCode = await child.exited;
-        throw new Error(`Muse fixture server exited with ${exitCode} before publishing a port:\n${await stderr || output}`);
-      }
-    }
-  })();
-
-  try {
-    const port = await bounded(publishedPort, operationTimeoutMs, `Muse fixture server did not start within ${operationTimeoutMs}ms`);
-    const stdout = (async () => {
-      while (true) {
-        const chunk = await reader.read();
-        output += decoder.decode(chunk.value, { stream: !chunk.done });
-        if (chunk.done) return output;
-      }
-    })();
-    return {
-      port,
-      async stop() {
-        const cleanupErrors: unknown[] = [];
-        try {
-          await terminateChild(child, "Muse fixture server");
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-        for (const [name, drain] of [["stdout", stdout], ["stderr", stderr]] as const) {
-          try {
-            await bounded(drain, shutdownGraceMs, `Muse fixture server ${name} did not drain`);
-          } catch (error) {
-            cleanupErrors.push(error);
-          }
-        }
-        if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, "Muse fixture server cleanup failed");
-      },
-    };
-  } catch (primaryError) {
-    await reader.cancel().catch(() => {});
-    const cleanupErrors: unknown[] = [];
-    try {
-      await terminateChild(child, "Muse fixture server startup");
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-    try {
-      await bounded(stderr, shutdownGraceMs, "Muse fixture server stderr did not drain after startup failure");
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError([primaryError, ...cleanupErrors], "Muse fixture server startup failed and cleanup was incomplete");
-    }
-    throw primaryError;
-  }
+  return startServerProcess({
+    command: [process.execPath, serverScript, planDir, "0"],
+    label: "Muse fixture server",
+    spawn: (command) => Bun.spawn(command, {
+      cwd: repoRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    }) as unknown as LifecycleProcess,
+    parsePort: (output) => output.match(/Muse plan review: http:\/\/localhost:(\d+)\//)?.[1],
+    startupTimeoutMs: operationTimeoutMs,
+    cleanupTimeoutMs: shutdownGraceMs,
+  });
 }
 
 async function pointerClick(selector: string): Promise<void> {
@@ -227,36 +147,65 @@ async function setThemeWithPointer(theme: Theme): Promise<void> {
   assert.equal(await evaluate<string>("document.documentElement.dataset.theme"), theme);
 }
 
-async function waitForProductionAssets(): Promise<void> {
+async function waitForProductionAssets(surface: BrowserSurface): Promise<void> {
   await browser("wait", "--fn", "document.fonts && document.fonts.status === 'loaded'");
   const assets = await evaluate<{
-    loadedFamilies: string[];
-    nonexistentLoaded: boolean;
-    mermaidScriptUrl: string | null;
-  }>(`document.fonts.ready.then(() => {
-    const normalizeFamily = (family) => family.replace(/^['"]|['"]$/g, '').toLowerCase();
-    const loadedFamilies = Array.from(document.fonts)
-      .filter((face) => face.status === 'loaded')
-      .map((face) => normalizeFamily(face.family));
-    return {
-      loadedFamilies,
-      nonexistentLoaded: loadedFamilies.includes('muse nonexistent oracle'),
-      mermaidScriptUrl: document.querySelector('script[src*="mermaid"]')?.src || null,
+    fonts: Array<{ family: string; weight: string; sha256: string; embedded: boolean }>;
+    mermaid: { url: string | null; integrity: string | null; sha256: string };
+  }>(`(async () => {
+    const expectedFaces = ${JSON.stringify(expectedFontFaces)};
+    const digest = async (source) => {
+      const bytes = await (await fetch(source)).arrayBuffer();
+      const hash = await crypto.subtle.digest('SHA-256', bytes);
+      return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
     };
-  })`);
-  assert.ok(assets.loadedFamilies.includes("bricolage grotesque"), "Bricolage Grotesque must be a registered loaded FontFace");
-  assert.ok(assets.loadedFamilies.includes("fragment mono"), "Fragment Mono must be a registered loaded FontFace");
-  assert.equal(assets.nonexistentLoaded, false, "the loaded-FontFace oracle must reject a nonexistent family");
+    await Promise.all(expectedFaces.map((face) => document.fonts.load(face.weight + ' 16px \"' + face.family + '\"')));
+    await document.fonts.ready;
+    const rules = Array.from(document.styleSheets).flatMap((sheet) => Array.from(sheet.cssRules));
+    const fontRules = rules.filter((rule) => rule instanceof CSSFontFaceRule);
+    const fonts = await Promise.all(expectedFaces.map(async (expected) => {
+      const rule = fontRules.find((candidate) => {
+        const family = candidate.style.fontFamily.replace(/^['\"]|['\"]$/g, '');
+        return family === expected.family && candidate.style.fontWeight === expected.weight;
+      });
+      if (!rule) throw new Error('Missing exact font face: ' + expected.family + ' ' + expected.weight);
+      const source = rule.style.src.match(/url\\([\"']?([^\"')]+)[\"']?\\)/)?.[1];
+      if (!source) throw new Error('Missing font source: ' + expected.family + ' ' + expected.weight);
+      return { family: expected.family, weight: expected.weight, sha256: await digest(source), embedded: source.startsWith('data:') };
+    }));
+    const script = document.querySelector('script[src*=\"mermaid\"]');
+    return {
+      fonts,
+      mermaid: {
+        url: script?.src || null,
+        integrity: script?.integrity || null,
+        sha256: await digest(script.src),
+      },
+    };
+  })()`);
+  assert.deepEqual(
+    assets.fonts,
+    expectedFontFaces.map((face) => ({ ...face, embedded: surface.name === "static" })),
+    `${surface.name} must render the exact pinned family, weight, and WOFF2 bytes`,
+  );
+  assert.deepEqual(assets.mermaid, {
+    url: expectedMermaidUrl,
+    integrity: expectedMermaidSri,
+    sha256: expectedMermaidSha256,
+  }, "Mermaid must carry independent SRI and match the exact 11.16.0 response bytes");
 
   const network = JSON.parse(await browser("network", "requests", "--json")) as NetworkLog;
   assert.equal(network.success, true, "agent-browser must expose successful response metadata");
-  const stylesheetResponse = network.data.requests.find((response) => response.url.startsWith("https://fonts.googleapis.com/css2?"));
-  assert.equal(stylesheetResponse?.status, 200, "the production Google Fonts stylesheet must return HTTP 200");
-  const fontResponses = network.data.requests.filter((response) => response.url.startsWith("https://fonts.gstatic.com/"));
-  assert.ok(fontResponses.length >= 2, "both production font families must load font resources");
-  assert.equal(fontResponses.every((response) => response.status === 200), true, "every production font response must return HTTP 200");
-
-  assert.equal(assets.mermaidScriptUrl, expectedMermaidUrl, "Mermaid must use the pinned production release URL");
+  assert.equal(
+    network.data.requests.some((response) => response.url.startsWith("https://fonts.googleapis.com/") || response.url.startsWith("https://fonts.gstatic.com/")),
+    false,
+    "font loading must never negotiate mutable Google Fonts resources",
+  );
+  if (surface.name === "interactive") {
+    const fontResponses = network.data.requests.filter((response) => response.url.includes("/assets/") && response.resourceType === "Font");
+    assert.equal(fontResponses.length >= expectedFontFaces.length, true, "every pinned interactive font resource must load");
+    assert.equal(fontResponses.every((response) => response.status === 200), true, "every pinned font response must return HTTP 200");
+  }
   const mermaidResponse = network.data.requests.find((response) => response.url === expectedMermaidUrl);
   assert.deepEqual(
     mermaidResponse && {
@@ -266,7 +215,7 @@ async function waitForProductionAssets(): Promise<void> {
       version: mermaidResponse.responseHeaders["x-jsd-version"],
     },
     { url: expectedMermaidUrl, status: 200, resourceType: "Script", version: expectedMermaidVersion },
-    "the expected-origin and version Mermaid release must load successfully",
+    "the independently digested Mermaid release must load successfully",
   );
 
   await browser("wait", ".mermaid-canvas svg");
@@ -448,7 +397,7 @@ async function assertDesktopPointerNavigation(): Promise<void> {
 async function runSurfaceCase(baseUrl: string, surface: BrowserSurface, viewport: Viewport, theme: Theme): Promise<void> {
   await browser("open", `${baseUrl}${surface.path}`);
   await browser("set", "viewport", ...(viewport === "mobile" ? ["390", "844"] : ["1440", "900"]));
-  await waitForProductionAssets();
+  await waitForProductionAssets(surface);
   await setThemeWithPointer(theme);
   await assertSharedCatalogContract(surface);
   if (viewport === "mobile") {
@@ -460,6 +409,10 @@ async function runSurfaceCase(baseUrl: string, surface: BrowserSurface, viewport
 
 async function readAuthoritativeState(): Promise<ReviewState> {
   return evaluate<ReviewState>("fetch('/plan-state.json').then((response) => response.json())");
+}
+
+async function readAuthoritativeStateBytes(): Promise<string> {
+  return evaluate<string>("fetch('/plan-state.json').then((response) => response.text())");
 }
 async function waitForAuthoritativeState(label: string, predicate: (state: ReviewState) => boolean): Promise<ReviewState> {
   const deadline = Date.now() + operationTimeoutMs;
@@ -498,12 +451,115 @@ async function assertPersistenceContract(baseUrl: string): Promise<void> {
   assert.ok(handoff.verification.some((item) => item.startsWith("all-components |")));
 
   await browser("open", `${baseUrl}/static-export.html`);
-  const beforeStaticInteraction = await readAuthoritativeState();
+  await browser("network", "requests", "--clear");
+  const beforeStaticInteraction = await readAuthoritativeStateBytes();
   await browser("fill", "[data-plan-questions] input", "Static-only answer");
   await pointerClick("[data-checklist-id]");
   await pointerClick("[data-needs-revision]");
   await pointerClick("[data-approve-plan]");
-  assert.deepEqual(await readAuthoritativeState(), beforeStaticInteraction, "static controls must not mutate authoritative review state");
+
+  const quietDeadline = Date.now() + staticQuietWindowMs;
+  let observations = 0;
+  do {
+    await Bun.sleep(50);
+    assert.equal(
+      await readAuthoritativeStateBytes(),
+      beforeStaticInteraction,
+      `static controls mutated authoritative bytes during observation ${observations + 1}`,
+    );
+    observations += 1;
+  } while (Date.now() < quietDeadline);
+  assert.ok(observations >= 2, "static nonmutation must be observed repeatedly across a bounded quiet window");
+
+  const staticNetwork = JSON.parse(await browser("network", "requests", "--json")) as NetworkLog;
+  assert.equal(staticNetwork.success, true, "static network observation must succeed");
+  assert.ok(staticNetwork.data.requests.length > 0, "static network observation must capture requests");
+  assert.equal(
+    staticNetwork.data.requests.every((request) => typeof request.method === "string"),
+    true,
+    "static network events must expose request methods",
+  );
+  const forbiddenPaths: Record<string, true | undefined> = {
+    "/api/approve": true,
+    "/api/comments": true,
+    "/api/state": true,
+  };
+  const forbiddenPosts = staticNetwork.data.requests.filter((request) => {
+    const pathname = new URL(request.url).pathname;
+    return request.method.toUpperCase() === "POST" && forbiddenPaths[pathname];
+  });
+  assert.deepEqual(forbiddenPosts, [], "static controls must emit no persistence POST network events");
+}
+
+interface SessionInfoLog {
+  success: boolean;
+  data: { active: boolean; pid: number | null; session: string };
+}
+
+interface SessionListLog {
+  success: boolean;
+  data: { sessions: string[] };
+}
+
+function sessionProcessExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForSessionProcessExit(pid: number, label: string): Promise<void> {
+  const wait = (async () => {
+    while (sessionProcessExists(pid)) await Bun.sleep(10);
+  })();
+  await bounded(wait, shutdownGraceMs, `${label} remained alive`);
+}
+
+async function terminateSessionProcess(pid: number): Promise<void> {
+  process.kill(pid, "SIGTERM");
+  try {
+    await waitForSessionProcessExit(pid, `agent-browser session ${session} after SIGTERM`);
+  } catch (termError) {
+    process.kill(pid, "SIGKILL");
+    try {
+      await waitForSessionProcessExit(pid, `agent-browser session ${session} after SIGKILL`);
+    } catch (killError) {
+      throw new AggregateError([termError, killError], `agent-browser session ${session} could not be terminated`);
+    }
+  }
+}
+
+async function waitForSessionAbsence(): Promise<void> {
+  const wait = (async () => {
+    while (true) {
+      const sessions = JSON.parse(await runAgentBrowser(["session", "list", "--json"], false)) as SessionListLog;
+      assert.equal(sessions.success, true);
+      if (!sessions.data.sessions.includes(session)) return;
+      await Bun.sleep(25);
+    }
+  })();
+  await bounded(wait, shutdownGraceMs, `named session ${session} survived cleanup`);
+}
+
+async function cleanupBrowserSession(): Promise<void> {
+  const info = JSON.parse(await browser("session", "info", "--json")) as SessionInfoLog;
+  assert.equal(info.success, true, "session metadata must be available for targeted cleanup");
+  assert.equal(info.data.session, session);
+  try {
+    await browser("close");
+  } catch (closeError) {
+    if (!info.data.pid) {
+      throw new AggregateError([closeError], `targeted close failed and session ${session} exposed no process metadata`);
+    }
+    await terminateSessionProcess(info.data.pid).catch((fallbackError) => {
+      throw new AggregateError([closeError, fallbackError], `targeted close and PID fallback failed for session ${session}`);
+    });
+  }
+
+  await waitForSessionAbsence();
+  if (info.data.pid) assert.equal(sessionProcessExists(info.data.pid), false, `session process ${info.data.pid} survived cleanup`);
 }
 
 const cleanupStack: CleanupAction[] = [];
@@ -547,7 +603,7 @@ try {
   registerCleanup({ name: "server", run: () => server.stop() });
   const baseUrl = `http://127.0.0.1:${server.port}`;
 
-  registerCleanup({ name: "browser", async run() { await browser("close"); } });
+  registerCleanup({ name: "browser", run: cleanupBrowserSession });
   await browser("open", "about:blank");
 
   const surfaces: BrowserSurface[] = [

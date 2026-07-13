@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,24 @@ import {
 
 const repoRoot = join(import.meta.dir, "..");
 const fixturesRoot = join(repoRoot, "tests", "fixtures", "interactive-plans");
+const expectedFontAssets = {
+  "bricolage-grotesque-latin-500-normal.woff2": {
+    sha256: "b62688707e0820a9cf2a98e9b0349fbb348fd17f76b70a05b53e7a668e3f406f",
+    sha384: "qn7O2kwYDNO8BB07VtIMUe0lUqq3WYJ/okIrACPResGQn0vViFROEt3SGde7RySe",
+  },
+  "bricolage-grotesque-latin-600-normal.woff2": {
+    sha256: "b34fc8c1ef0ac8798455ac2979eae4b4f90f0d327e3584d1032fa77a8a9a66ca",
+    sha384: "Ilh1L/tmtUzFnpC1cwkNgBNnW+urzfbLETMexxhppi4RurOQbreAwtqAuodE8gcS",
+  },
+  "bricolage-grotesque-latin-700-normal.woff2": {
+    sha256: "4c373ce3c1cca41c864eb3e27c059a59fc6310547ab9c9b6cd780d387ba24206",
+    sha384: "I1AMB8Mhv2nNTsttl0xrwLBvxe4XMocWs9FDGXH6AqBsgZTPNWagTukzMpe7LPST",
+  },
+  "fragment-mono-latin-400-normal.woff2": {
+    sha256: "44c4e39bff5e76652a24a872cbebabccbcfb20f62c4633b27c1f2745cba86b56",
+    sha384: "5pPJBXVgEAccmDzYsxRokikcIMqnLiJSV7qWM3TpHdoPoqSh8vUGD1DWsnEZB0BL",
+  },
+} as const;
 
 async function copyFixture(name: string): Promise<string> {
   const planDir = await mkdtemp(join(tmpdir(), `ve-ip-${name}-`));
@@ -118,6 +137,19 @@ describe("interactive plan rendering", () => {
 
       expect(indexPath.endsWith(join("dist", "index.html"))).toBe(true);
       expect(staticExportPath.endsWith(join("dist", "static-export.html"))).toBe(true);
+
+      for (const [filename, expectedHashes] of Object.entries(expectedFontAssets)) {
+        const assetPath = join(planDir, "dist", "assets", filename);
+        const bytes = await readFile(assetPath);
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(expectedHashes.sha256);
+        expect(createHash("sha384").update(bytes).digest("base64")).toBe(expectedHashes.sha384);
+        expect(indexHtml).toContain(`url("/assets/${filename}")`);
+      }
+      expect(indexHtml).not.toContain("fonts.googleapis.com");
+      expect(indexHtml).not.toContain("fonts.gstatic.com");
+      expect(indexHtml).toContain('integrity="sha384-T/0lMUdJpd2S1ZHtRiofG3htU3xPCrFVeAQ1UUE2TJwlEJSV5NUwn30kP28n238E"');
+      expect(staticHtml).toContain("data:font/woff2;base64,");
+      expect(staticHtml).not.toContain('url("/assets/');
 
       expect(indexHtml).toContain("Minimal Interactive Plan");
       expect(indexHtml).toContain("Muse interactive plan");

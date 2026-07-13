@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isFontAsset } from "./assets";
 import { renderPlanFolder } from "./render";
 import { addComment, approvePlan, readComments, readReviewState, resolveComment, updateReviewState } from "./state-store";
 
@@ -19,6 +20,16 @@ export async function servePlan(planDir: string, port = 7374, signal?: AbortSign
     async fetch(request) {
       const url = new URL(request.url);
       try {
+        if (url.pathname.startsWith("/assets/")) {
+          const filename = url.pathname.slice("/assets/".length);
+          if (!isFontAsset(filename)) return new Response("Not found", { status: 404 });
+          return new Response(await readFile(join(planDir, "dist", "assets", filename)), {
+            headers: {
+              "cache-control": "public, max-age=31536000, immutable",
+              "content-type": "font/woff2",
+            },
+          });
+        }
         if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/static-export.html") {
           const filename = url.pathname === "/static-export.html" ? "static-export.html" : "index.html";
           return new Response(await readFile(join(planDir, "dist", filename), "utf8"), { headers: { "content-type": "text/html; charset=utf-8" } });

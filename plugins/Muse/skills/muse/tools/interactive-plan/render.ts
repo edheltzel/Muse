@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { copyFontAssets, fontFaceCss, MERMAID_SHA384, MERMAID_URL } from "./assets";
 import { interactivePlanClientScript, staticPlanClientScript } from "./client";
 import { escapeHtml, renderBlocks } from "./components";
 import { loadPlanFolder, type LoadedPlanFolder } from "./mdx-loader";
@@ -11,9 +12,7 @@ const defaultShell = `<!DOCTYPE html>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>{{TITLE}}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Fragment+Mono&display=swap" rel="stylesheet">
+<style>{{FONTS}}</style>
 <style>{{STYLE}}</style>
 </head>
 <body data-review-status="draft">
@@ -24,7 +23,7 @@ const defaultShell = `<!DOCTYPE html>
     {{EXPLORER}}
     {{CONTENT}}
   </main>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js"></script>
+<script src="{{MERMAID_URL}}" integrity="sha384-{{MERMAID_SRI}}" crossorigin="anonymous"></script>
 <script type="module">{{CLIENT}}</script>
 </body>
 </html>`;
@@ -617,6 +616,7 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
     renderBlocks(plan.plan.blocks, { staticMode, componentExplorer }),
     plan.canvas ? `<section class="ve-ip-block ve-ip-card" id="canvas"><div class="ve-ip-label">Canvas</div><h2>Canvas</h2>${renderBlocks(plan.canvas.blocks, { staticMode, componentExplorer: false })}</section>` : "",
   ].join("\n");
+  const fonts = await fontFaceCss(staticMode);
   return template
     .replaceAll("{{TITLE}}", escapeHtml(plan.manifest.title))
     .replaceAll("{{KIND}}", escapeHtml(plan.manifest.kind))
@@ -624,7 +624,10 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
     .replaceAll("{{EXPLORER}}", componentExplorerFor(plan))
     .replaceAll("{{NAV}}", navFor(plan))
     .replaceAll("{{CONTENT}}", content)
+    .replaceAll("{{FONTS}}", fonts)
     .replaceAll("{{STYLE}}", style)
+    .replaceAll("{{MERMAID_URL}}", MERMAID_URL)
+    .replaceAll("{{MERMAID_SRI}}", MERMAID_SHA384)
     .replaceAll("{{CLIENT}}", staticMode ? staticPlanClientScript : interactivePlanClientScript);
 }
 
@@ -632,6 +635,7 @@ export async function renderPlanFolder(rootDir: string): Promise<{ indexPath: st
   const plan = await loadPlanFolder(rootDir);
   const distDir = join(rootDir, plan.manifest.dist);
   await mkdir(distDir, { recursive: true });
+  await copyFontAssets(distDir);
   const indexPath = join(distDir, "index.html");
   const staticExportPath = join(distDir, "static-export.html");
   const shell = await readShellTemplate();
