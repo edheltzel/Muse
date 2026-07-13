@@ -372,6 +372,25 @@ tr:last-child td { border-bottom: 0; }
   gap: .4rem;
   margin-bottom: .75rem;
 }
+.ve-ip-field-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.ve-ip-readiness-policy {
+  flex: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: .16rem .48rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: .7rem;
+}
+.ve-ip-readiness-policy--required {
+  border-color: var(--accent-terracotta);
+  color: var(--text);
+}
 .ve-ip-question input {
   width: 100%;
   min-height: 2.75rem;
@@ -382,7 +401,7 @@ tr:last-child td { border-bottom: 0; }
   background: var(--surface-elevated);
 }
 .ve-ip-check {
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
 }
 .ve-ip-check input { width: 1.15rem; height: 1.15rem; accent-color: var(--accent-sage); }

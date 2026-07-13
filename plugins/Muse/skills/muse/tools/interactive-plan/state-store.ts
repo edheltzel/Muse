@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, mkdir, open, readdir, readlink, realpath, rename, rm, symlink, writeFile, type FileHandle } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, readlink, realpath, rename, rm, symlink, writeFile, type FileHandle } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { generateAgentHandoff, formatAgentHandoffMarkdown, parseAgentHandoffMarkdown } from "./handoff";
@@ -437,6 +437,27 @@ function computeApprovalDigest(
   });
   return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
 }
+function assertCanonicalApprovedSnapshot(authority: PlanAuthority, snapshot: ReviewSnapshot): void {
+  if (
+    snapshot.state.status !== "approved"
+    || snapshot.handoffJson === undefined
+    || snapshot.handoffMarkdown === undefined
+    || snapshot.state.approvalDigest !== computeApprovalDigest(authority, snapshot.state, snapshot.comments)
+  ) {
+    throw new Error("No coherent approved handoff is published");
+  }
+  const parsed = JSON.parse(snapshot.handoffJson) as unknown;
+  const canonical = generateAgentHandoff(authority.plan, snapshot.state);
+  if (
+    validateAgentHandoff(parsed).length > 0
+    || !isDeepStrictEqual(parsed, canonical)
+    || snapshot.handoffMarkdown !== formatAgentHandoffMarkdown(canonical)
+    || !isDeepStrictEqual(parseAgentHandoffMarkdown(snapshot.handoffMarkdown), canonical)
+  ) {
+    throw new Error("No coherent approved handoff is published");
+  }
+}
+
 
 
 async function openBundleMember(root: string, file: BundleFile): Promise<OpenBundleMember> {
@@ -541,13 +562,10 @@ async function normalizeSnapshot(
   const identityMatches = state.status !== "approved"
     || state.approvalDigest === computeApprovalDigest(authority, state, snapshot.comments);
 
-  if (state.status === "approved" && approvalReady && identityMatches && handoffJson !== undefined && handoffMarkdown !== undefined) {
+  if (state.status === "approved" && approvalReady && identityMatches) {
     try {
-      const parsed = JSON.parse(handoffJson) as unknown;
-      const canonical = generateAgentHandoff(plan, state);
-      handoffsAgree = validateAgentHandoff(parsed).length === 0
-        && isDeepStrictEqual(parsed, canonical)
-        && formatAgentHandoffMarkdown(canonical) === handoffMarkdown;
+      assertCanonicalApprovedSnapshot(authority, { ...snapshot, state });
+      handoffsAgree = true;
     } catch {
       handoffsAgree = false;
     }
@@ -874,12 +892,31 @@ function sameCompatibilityPayload(left: CompatibilitySnapshot, right: Compatibil
     && left.stats!.ino === right.stats!.ino
     && (left.kind === "file" ? left.content!.equals(right.content!) : left.target === right.target);
 }
-
-async function createCompatibilityPath(snapshot: CompatibilitySnapshot, destination = snapshot.path): Promise<void> {
-  if (snapshot.kind === "missing") return;
-  if (snapshot.kind === "symlink") await symlink(snapshot.target!, destination);
-  else await writeFile(destination, snapshot.content!, { flag: "wx" });
+async function verifyCompatibilityPayload(expected: CompatibilitySnapshot): Promise<void> {
+  const current = await captureCompatibilityPath(expected.path);
+  const unchanged = expected.kind === "missing"
+    ? current.kind === "missing"
+    : sameCompatibilityPayload(expected, current);
+  if (!unchanged) throw new LegacyGenerationChangedError(`Legacy path generation changed at ${expected.path}`);
 }
+async function restoreQuarantinedCompatibility(
+  expected: CompatibilitySnapshot,
+  quarantine: string,
+  assertOwned: AssertLockOwned,
+): Promise<void> {
+  const quarantined = await captureCompatibilityPath(quarantine);
+  if (!sameCompatibilityPayload(expected, quarantined)) {
+    throw new LegacyGenerationChangedError(`Quarantined compatibility generation changed at ${expected.path}`);
+  }
+  await assertOwned();
+  await link(quarantine, expected.path);
+  await verifyCompatibilityPayload(expected);
+  await assertOwned();
+  await rm(quarantine, { force: true });
+}
+
+
+
 
 async function rollbackCompatibilityReplacement(
   replacement: CompatibilityReplacement,
@@ -887,25 +924,49 @@ async function rollbackCompatibilityReplacement(
 ): Promise<void> {
   const displaced = `${replacement.original.path}.${randomUUID()}.rollback`;
   await assertOwned();
+  const current = await captureCompatibilityPath(replacement.original.path);
+  if (!sameCompatibilityPayload(replacement.installed, current)) {
+    throw new LegacyGenerationChangedError(`Compatibility path changed before rollback at ${replacement.original.path}`);
+  }
+  if (replacement.quarantine) {
+    const quarantined = await captureCompatibilityPath(replacement.quarantine);
+    if (!sameCompatibilityPayload(replacement.original, quarantined)) {
+      throw new LegacyGenerationChangedError(`Quarantined compatibility generation changed at ${replacement.original.path}`);
+    }
+  } else if (replacement.original.kind !== "missing") {
+    throw new Error(`Compatibility rollback is missing quarantine authority at ${replacement.original.path}`);
+  }
+
+  await assertOwned();
   await rename(replacement.original.path, displaced);
   const moved = await captureCompatibilityPath(displaced);
   if (!sameCompatibilityPayload(replacement.installed, moved)) {
-    await assertOwned();
-    await createCompatibilityPath(moved, replacement.original.path).catch(() => undefined);
-    throw new LegacyGenerationChangedError(`Compatibility path changed before rollback at ${replacement.original.path}`);
+    throw new LegacyGenerationChangedError(`Compatibility path changed during rollback at ${replacement.original.path}`);
   }
   try {
-    await assertOwned();
-    await createCompatibilityPath(replacement.original);
+    const destination = await captureCompatibilityPath(replacement.original.path);
+    if (destination.kind !== "missing") {
+      throw new LegacyGenerationChangedError(`External compatibility successor appeared during rollback at ${replacement.original.path}`);
+    }
+    if (replacement.quarantine) {
+      await restoreQuarantinedCompatibility(replacement.original, replacement.quarantine, assertOwned);
+    } else {
+      await verifyCompatibilityPayload(replacement.original);
+    }
   } catch (error) {
-    throw new AggregateError([error], `Compatibility rollback retained ambiguous generations at ${replacement.original.path}`);
+    const rollbackErrors: unknown[] = [error];
+    try {
+      const destination = await captureCompatibilityPath(replacement.original.path);
+      if (destination.kind === "missing") {
+        await restoreQuarantinedCompatibility(replacement.installed, displaced, assertOwned);
+      }
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    throw new AggregateError(rollbackErrors, `Compatibility rollback retained ambiguous generations at ${replacement.original.path}`);
   }
   await assertOwned();
   await rm(displaced, { force: true });
-  if (replacement.quarantine) {
-    await assertOwned();
-    await rm(replacement.quarantine, { force: true });
-  }
 }
 
 async function installCompatibilityLinks(
@@ -920,7 +981,9 @@ async function installCompatibilityLinks(
       const file = BUNDLE_FILES[index];
       const original = snapshots[index];
       const destination = join(planDir, file);
+      const target = join(STORE_DIR, CURRENT_LINK, file);
       let quarantine: string | undefined;
+      let installedRecorded = false;
       await verifyDirectoryBinding(rootBinding);
       await verifyCompatibilitySnapshot(original);
       if (original.kind !== "missing") {
@@ -929,22 +992,49 @@ async function installCompatibilityLinks(
         await rename(destination, quarantine);
         const moved = await captureCompatibilityPath(quarantine);
         if (!sameCompatibilityPayload(original, moved)) {
-          await assertOwned();
-          await createCompatibilityPath(moved, destination).catch(() => undefined);
-          throw new LegacyGenerationChangedError(`Legacy path changed during conditional migration at ${destination}`);
+          const migrationError = new LegacyGenerationChangedError(`Legacy path changed during conditional migration at ${destination}`);
+          try {
+            await restoreQuarantinedCompatibility({ ...moved, path: destination }, quarantine, assertOwned);
+          } catch (rollbackError) {
+            throw new AggregateError([migrationError, rollbackError], `Conditional compatibility migration rollback failed at ${destination}`);
+          }
+          throw migrationError;
         }
       }
       try {
         await verifyDirectoryBinding(rootBinding);
         await assertOwned();
-        await symlink(join(STORE_DIR, CURRENT_LINK, file), destination);
-        const installed = await captureCompatibilityPath(destination);
+        await symlink(target, destination);
+        const stats = await lstat(destination, { bigint: true });
+        if (!stats.isSymbolicLink()) throw new Error(`Installed compatibility path is not a symlink at ${destination}`);
+        const installed: CompatibilitySnapshot = { path: destination, kind: "symlink", target, stats };
         replaced.push({ original, installed, quarantine });
+        installedRecorded = true;
+        await verifyCompatibilitySnapshot(installed);
       } catch (error) {
-        if (quarantine) {
-          const moved = await captureCompatibilityPath(quarantine);
-          await assertOwned();
-          await createCompatibilityPath(moved, destination).catch(() => undefined);
+        const rollbackErrors: unknown[] = [];
+        if (!installedRecorded && quarantine) {
+          let successorObserved = false;
+          try {
+            const destinationState = await captureCompatibilityPath(destination);
+            const quarantined = await captureCompatibilityPath(quarantine);
+            if (!sameCompatibilityPayload(original, quarantined)) {
+              throw new LegacyGenerationChangedError(`Quarantined compatibility generation changed at ${destination}`);
+            }
+            if (destinationState.kind !== "missing") {
+              successorObserved = true;
+              await assertOwned();
+              await rm(quarantine, { force: true });
+              throw new LegacyGenerationChangedError(`Compatibility destination changed during migration at ${destination}`);
+            }
+            await restoreQuarantinedCompatibility(original, quarantine, assertOwned);
+          } catch (rollbackError) {
+            if (successorObserved) throw rollbackError;
+            rollbackErrors.push(rollbackError);
+          }
+        }
+        if (rollbackErrors.length) {
+          throw new AggregateError([error, ...rollbackErrors], `Compatibility installation failed and rollback was incomplete at ${destination}`);
         }
         if (error instanceof LegacyGenerationChangedError) throw error;
         if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST") {
@@ -1171,13 +1261,14 @@ async function cleanupAbandonedPublications(
 
 async function withPlanLock<T>(
   planDir: string,
-  action: (current: BundleReference, authority: PlanAuthority, assertOwned: AssertLockOwned) => Promise<T>,
+  action: (current: BundleReference, authority: PlanAuthority, assertOwned: AssertLockOwned, canonicalPlanDir: string) => Promise<T>,
   options: {
     normalize?: boolean;
     cleanup?: boolean;
     preflight?: (snapshot: ReviewSnapshot, authority: PlanAuthority) => Promise<void> | void;
   } = {},
 ): Promise<T> {
+  planDir = await realpath(planDir);
   const lock = await acquirePlanLock(planDir);
   let authority: PlanAuthority | undefined;
   try {
@@ -1209,7 +1300,7 @@ async function withPlanLock<T>(
       await options.preflight(snapshot, authority);
     }
     if (options.cleanup !== false) await cleanupAbandonedPublications(planDir, current, lock.assertOwned);
-    return await action(current, authority, lock.assertOwned);
+    return await action(current, authority, lock.assertOwned, planDir);
   } finally {
     await closePlanAuthority(authority);
     await lock.release();
@@ -1217,7 +1308,7 @@ async function withPlanLock<T>(
 }
 
 async function readCurrentSnapshot(planDir: string): Promise<ReviewSnapshot> {
-  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+  return withPlanLock(planDir, async (current, authority, assertOwned, canonicalPlanDir) => {
     const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     if (
       snapshot.state.status === "approved"
@@ -1227,7 +1318,7 @@ async function readCurrentSnapshot(planDir: string): Promise<ReviewSnapshot> {
     }
     if (snapshot.state.status === "approved") {
       await assertOwned();
-      await verifyPlanAuthority(planDir, authority);
+      await verifyPlanAuthority(canonicalPlanDir, authority);
     }
     return snapshot;
   });
@@ -1242,6 +1333,7 @@ export async function readComments(planDir: string): Promise<CommentThread[]> {
 }
 
 export async function readPublishedArtifact(planDir: string, file: "agent-handoff.json" | "agent-handoff.md"): Promise<string> {
+  planDir = await realpath(planDir);
   const lock = await acquirePlanLock(planDir);
   let authority: PlanAuthority | undefined;
   try {
@@ -1250,17 +1342,14 @@ export async function readPublishedArtifact(planDir: string, file: "agent-handof
     if (!current) throw new ReviewOperationError("not_found", "No coherent approved handoff is published");
     authority = await capturePlanAuthority(planDir);
     const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
-    if (
-      snapshot.state.status !== "approved"
-      || snapshot.handoffJson === undefined
-      || snapshot.handoffMarkdown === undefined
-      || snapshot.state.approvalDigest !== computeApprovalDigest(authority, snapshot.state, snapshot.comments)
-    ) {
+    try {
+      assertCanonicalApprovedSnapshot(authority, snapshot);
+    } catch {
       throw new ReviewOperationError("not_found", "No coherent approved handoff is published");
     }
     await lock.assertOwned();
     await verifyPlanAuthority(planDir, authority);
-    return file === "agent-handoff.json" ? snapshot.handoffJson : snapshot.handoffMarkdown;
+    return file === "agent-handoff.json" ? snapshot.handoffJson! : snapshot.handoffMarkdown!;
   } finally {
     await closePlanAuthority(authority);
     await lock.release();
@@ -1287,7 +1376,7 @@ export async function updateReviewState(planDir: string, value: unknown): Promis
   const patchErrors = validateReviewStatePatch(value);
   if (patchErrors.length) throw new Error(patchErrors.join("\n"));
   const patch = value as Partial<ReviewState>;
-  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+  return withPlanLock(planDir, async (current, authority, assertOwned, canonicalPlanDir) => {
     const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     let state = mergeReviewState(snapshot.state, patch, snapshot.comments);
     let handoffJson = snapshot.handoffJson;
@@ -1300,7 +1389,7 @@ export async function updateReviewState(planDir: string, value: unknown): Promis
     }
     const errors = validateReviewState(state);
     if (errors.length) throw new Error(errors.join("\n"));
-    await publishSnapshot(planDir, { ...snapshot, state, handoffJson, handoffMarkdown }, assertOwned);
+    await publishSnapshot(canonicalPlanDir, { ...snapshot, state, handoffJson, handoffMarkdown }, assertOwned);
     return state;
   });
 }
@@ -1319,7 +1408,7 @@ export async function addComment(
       throw new ReviewOperationError("unprocessable", `Unknown comment blockId '${input.blockId}'`);
     }
   };
-  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+  return withPlanLock(planDir, async (current, authority, assertOwned, canonicalPlanDir) => {
     requireKnownBlock(authority);
     const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     const id = input.id ?? `c-${randomUUID()}`;
@@ -1353,7 +1442,7 @@ export async function addComment(
       handoffJson = undefined;
       handoffMarkdown = undefined;
     }
-    await publishSnapshot(planDir, { ...snapshot, state, comments, handoffJson, handoffMarkdown }, assertOwned);
+    await publishSnapshot(canonicalPlanDir, { ...snapshot, state, comments, handoffJson, handoffMarkdown }, assertOwned);
     return comment;
   }, { preflight: (_snapshot, authority) => requireKnownBlock(authority) });
 }
@@ -1365,7 +1454,7 @@ export async function resolveComment(planDir: string, id: string): Promise<Comme
       throw new ReviewOperationError("not_found", `Unknown or ambiguous comment id '${id}'`);
     }
   };
-  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+  return withPlanLock(planDir, async (current, authority, assertOwned, canonicalPlanDir) => {
     const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     requireComment(snapshot);
     if (snapshot.comments.find((comment) => comment.id === id)!.status === "resolved") return snapshot.comments;
@@ -1373,7 +1462,7 @@ export async function resolveComment(planDir: string, id: string): Promise<Comme
       ? { ...comment, status: "resolved" as const, resolvedAt: new Date().toISOString() }
       : comment);
     const state = mergeReviewState(snapshot.state, {}, comments);
-    await publishSnapshot(planDir, { ...snapshot, state, comments }, assertOwned);
+    await publishSnapshot(canonicalPlanDir, { ...snapshot, state, comments }, assertOwned);
     return comments;
   }, { preflight: requireComment });
 }
@@ -1391,7 +1480,7 @@ function assertApprovalReady(plan: LoadedPlanFolder, snapshot: ReviewSnapshot): 
 
 export async function approvePlan(planDir: string, reviewer = "local-reviewer") {
   if (reviewer.trim().length === 0) throw new Error("Approval reviewer must be nonblank");
-  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+  return withPlanLock(planDir, async (current, authority, assertOwned, canonicalPlanDir) => {
     const plan = authority.plan;
     const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     assertApprovalReady(plan, snapshot);
@@ -1413,20 +1502,17 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
     const handoffErrors = validateAgentHandoff(handoff);
     if (handoffErrors.length) throw new Error(handoffErrors.join("\n"));
     const handoffJson = `${JSON.stringify(handoff, null, 2)}\n`;
-    const parsedHandoff = JSON.parse(handoffJson) as unknown;
     const handoffMarkdown = formatAgentHandoffMarkdown(handoff);
-    if (
-      validateAgentHandoff(parsedHandoff).length > 0
-      || !isDeepStrictEqual(parsedHandoff, handoff)
-      || handoffMarkdown !== formatAgentHandoffMarkdown(parsedHandoff as typeof handoff)
-      || !isDeepStrictEqual(parseAgentHandoffMarkdown(handoffMarkdown), handoff)
-    ) {
-      throw new Error("Generated approval handoff pair is not canonical");
-    }
+    assertCanonicalApprovedSnapshot(authority, {
+      state,
+      comments: snapshot.comments,
+      handoffJson,
+      handoffMarkdown,
+    });
 
     const verifyIdentity = async () => {
       await assertOwned();
-      await verifyPlanAuthority(planDir, authority);
+      await verifyPlanAuthority(canonicalPlanDir, authority);
       if (state.approvalDigest !== computeApprovalDigest(authority, state, snapshot.comments)) {
         throw new Error("Plan source or review state changed during approval");
       }
@@ -1434,7 +1520,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
     const priorBinding = await openDirectoryBinding(current.path);
     let published: BundleReference;
     try {
-      published = await publishSnapshot(planDir, {
+      published = await publishSnapshot(canonicalPlanDir, {
         state,
         comments: snapshot.comments,
         handoffJson,
@@ -1443,7 +1529,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
     } catch (error) {
       if (error instanceof SnapshotCommitVerificationError && error.restorable) {
         try {
-          await restorePriorPublication(planDir, current, priorBinding, error.published, assertOwned);
+          await restorePriorPublication(canonicalPlanDir, current, priorBinding, error.published, assertOwned);
         } catch (rollbackError) {
           throw new AggregateError([error, rollbackError], "Approval publication verification failed and prior authority could not be restored");
         }
@@ -1456,7 +1542,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
       await verifyIdentity();
     } catch (error) {
       try {
-        await restorePriorPublication(planDir, current, priorBinding, published, assertOwned);
+        await restorePriorPublication(canonicalPlanDir, current, priorBinding, published, assertOwned);
       } catch (rollbackError) {
         throw new AggregateError([error, rollbackError], "Approval identity failed and prior authority could not be restored");
       }
@@ -1464,7 +1550,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
     }
     await priorBinding.handle.close().catch(() => undefined);
     try {
-      await cleanupAbandonedPublications(planDir, published, assertOwned);
+      await cleanupAbandonedPublications(canonicalPlanDir, published, assertOwned);
     } catch (error) {
       console.warn(`Approval committed; deferred review-store cleanup: ${error instanceof Error ? error.message : String(error)}`);
     }

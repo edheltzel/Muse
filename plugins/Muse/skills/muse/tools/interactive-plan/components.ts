@@ -82,18 +82,29 @@ function renderDiffTabs(block: MdxBlock): string {
   return card(block, "ve-ip-card", `<div class="ve-ip-tabs"><div class="ve-ip-tab-list" role="tablist">${tabs}</div>${panels}</div>`);
 }
 
+function readinessBadge(policy: string | undefined): { value: "required" | "advisory"; html: string } {
+  const value = policy === "required" ? "required" : "advisory";
+  const label = value === "required" ? "Required" : "Advisory";
+  return {
+    value,
+    html: `<span class="ve-ip-readiness-policy ve-ip-readiness-policy--${value}">${label}</span>`,
+  };
+}
+
 function renderQuestionForm(block: MdxBlock): string {
   const questions = splitLines(block.body).map((line) => {
-    const [id = line, prompt = line, mode = "freeform"] = splitPipeFields(line);
-    return `<label class="ve-ip-question" data-question-id="${escapeHtml(id)}"><span>${escapeHtml(prompt)}</span><input name="${escapeHtml(id)}" data-question-mode="${escapeHtml(mode)}" /></label>`;
+    const [id = line, prompt = line, mode = "freeform", policy] = splitPipeFields(line);
+    const readiness = readinessBadge(policy);
+    return `<label class="ve-ip-question" data-question-id="${escapeHtml(id)}" data-readiness-policy="${readiness.value}"><span class="ve-ip-field-heading"><span>${escapeHtml(prompt)}</span>${readiness.html}</span><input name="${escapeHtml(id)}" data-question-mode="${escapeHtml(mode)}" /></label>`;
   }).join("");
   return card(block, "ve-ip-card ve-ip-interactive", `<form data-plan-questions>${questions}</form>`);
 }
 
 function renderChecklist(block: MdxBlock): string {
   const items = splitLines(block.body).map((line, index) => {
-    const [id = `item-${index + 1}`, label = line] = splitPipeFields(line);
-    return `<label class="ve-ip-check"><input type="checkbox" data-checklist-id="${escapeHtml(id)}" /> <span>${escapeHtml(label)}</span></label>`;
+    const [id = `item-${index + 1}`, label = line, policy] = splitPipeFields(line);
+    const readiness = readinessBadge(policy);
+    return `<label class="ve-ip-check" data-readiness-policy="${readiness.value}"><input type="checkbox" data-checklist-id="${escapeHtml(id)}" /> <span>${escapeHtml(label)}</span>${readiness.html}</label>`;
   }).join("");
   return card(block, "ve-ip-card ve-ip-interactive", `<div data-plan-checklist>${items}</div>`);
 }

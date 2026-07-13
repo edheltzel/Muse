@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { renderPlanFolder } from "./render";
 import { addComment, approvePlan, readComments, readPublishedArtifact, readReviewState, resolveComment, ReviewOperationError, updateReviewState } from "./state-store";
@@ -76,6 +76,7 @@ function validateCommentBody(body: Record<string, unknown>, idempotencyKey: stri
 }
 
 export async function servePlan(planDir: string, port = 7374) {
+  planDir = await realpath(planDir);
   await renderPlanFolder(planDir);
   const server = Bun.serve({
     port,

@@ -32,7 +32,7 @@ afterEach(() => {
 async function copyFixture(name: string): Promise<string> {
   const planDir = await mkdtemp(join(tmpdir(), `ve-ip-${name}-`));
   await cp(join(fixturesRoot, name), planDir, { recursive: true });
-  return planDir;
+  return fs.realpath(planDir);
 }
 
 async function withFixture<T>(name: string, run: (planDir: string) => Promise<T>): Promise<T> {
@@ -187,6 +187,18 @@ describe("interactive plan rendering", () => {
       expectNoForbiddenRuntimeReferences(staticHtml);
     });
   });
+  test("renders explicit accessible readiness policies in interactive and static output", async () => {
+    await withFixture("component-library-showcase", async (planDir) => {
+      const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
+      for (const html of [await readFile(indexPath, "utf8"), await readFile(staticExportPath, "utf8")]) {
+        expect(html).toContain("data-readiness-policy=\"required\"");
+        expect(html).toContain("data-readiness-policy=\"advisory\"");
+        expect(html).toContain("class=\"ve-ip-readiness-policy ve-ip-readiness-policy--required\">Required</span>");
+        expect(html).toContain("class=\"ve-ip-readiness-policy ve-ip-readiness-policy--advisory\">Advisory</span>");
+      }
+    });
+  });
+
 
 });
 
@@ -661,6 +673,38 @@ describe("interactive plan review state and handoff", () => {
       await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow();
     });
   });
+  test("never serves JSON-only or Markdown-only handoff tampering", async () => {
+    for (const tamperedFile of ["agent-handoff.json", "agent-handoff.md"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await approvePlan(planDir, "tester");
+        const bundle = await currentBundlePath(planDir);
+        const tamperedPath = join(bundle, tamperedFile);
+        if (tamperedFile === "agent-handoff.json") {
+          const handoff = JSON.parse(await readFile(tamperedPath, "utf8")) as AgentHandoff;
+          await writeFile(tamperedPath, `${JSON.stringify({ ...handoff, planSlug: "forged-plan" }, null, 2)}\n`);
+        } else {
+          const markdown = await readFile(tamperedPath, "utf8");
+          await writeFile(tamperedPath, `${markdown}\nforged-plan\n`);
+        }
+
+        for (const artifact of ["agent-handoff.json", "agent-handoff.md"] as const) {
+          await expect(readPublishedArtifact(planDir, artifact)).rejects.toThrow(/coherent approved handoff/i);
+        }
+
+        const server = await servePlan(planDir, 0);
+        try {
+          for (const artifact of ["agent-handoff.json", "agent-handoff.md"] as const) {
+            const response = await fetch(`http://localhost:${server.port}/${artifact}`);
+            expect(response.status).toBe(404);
+            expect(await response.text()).not.toContain("forged-plan");
+          }
+        } finally {
+          server.stop(true);
+        }
+      });
+    }
+  });
+
 
   test("removes a completed bundle left unreachable by failed pointer publication", async () => {
     await withFixture("minimal-plan", async (planDir) => {
@@ -1109,6 +1153,122 @@ describe("interactive plan review state and handoff", () => {
       expect(await readFile(legacyLockPath, "utf8")).toBe("replacement lock\n");
     });
   });
+  test("keeps one legacy descriptor while waiting and fails closed after pathname replacement", async () => {
+    if (process.platform === "win32") return;
+    await withFixture("minimal-plan", async (planDir) => {
+      const legacyLockPath = join(planDir, ".muse-review.lock");
+      const dataPath = join(planDir, "legacy-generation-writes.json");
+      await writeFile(legacyLockPath, "parent generation\n");
+      await writeFile(dataPath, "[]\n");
+      const parent = Bun.spawn([
+        process.execPath,
+        join(repoRoot, "tests", "helpers", "parent-review-process.ts"),
+        planDir,
+        "--controlled-write",
+        dataPath,
+        "parent",
+      ], { cwd: repoRoot, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+      const [parentSignal, parentCapture] = parent.stdout.tee();
+      expect(new TextDecoder().decode((await parentSignal.getReader().read()).value)).toContain("acquired");
+
+      const current = Bun.spawn([
+        process.execPath,
+        join(repoRoot, "tests", "helpers", "review-lock-owner.ts"),
+        planDir,
+        "--signal-write",
+        dataPath,
+        "current",
+      ], { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
+      const [currentSignal, currentCapture] = current.stdout.tee();
+      expect(new TextDecoder().decode((await currentSignal.getReader().read()).value)).toContain("attempting");
+
+      // A real delay is required to let the child bind the parent-held OS descriptor before pathname replacement.
+      await Bun.sleep(25);
+      await rm(legacyLockPath);
+      await writeFile(legacyLockPath, "replacement generation\n");
+      parent.stdin.write("release\n");
+      await parent.stdin.end();
+
+      expect(await parent.exited).toBe(0);
+      expect(await current.exited).not.toBe(0);
+      expect(await new Response(parentCapture).text()).toContain("acknowledged");
+      const currentOutput = await new Response(currentCapture).text();
+      expect(currentOutput).not.toContain("ready");
+      expect(currentOutput).not.toContain("acknowledged");
+      expect(JSON.parse(await readFile(dataPath, "utf8"))).toEqual(["parent"]);
+      expect(await readFile(legacyLockPath, "utf8")).toBe("replacement generation\n");
+    });
+  });
+
+  test("bounds the parent-after-rebind threat while the current directory lock remains held", async () => {
+    if (process.platform === "win32") return;
+    await withFixture("minimal-plan", async (planDir) => {
+      const legacyLockPath = join(planDir, ".muse-review.lock");
+      const dataPath = join(planDir, "parent-after-rebind-writes.json");
+      await writeFile(legacyLockPath, "current generation\n");
+      await writeFile(dataPath, "[]\n");
+      const current = await acquirePlanLock(planDir);
+      await rm(legacyLockPath);
+      await writeFile(legacyLockPath, "parent replacement\n");
+
+      const parent = Bun.spawn([
+        process.execPath,
+        join(repoRoot, "tests", "helpers", "parent-review-process.ts"),
+        planDir,
+        "--write",
+        dataPath,
+        "parent",
+      ], { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
+      expect(await parent.exited).toBe(0);
+      expect(await new Response(parent.stdout).text()).toContain("acknowledged");
+      await expect(current.assertOwned()).rejects.toThrow(/lock path generation changed/i);
+      await current.release();
+      expect(JSON.parse(await readFile(dataPath, "utf8"))).toEqual(["parent"]);
+    });
+  });
+
+  test("binds each aliased state transaction to one canonical plan root", async () => {
+    await withFixture("minimal-plan", async (originalDir) => {
+      await withFixture("minimal-plan", async (replacementDir) => {
+        const aliasRoot = await mkdtemp(join(tmpdir(), "ve-ip-plan-alias-"));
+        const alias = join(aliasRoot, "plan");
+        try {
+          await readReviewState(originalDir);
+          await readReviewState(replacementDir);
+          await fs.symlink(originalDir, alias);
+          const originalOpen = fs.open;
+          const entered = Promise.withResolvers<void>();
+          const resume = Promise.withResolvers<void>();
+          let paused = false;
+          spyOn(fs, "open").mockImplementation((async (path, flags, mode) => {
+            const handle = await originalOpen(path, flags, mode);
+            if (!paused && String(path) === join(originalDir, ".muse-review.lock")) {
+              paused = true;
+              entered.resolve();
+              await resume.promise;
+            }
+            return handle;
+          }) as typeof fs.open);
+
+          const holder = updateReviewState(alias, { answers: { holder: "original" } });
+          await entered.promise;
+          await rm(alias);
+          await fs.symlink(replacementDir, alias);
+          await updateReviewState(alias, { answers: { contender: "replacement" } });
+          resume.resolve();
+          await holder;
+          mock.restore();
+
+          expect((await readReviewState(originalDir)).answers).toEqual({ holder: "original" });
+          expect((await readReviewState(replacementDir)).answers).toEqual({ contender: "replacement" });
+        } finally {
+          mock.restore();
+          await rm(aliasRoot, { recursive: true, force: true });
+        }
+      });
+    });
+  });
+
 
   test("serializes both directions across the exact parent lock protocol", async () => {
     if (process.platform === "win32") return;
@@ -1293,8 +1453,8 @@ describe("interactive plan review state and handoff", () => {
     expect(source).not.toContain("_get_osfhandle");
     expect(source).not.toContain("msvcrt.dll");
     expect(source.indexOf('"libc.so.6"')).toBeLessThan(source.indexOf('readFile("/proc/self/maps"'));
-    expect(source).toContain("const candidate = await openLegacyLock(root)");
-    expect(source.indexOf("directoryToken = await locking.tryLock(root)")).toBeLessThan(source.indexOf("locking.tryLegacyLock!(candidate)"));
+    expect(source).toContain("legacyBinding = await openLegacyLock(root)");
+    expect(source.indexOf("directoryToken = await locking.tryLock(root)")).toBeLessThan(source.indexOf("locking.tryLegacyLock!(legacyBinding)"));
     const parentSource = await readFile(join(repoRoot, "tests", "helpers", "parent-plan-lock.ts"));
     expect(createHash("sha256").update(parentSource).digest("hex")).toBe(
       "5eea7640676468fdd897a8fcb58b02993b566751c81fbaf5670953d135b38bb7",
@@ -2128,6 +2288,49 @@ describe("interactive plan review state and handoff", () => {
       });
     }
   });
+  test("restores exact compatibility generations after post-symlink readlink faults and retries", async () => {
+    for (const failedFile of ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        const statePath = join(planDir, "plan-state.json");
+        const commentsPath = join(planDir, "comments.json");
+        const jsonPath = join(planDir, "agent-handoff.json");
+        const markdownPath = join(planDir, "agent-handoff.md");
+        const originalState = Buffer.from(`${JSON.stringify({
+          status: "in_review",
+          answers: { retained: failedFile },
+          checklist: {},
+          unresolvedCommentIds: [],
+        }, null, 2)}\n`);
+        await writeFile(statePath, originalState);
+        await writeFile(commentsPath, "[]\n");
+        await writeFile(jsonPath, "operator-owned\n");
+        const originalReadlink = fs.readlink;
+        const failedPath = join(planDir, failedFile);
+        let injected = false;
+        spyOn(fs, "readlink").mockImplementation((async (path: PathLike) => {
+          if (!injected && String(path) === failedPath && (await lstat(failedPath)).isSymbolicLink()) {
+            injected = true;
+            throw new Error(`post-symlink readlink fault at ${failedFile}`);
+          }
+          return originalReadlink(path);
+        }) as typeof fs.readlink);
+
+        await expect(readReviewState(planDir)).rejects.toThrow(`post-symlink readlink fault at ${failedFile}`);
+        expect(await readFile(statePath)).toEqual(originalState);
+        expect(await readFile(commentsPath, "utf8")).toBe("[]\n");
+        expect(await readFile(jsonPath, "utf8")).toBe("operator-owned\n");
+        expect(await Bun.file(markdownPath).exists()).toBe(false);
+        expect((await readdir(planDir)).some((entry) => entry.endsWith(".legacy"))).toBe(false);
+
+        mock.restore();
+        expect((await readReviewState(planDir)).answers.retained).toBe(failedFile);
+        for (const file of ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"]) {
+          expect(await readlink(join(planDir, file))).toBe(join(".muse-review", "current", file));
+        }
+      });
+    }
+  });
+
   test("serializes burst state updates so every accepted patch reaches authoritative state", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const server = await servePlan(planDir, 0);

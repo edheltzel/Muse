@@ -12,6 +12,12 @@ try {
     const entries = JSON.parse(await readFile(dataPath, "utf8")) as string[];
     entries.push(key);
     await writeFile(dataPath, `${JSON.stringify(entries)}\n`);
+  } else if (mode === "--controlled-write") {
+    if (!dataPath || !key) throw new Error("data path and key are required for writes");
+    await new Response(Bun.stdin.stream()).text();
+    const entries = JSON.parse(await readFile(dataPath, "utf8")) as string[];
+    entries.push(key);
+    await writeFile(dataPath, `${JSON.stringify(entries)}\n`);
   } else {
     await Promise.withResolvers<never>().promise;
   }

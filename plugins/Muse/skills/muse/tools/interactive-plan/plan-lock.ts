@@ -301,23 +301,14 @@ export async function acquirePlanLock(planDir: string): Promise<PlanLock> {
     let legacyToken: BackendLock | undefined;
     try {
       if (locking.kind === "unix") {
+        legacyBinding = await openLegacyLock(root);
         for (let legacyAttempt = 0; legacyAttempt < MAX_ATTEMPTS; legacyAttempt += 1) {
           await verifyPlanRoot(root);
-          const candidate = await openLegacyLock(root);
-          try {
-            legacyToken = await locking.tryLegacyLock!(candidate);
-          } catch (error) {
-            await candidate.handle.close();
-            throw error;
-          }
-          if (legacyToken !== undefined) {
-            legacyBinding = candidate;
-            break;
-          }
-          await candidate.handle.close();
+          legacyToken = await locking.tryLegacyLock!(legacyBinding);
+          if (legacyToken !== undefined) break;
           await Bun.sleep(10);
         }
-        if (!legacyBinding || !legacyToken) {
+        if (!legacyToken) {
           throw new Error(`Timed out waiting for legacy review lock at ${resolve(root.path, LOCK_NAME)}`);
         }
       }

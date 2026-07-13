@@ -4,11 +4,11 @@ import { acquirePlanLock } from "../../plugins/Muse/skills/muse/tools/interactiv
 const planDir = process.argv[2];
 if (!planDir) throw new Error("plan directory is required");
 const mode = process.argv[3];
-if (mode === "--signal-attempt") console.log("attempting");
+if (mode === "--signal-attempt" || mode === "--signal-write") console.log("attempting");
 const lock = await acquirePlanLock(planDir);
 console.log("ready");
 try {
-  if (mode === "--write") {
+  if (mode === "--write" || mode === "--signal-write") {
     const dataPath = process.argv[4];
     const key = process.argv[5];
     if (!dataPath || !key) throw new Error("data path and key are required for writes");
