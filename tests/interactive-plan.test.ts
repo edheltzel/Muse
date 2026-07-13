@@ -199,6 +199,51 @@ describe("interactive plan rendering", () => {
     });
   });
 
+  test("renders review controls behind an explicit hydration authority gate", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
+      const indexHtml = await readFile(indexPath, "utf8");
+      const staticHtml = await readFile(staticExportPath, "utf8");
+
+      expect(indexHtml).toContain('data-review-authority="loading"');
+      expect(indexHtml).toContain("Loading saved review");
+      expect(indexHtml).toContain("Review controls unlock after server state and comments load.");
+      expect(indexHtml).toMatch(/data-review-control[^>]*disabled|disabled[^>]*data-review-control/);
+      expect(indexHtml).toContain('data-review-retry');
+      expect(indexHtml).toContain('getJson("/plan-state.json")');
+      expect(indexHtml).toContain('getJson("/comments.json")');
+
+      expect(staticHtml).toContain('data-review-authority="static"');
+      expect(staticHtml).not.toContain("Loading saved review");
+    });
+  });
+
+  test("renders persistence feedback, readiness, and a human approval receipt", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const { indexPath } = await renderPlanFolder(planDir);
+      const indexHtml = await readFile(indexPath, "utf8");
+
+      expect(indexHtml).toContain('data-persistence-key="answer:runtime"');
+      expect(indexHtml).toContain('data-persistence-key="checklist:schema"');
+      expect(indexHtml).toContain('data-persistence-state="loading"');
+      expect(indexHtml).toContain('data-persistence-retry');
+      expect(indexHtml).toContain('data-operation-key="answer:runtime"');
+      expect(indexHtml).toContain("Saving…");
+      expect(indexHtml).toContain("Saved");
+      expect(indexHtml).toContain("Save failed; saved value restored.");
+      expect(indexHtml).toContain("reconcileServerTruth");
+      expect(indexHtml).toContain("matchesCommitted");
+      expect(indexHtml).toContain("persistenceQueue.then");
+      expect(indexHtml).toContain('data-approval-readiness');
+      expect(indexHtml).toContain("Required values gate approval; advisory values are saved but never block it.");
+      expect(indexHtml).toContain('data-approval-receipt');
+      expect(indexHtml).toContain("Approval recorded");
+      expect(indexHtml).toContain("agent-handoff.json");
+      expect(indexHtml).toContain("agent-handoff.md");
+      expect(indexHtml).toContain("Technical details");
+    });
+  });
+
 
 });
 
@@ -243,6 +288,72 @@ describe("interactive plan review state and handoff", () => {
     await rm(path);
     await fs.symlink(target, path);
   }
+
+  test("serves complete hydration truth across approval and revision transitions", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await setReadinessPolicy(planDir);
+      await updateReviewState(planDir, {
+        answers: { runtime: "Bun" },
+        checklist: { schema: true },
+      });
+      await addComment(planDir, {
+        id: "c-hydration",
+        blockId: "summary",
+        body: "Confirm this state reloads before approval.",
+      });
+      const server = await servePlan(planDir, 0);
+      try {
+        if (server.port === undefined) throw new Error("Test server did not bind a port");
+        const stateUrl = `http://localhost:${server.port}/plan-state.json`;
+        const commentsUrl = `http://localhost:${server.port}/comments.json`;
+
+        expect(await (await fetch(stateUrl)).json()).toEqual({
+          status: "draft",
+          answers: { runtime: "Bun" },
+          checklist: { schema: true },
+          unresolvedCommentIds: ["c-hydration"],
+        });
+        expect(await (await fetch(commentsUrl)).json()).toEqual([
+          expect.objectContaining({ id: "c-hydration", status: "open" }),
+        ]);
+
+        expect((await post(server, "/api/comments", { resolveId: "c-hydration" })).ok).toBe(true);
+        const approvalResponse = await post(server, "/api/approve", { reviewer: "hydration-reviewer" });
+        expect(approvalResponse.ok).toBe(true);
+        const handoff = await approvalResponse.json();
+        expect(handoff).toMatchObject({
+          status: "approved",
+          planSlug: "minimal-plan",
+          approvedAt: expect.any(String),
+          approvalDigest: expect.any(String),
+        });
+
+        expect(await (await fetch(stateUrl)).json()).toMatchObject({
+          status: "approved",
+          reviewer: "hydration-reviewer",
+          approvedAt: handoff.approvedAt,
+          approvalDigest: handoff.approvalDigest,
+          answers: { runtime: "Bun" },
+          checklist: { schema: true },
+          unresolvedCommentIds: [],
+        });
+
+        const revisionResponse = await post(server, "/api/state", {
+          status: "needs_revision",
+          answers: { runtime: "Bun with Vite Plus" },
+        });
+        expect(revisionResponse.ok).toBe(true);
+        expect(await (await fetch(stateUrl)).json()).toEqual({
+          status: "needs_revision",
+          answers: { runtime: "Bun with Vite Plus" },
+          checklist: { schema: true },
+          unresolvedCommentIds: [],
+        });
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
 
   test("persists review values and treats durable open comments as authoritative", async () => {
     await withFixture("minimal-plan", async (planDir) => {
