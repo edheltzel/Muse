@@ -49,7 +49,11 @@ export async function servePlan(planDir: string, port = 7374) {
         }
         if (url.pathname === "/api/approve" && request.method === "POST") {
           const body = jsonObject(await json(request));
-          return Response.json(await approvePlan(planDir, body.reviewer ? String(body.reviewer) : undefined));
+          const reviewer = body.reviewer;
+          if (reviewer !== undefined && typeof reviewer !== "string") {
+            return new Response("reviewer must be a nonblank string", { status: 400 });
+          }
+          return Response.json(await approvePlan(planDir, reviewer));
         }
         return new Response("Not found", { status: 404 });
       } catch (error) {

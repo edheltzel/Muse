@@ -67,6 +67,27 @@ export const REVIEW_STATUSES = [
   "approved",
 ] as const;
 
+const REVIEW_STATE_KEYS = ["status", "approvedAt", "reviewer", "answers", "checklist", "unresolvedCommentIds"] as const;
+
+function isValidIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string" || value.trim() !== value) return false;
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/,
+  );
+  if (!match || !Number.isFinite(Date.parse(value))) return false;
+  const [, year, month, day, hour, minute, second, , offsetHour = "00", offsetMinute = "00"] = match;
+  const monthNumber = Number(month);
+  return monthNumber >= 1
+    && monthNumber <= 12
+    && Number(day) >= 1
+    && Number(day) <= new Date(Date.UTC(Number(year), monthNumber, 0)).getUTCDate()
+    && Number(hour) <= 23
+    && Number(minute) <= 59
+    && Number(second) <= 59
+    && Number(offsetHour) <= 23
+    && Number(offsetMinute) <= 59;
+}
+
 export function createDefaultReviewState(): ReviewState {
   return { status: "draft", answers: {}, checklist: {}, unresolvedCommentIds: [] };
 }
@@ -75,15 +96,19 @@ export function validateReviewStatePatch(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return ["ReviewState patch must be an object"];
   const patch = value as Record<string, unknown>;
   const errors: string[] = [];
-  const allowedKeys = ["status", "approvedAt", "reviewer", "answers", "checklist", "unresolvedCommentIds"];
+  const allowedKeys: readonly string[] = REVIEW_STATE_KEYS;
   for (const key of Object.keys(patch)) {
     if (!allowedKeys.includes(key)) errors.push(`ReviewState patch contains unknown field '${key}'`);
   }
   if ("status" in patch && !REVIEW_STATUSES.includes(patch.status as ReviewStatus)) {
     errors.push(`ReviewState patch status must be one of ${REVIEW_STATUSES.join(", ")}`);
   }
-  if ("approvedAt" in patch && typeof patch.approvedAt !== "string") errors.push("ReviewState patch approvedAt must be a string");
-  if ("reviewer" in patch && typeof patch.reviewer !== "string") errors.push("ReviewState patch reviewer must be a string");
+  if ("approvedAt" in patch && !isValidIsoTimestamp(patch.approvedAt)) {
+    errors.push("ReviewState patch approvedAt must be a valid nonblank ISO timestamp");
+  }
+  if ("reviewer" in patch && (typeof patch.reviewer !== "string" || patch.reviewer.trim().length === 0)) {
+    errors.push("ReviewState patch reviewer must be a nonblank string");
+  }
   if ("answers" in patch) {
     if (!patch.answers || typeof patch.answers !== "object" || Array.isArray(patch.answers)) {
       errors.push("ReviewState patch answers must be an object");
@@ -133,8 +158,13 @@ export function validateAgentHandoff(value: unknown): string[] {
     if (!allowedKeys.includes(key)) errors.push(`AgentHandoff contains unknown field '${key}'`);
   }
   if (handoff.status !== "approved") errors.push("AgentHandoff.status must be approved");
-  for (const key of ["planSlug", "planPath", "approvedAt", "implementationEntry"]) {
-    if (typeof handoff[key] !== "string") errors.push(`AgentHandoff.${key} must be a string`);
+  for (const key of ["planSlug", "planPath", "implementationEntry"]) {
+    if (typeof handoff[key] !== "string" || handoff[key].trim().length === 0) {
+      errors.push(`AgentHandoff.${key} must be a nonblank string`);
+    }
+  }
+  if (!isValidIsoTimestamp(handoff.approvedAt)) {
+    errors.push("AgentHandoff.approvedAt must be a valid nonblank ISO timestamp");
   }
   for (const key of ["approvedScope", "decisions", "verification", "openRisks"]) {
     const entries = handoff[key];
@@ -156,9 +186,14 @@ export function validateAgentHandoff(value: unknown): string[] {
 }
 
 export function validateReviewState(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return ["ReviewState must be an object"];
+  const state = value as Record<string, unknown>;
   const errors: string[] = [];
-  const state = value as Partial<ReviewState> | null;
-  if (!state || typeof state !== "object") return ["ReviewState must be an object"];
+  for (const key of Object.keys(state)) {
+    if (!REVIEW_STATE_KEYS.includes(key as (typeof REVIEW_STATE_KEYS)[number])) {
+      errors.push(`ReviewState contains unknown field '${key}'`);
+    }
+  }
   if (!REVIEW_STATUSES.includes(state.status as ReviewStatus)) {
     errors.push(`ReviewState.status must be one of ${REVIEW_STATUSES.join(", ")}`);
   }
@@ -178,8 +213,27 @@ export function validateReviewState(value: unknown): string[] {
       if (typeof checked !== "boolean") errors.push(`ReviewState.checklist['${id}'] must be boolean`);
     }
   }
-  if (!Array.isArray(state.unresolvedCommentIds) || !state.unresolvedCommentIds.every((id) => typeof id === "string")) {
-    errors.push("ReviewState.unresolvedCommentIds must be a string array");
+  const unresolvedIds = state.unresolvedCommentIds;
+  if (
+    !Array.isArray(unresolvedIds)
+    || !unresolvedIds.every((id) => typeof id === "string" && id.trim().length > 0)
+    || new Set(unresolvedIds).size !== unresolvedIds.length
+  ) {
+    errors.push("ReviewState.unresolvedCommentIds must be a unique nonblank string array");
+  }
+
+  if (state.status === "approved") {
+    if (!isValidIsoTimestamp(state.approvedAt)) {
+      errors.push("Approved ReviewState.approvedAt must be a valid nonblank ISO timestamp");
+    }
+    if (typeof state.reviewer !== "string" || state.reviewer.trim().length === 0) {
+      errors.push("Approved ReviewState.reviewer must be a nonblank string");
+    }
+    if (Array.isArray(unresolvedIds) && unresolvedIds.length > 0) {
+      errors.push("Approved ReviewState cannot contain unresolved comments");
+    }
+  } else if (state.approvedAt !== undefined || state.reviewer !== undefined) {
+    errors.push("Nonapproved ReviewState cannot retain approval metadata");
   }
   return errors;
 }

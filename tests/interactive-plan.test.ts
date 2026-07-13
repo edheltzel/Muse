@@ -187,6 +187,13 @@ describe("interactive plan review state and handoff", () => {
     return join(store, await readlink(join(store, "current")));
   }
 
+  const canonicalId = "123e4567-e89b-42d3-a456-426614174000";
+
+  async function replaceSymlink(path: string, target: string): Promise<void> {
+    await rm(path);
+    await fs.symlink(target, path);
+  }
+
   test("persists review values and treats durable open comments as authoritative", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await updateReviewState(planDir, {
@@ -353,17 +360,15 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
-  test("repairs a missing current handoff half before serving state or artifacts", async () => {
+  test("rejects a missing current handoff half before serving state or artifacts", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await approvePlan(planDir, "tester");
       const current = join(planDir, ".muse-review", "current");
       await rm(join(planDir, ".muse-review", await readlink(current), "agent-handoff.md"));
 
-      expect((await readReviewState(planDir)).status).toBe("needs_revision");
+      await expect(readReviewState(planDir)).rejects.toThrow(/coherent|handoff/i);
       await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow();
       await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow();
-      expect(await Bun.file(join(planDir, "agent-handoff.json")).exists()).toBe(false);
-      expect(await Bun.file(join(planDir, "agent-handoff.md")).exists()).toBe(false);
     });
   });
 
@@ -393,6 +398,44 @@ describe("interactive plan review state and handoff", () => {
       mock.restore();
       await readReviewState(planDir);
       expect(await readdir(join(store, "bundles"))).toEqual([currentIdentity]);
+    });
+  });
+
+  test("rejects noncanonical current targets before cleanup without touching bundles", async () => {
+    const invalidTargets = [
+      "bundles/..",
+      "../bundles/123e4567-e89b-42d3-a456-426614174000",
+      "/tmp/123e4567-e89b-42d3-a456-426614174000",
+      "bundles/123e4567-e89b-42d3-a456-426614174000/extra",
+      "bundles/123e4567-e89b-42d3-a456-426614174000.json",
+      "bundles/not-a-generated-id",
+    ];
+    for (const target of invalidTargets) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await approvePlan(planDir, "tester");
+        const store = join(planDir, ".muse-review");
+        const current = join(store, "current");
+        const bundlesBefore = await readdir(join(store, "bundles"));
+        await replaceSymlink(current, target);
+
+        await expect(readReviewState(planDir)).rejects.toThrow(/Invalid current review bundle target/);
+        expect(await readlink(current)).toBe(target);
+        expect(await readdir(join(store, "bundles"))).toEqual(bundlesBefore);
+      });
+    }
+  });
+
+  test("rejects symlinked bundle members before reading them", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const bundle = await currentBundlePath(planDir);
+      const outside = join(planDir, "outside-state.json");
+      await writeFile(outside, "{}");
+      await rm(join(bundle, "plan-state.json"));
+      await fs.symlink(outside, join(bundle, "plan-state.json"));
+
+      await expect(readReviewState(planDir)).rejects.toThrow(/regular non-symlink|regular file/i);
+      expect(await readFile(outside, "utf8")).toBe("{}");
     });
   });
 
@@ -482,6 +525,71 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
+  test("revalidates approved state against current plan and canonical handoff content", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const original = await approvePlan(planDir, "tester");
+      const path = join(planDir, "plan.mdx");
+      const source = await readFile(path, "utf8");
+      await writeFile(path, source.replace("Use local MDX", "Use a changed rendering policy"));
+
+      expect((await readReviewState(planDir)).status).toBe("needs_revision");
+      await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow();
+      await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow();
+      expect(original.status).toBe("approved");
+    });
+
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      await setReadinessPolicy(planDir);
+
+      expect((await readReviewState(planDir)).status).toBe("needs_revision");
+      await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow();
+    });
+  });
+
+  test("rejects unknown, malformed, and incoherent persisted approval metadata", async () => {
+    const invalidStates = [
+      {
+        status: "approved",
+        approvedAt: "not-an-iso-date",
+        reviewer: "tester",
+        answers: {},
+        checklist: {},
+        unresolvedCommentIds: [],
+      },
+      {
+        status: "approved",
+        approvedAt: "2026-07-01T12:00:00.000Z",
+        reviewer: " ",
+        answers: {},
+        checklist: {},
+        unresolvedCommentIds: [],
+      },
+      {
+        status: "in_review",
+        approvedAt: "2026-07-01T12:00:00.000Z",
+        reviewer: "stale-reviewer",
+        answers: {},
+        checklist: {},
+        unresolvedCommentIds: [],
+      },
+      {
+        status: "draft",
+        answers: {},
+        checklist: {},
+        unresolvedCommentIds: [],
+        unexpected: true,
+      },
+    ];
+
+    for (const state of invalidStates) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await writeFile(join(planDir, "plan-state.json"), JSON.stringify(state));
+        await expect(readReviewState(planDir)).rejects.toThrow(/unknown|approvedAt|reviewer|metadata|approved/i);
+      });
+    }
+  });
+
   test("returns committed approval when lock removal fails and recovers the released claim", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const originalRm = fs.rm;
@@ -539,10 +647,120 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
+  test("does not let a paused release remove either waiting successor", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const lockPath = join(planDir, ".muse-review.lock");
+      const first = await acquirePlanLock(planDir);
+      const originalRm = fs.rm;
+      let continueRelease: () => void = () => undefined;
+      const releasePaused = new Promise<void>((resolve) => {
+        continueRelease = resolve;
+      });
+      let signalPaused: () => void = () => undefined;
+      const paused = new Promise<void>((resolve) => {
+        signalPaused = resolve;
+      });
+      let pausedOnce = false;
+      spyOn(fs, "rm").mockImplementation(async (path, options) => {
+        if (!pausedOnce && String(path) === lockPath) {
+          pausedOnce = true;
+          signalPaused();
+          await releasePaused;
+        }
+        return originalRm(path, options);
+      });
+
+      const releasing = first.release();
+      await paused;
+      const secondPending = acquirePlanLock(planDir);
+      const thirdPending = acquirePlanLock(planDir);
+      continueRelease();
+      await releasing;
+      const winner = await Promise.race([
+        secondPending.then((lock) => ({ pending: thirdPending, lock })),
+        thirdPending.then((lock) => ({ pending: secondPending, lock })),
+      ]);
+      expect(await readlink(lockPath)).toContain(winner.lock.nonce);
+      await winner.lock.release();
+      const successor = await winner.pending;
+      expect(await readlink(lockPath)).toContain(successor.nonce);
+      await successor.release();
+    });
+  });
+
+  test("does not let a paused stale taker remove either successor", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const claimsDir = join(planDir, ".muse-review-locks");
+      const target = join(".muse-review-locks", `${canonicalId}.json`);
+      const claimPath = join(planDir, target);
+      const lockPath = join(planDir, ".muse-review.lock");
+      await fs.mkdir(claimsDir, { recursive: true });
+      await writeFile(claimPath, `${JSON.stringify({ nonce: canonicalId, pid: 2_147_483_647, createdAt: 0 })}\n`);
+      await fs.utimes(claimPath, new Date(0), new Date(0));
+      await fs.symlink(target, lockPath);
+
+      const originalRm = fs.rm;
+      let continueEviction: () => void = () => undefined;
+      const evictionPaused = new Promise<void>((resolve) => {
+        continueEviction = resolve;
+      });
+      let signalPaused: () => void = () => undefined;
+      const paused = new Promise<void>((resolve) => {
+        signalPaused = resolve;
+      });
+      let pausedOnce = false;
+      spyOn(fs, "rm").mockImplementation(async (path, options) => {
+        if (!pausedOnce && String(path) === lockPath) {
+          pausedOnce = true;
+          signalPaused();
+          await evictionPaused;
+        }
+        return originalRm(path, options);
+      });
+
+      const secondPending = acquirePlanLock(planDir);
+      await paused;
+      const thirdPending = acquirePlanLock(planDir);
+      continueEviction();
+      const winner = await Promise.race([
+        secondPending.then((lock) => ({ pending: thirdPending, lock })),
+        thirdPending.then((lock) => ({ pending: secondPending, lock })),
+      ]);
+      expect(await readlink(lockPath)).toContain(winner.lock.nonce);
+      await winner.lock.release();
+      const successor = await winner.pending;
+      expect(await readlink(lockPath)).toContain(successor.nonce);
+      await successor.release();
+    });
+  });
+
+  test("rejects malformed lock targets without deleting their targets", async () => {
+    const invalidTargets = [
+      "victim.json",
+      "../victim.json",
+      "/tmp/victim.json",
+      ".muse-review-locks/123e4567-e89b-42d3-a456-426614174000.json/extra",
+      `.muse-review-locks/${canonicalId}.txt`,
+      ".muse-review-locks/not-a-generated-id.json",
+    ];
+    for (const target of invalidTargets) {
+      await withFixture("minimal-plan", async (planDir) => {
+        const victim = join(planDir, "victim.json");
+        const lockPath = join(planDir, ".muse-review.lock");
+        await writeFile(victim, "operator-owned\n");
+        await fs.symlink(target, lockPath);
+
+        await expect(acquirePlanLock(planDir)).rejects.toThrow(/Invalid review lock target/);
+        expect(await readlink(lockPath)).toBe(target);
+        expect(await readFile(victim, "utf8")).toBe("operator-owned\n");
+      });
+    }
+  });
+
   test("reclaims a malformed stale owner through nonce-safe eviction", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const claimsDir = join(planDir, ".muse-review-locks");
-      const target = join(".muse-review-locks", "malformed.json");
+      const target = join(".muse-review-locks", `${canonicalId}.json`);
       const claimPath = join(planDir, target);
       const lockPath = join(planDir, ".muse-review.lock");
       await fs.mkdir(claimsDir, { recursive: true });
@@ -649,6 +867,12 @@ describe("interactive plan review state and handoff", () => {
           expect(await response.text()).toMatch(/patch|object|answers|checklist/i);
         }
         expect(await readReviewState(planDir)).toMatchObject({ status: "draft", answers: {}, checklist: {} });
+
+        for (const reviewer of [" ", 42]) {
+          const invalidReviewer = await post(server, "/api/approve", { reviewer });
+          expect(invalidReviewer.ok).toBe(false);
+          expect(await invalidReviewer.text()).toMatch(/reviewer.*nonblank/i);
+        }
 
         const bypass = await post(server, "/api/state", { status: "approved", approvedAt: "fake", reviewer: "attacker" });
         expect(bypass.ok).toBe(false);
