@@ -91,8 +91,9 @@ function renderDiffTabs(block: MdxBlock, context: RenderContext): string {
   }
 
   const tabs = items.map(({ label, panelId, tabId }, index) => `<button type="button" role="tab" id="${escapeHtml(tabId)}" aria-controls="${escapeHtml(panelId)}" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}" data-tab-target="${escapeHtml(panelId)}">${escapeHtml(label)}</button>`).join("");
-  const panels = items.map(({ chunk, panelId, tabId }, index) => `<div role="tabpanel" id="${escapeHtml(panelId)}" aria-labelledby="${escapeHtml(tabId)}"${index === 0 ? "" : " hidden"}><pre class="code-block code-block--scroll"><code>${escapeHtml(chunk)}</code></pre></div>`).join("");
-  return card(block, "ve-ip-card", `<div class="ve-ip-tabs"><div class="ve-ip-tab-list" role="tablist">${tabs}</div>${panels}</div>`);
+  const panels = items.map(({ chunk, panelId, tabId }, index) => `<div role="tabpanel" id="${escapeHtml(panelId)}" aria-labelledby="${escapeHtml(tabId)}" tabindex="0"${index === 0 ? "" : " hidden"}><pre class="code-block code-block--scroll"><code>${escapeHtml(chunk)}</code></pre></div>`).join("");
+  const tabListLabel = `${String(block.props.label ?? block.props.title ?? block.type)} tabs (${block.id})`;
+  return card(block, "ve-ip-card", `<div class="ve-ip-tabs"><div class="ve-ip-tab-list" role="tablist" aria-label="${escapeHtml(tabListLabel)}">${tabs}</div>${panels}</div>`);
 }
 
 function renderQuestionForm(block: MdxBlock): string {

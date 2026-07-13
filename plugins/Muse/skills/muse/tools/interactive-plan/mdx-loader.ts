@@ -56,121 +56,131 @@ interface RawClosingTag {
   start: number;
 }
 
-function findRawClosingTag(body: string, cursor: number, type: string): RawClosingTag | undefined {
+function findRawClosingTags(body: string, cursor: number, type: string): RawClosingTag[] {
   const standalone = new RegExp(`^[\\t ]*</${type}\\s*>[\\t ]*\\r?$`, "gm");
+  const matches: RawClosingTag[] = [];
   standalone.lastIndex = cursor;
-  const match = standalone.exec(body);
-  if (match) {
+  for (let match = standalone.exec(body); match; match = standalone.exec(body)) {
     const start = match.index + match[0].indexOf("<");
-    return { start, end: body.indexOf(">", start) };
+    matches.push({ start, end: body.indexOf(">", start) });
   }
+  if (matches.length) return matches;
 
   const start = body.indexOf(`</${type}`, cursor);
-  if (start === -1 || !/[\s>]/.test(body[start + type.length + 2] ?? "")) return undefined;
+  if (start === -1 || !/[\s>]/.test(body[start + type.length + 2] ?? "")) return [];
   const end = findUnquotedTagEnd(body, start + type.length + 2);
-  return end === -1 ? undefined : { start, end };
+  return end === -1 ? [] : [{ start, end }];
 }
 
 function scanComponentBlocks(body: string): MdxBlock[] {
-  const blocks: MdxBlock[] = [];
-  let open: OpenComponent | undefined;
-
-  for (let cursor = 0; cursor < body.length;) {
-    if (open && RAW_BODY_MDX_COMPONENTS[open.type]) {
-      const closingTag = findRawClosingTag(body, cursor, open.type);
-      if (!closingTag) {
-        const mismatched = body.slice(cursor).match(/^[\t ]*<\/([A-Z][A-Za-z0-9]*)\s*>[\t ]*$/m);
-        if (mismatched && KNOWN_MDX_COMPONENTS[mismatched[1]]) {
-          throw new Error(`Malformed MDX component source: closing '${mismatched[1]}' does not match open '${open.type}'`);
+  function scan(cursor: number, open: OpenComponent | undefined, blocks: MdxBlock[]): MdxBlock[] {
+    for (; cursor < body.length;) {
+      if (open && RAW_BODY_MDX_COMPONENTS[open.type]) {
+        const closingTags = findRawClosingTags(body, cursor, open.type);
+        if (!closingTags.length) {
+          const mismatched = body.slice(cursor).match(/^[\t ]*<\/([A-Z][A-Za-z0-9]*)\s*>[\t ]*$/m);
+          if (mismatched && KNOWN_MDX_COMPONENTS[mismatched[1]]) {
+            throw new Error(`Malformed MDX component source: closing '${mismatched[1]}' does not match open '${open.type}'`);
+          }
+          throw new Error(`Malformed MDX component source: unclosed '${open.type}'`);
         }
-        break;
-      }
-      const suffix = body.slice(closingTag.start + open.type.length + 2, closingTag.end);
-      if (suffix.trim()) {
-        throw new Error(`Malformed MDX component source: malformed closing '${open.type}'`);
-      }
-      const props = parseAttrs(open.attrs);
-      blocks.push({
-        id: typeof props.id === "string" ? props.id : "",
-        type: open.type,
-        props,
-        body: body.slice(open.bodyStart, closingTag.start).trim(),
-      });
-      cursor = closingTag.end + 1;
-      open = undefined;
-      continue;
-    }
 
-    const start = body.indexOf("<", cursor);
-    if (start === -1) break;
-    const candidate = body.slice(start);
-    const token = candidate.match(/^<(\/?)([A-Z][A-Za-z0-9]*)(?=[\s/>])/);
-    if (!token) {
-      const prefix = candidate.match(/^<(\/?)([A-Z][A-Za-z0-9]*)/);
-      if (prefix && KNOWN_MDX_COMPONENTS[prefix[2]]) {
-        const type = prefix[2];
-        const continuation = candidate[prefix[0].length];
-        if (continuation !== "." && continuation !== ":") {
-          const detail = continuation === undefined
-            ? `incomplete tag '<${prefix[1]}${type}'`
-            : `illegal continuation '${continuation}' after supported component name '${type}'`;
-          throw new Error(`Malformed MDX component source: ${detail}`);
+        let finalError: unknown;
+        for (const closingTag of closingTags) {
+          const suffix = body.slice(closingTag.start + open.type.length + 2, closingTag.end);
+          if (suffix.trim()) {
+            finalError = new Error(`Malformed MDX component source: malformed closing '${open.type}'`);
+            continue;
+          }
+          const props = parseAttrs(open.attrs);
+          const block: MdxBlock = {
+            id: typeof props.id === "string" ? props.id : "",
+            type: open.type,
+            props,
+            body: body.slice(open.bodyStart, closingTag.start).trim(),
+          };
+          try {
+            return scan(closingTag.end + 1, undefined, [...blocks, block]);
+          } catch (error) {
+            finalError = error;
+          }
         }
+        throw finalError;
       }
-      cursor = start + 1;
-      continue;
-    }
 
-    const closing = token[1] === "/";
-    const type = token[2];
-    const supported = Boolean(KNOWN_MDX_COMPONENTS[type]);
-    const tagEnd = findUnquotedTagEnd(body, start + token[0].length);
-    if (tagEnd === -1) {
-      throw new Error(`Malformed MDX component source: incomplete tag '<${closing ? "/" : ""}${type}'`);
-    }
-    const suffix = body.slice(start + token[0].length, tagEnd);
-    const selfClosing = /\/\s*$/.test(suffix);
-    cursor = tagEnd + 1;
-
-    if (open && KNOWN_MDX_COMPONENTS[open.type] && !supported) continue;
-
-    if (closing) {
-      if (suffix.trim()) {
-        throw new Error(`Malformed MDX component source: malformed closing '${type}'`);
+      const start = body.indexOf("<", cursor);
+      if (start === -1) break;
+      const candidate = body.slice(start);
+      const token = candidate.match(/^<(\/?)([A-Z][A-Za-z0-9]*)(?=[\s/>])/);
+      if (!token) {
+        const prefix = candidate.match(/^<(\/?)([A-Z][A-Za-z0-9]*)/);
+        if (prefix && KNOWN_MDX_COMPONENTS[prefix[2]]) {
+          const type = prefix[2];
+          const continuation = candidate[prefix[0].length];
+          if (continuation !== "." && continuation !== ":") {
+            const detail = continuation === undefined
+              ? `incomplete tag '<${prefix[1]}${type}'`
+              : `illegal continuation '${continuation}' after supported component name '${type}'`;
+            throw new Error(`Malformed MDX component source: ${detail}`);
+          }
+        }
+        cursor = start + 1;
+        continue;
       }
-      if (!open) throw new Error(`Malformed MDX component source: unexpected closing '${type}'`);
-      if (open.type !== type) {
-        throw new Error(`Malformed MDX component source: closing '${type}' does not match open '${open.type}'`);
+
+      const closing = token[1] === "/";
+      const type = token[2];
+      const supported = Boolean(KNOWN_MDX_COMPONENTS[type]);
+      const tagEnd = findUnquotedTagEnd(body, start + token[0].length);
+      if (tagEnd === -1) {
+        throw new Error(`Malformed MDX component source: incomplete tag '<${closing ? "/" : ""}${type}'`);
       }
-      const props = parseAttrs(open.attrs);
-      blocks.push({
-        id: typeof props.id === "string" ? props.id : "",
-        type,
-        props,
-        body: body.slice(open.bodyStart, start).trim(),
-      });
-      open = undefined;
-      continue;
+      const suffix = body.slice(start + token[0].length, tagEnd);
+      const selfClosing = /\/\s*$/.test(suffix);
+      cursor = tagEnd + 1;
+
+      if (open && KNOWN_MDX_COMPONENTS[open.type] && !supported) continue;
+
+      if (closing) {
+        if (suffix.trim()) {
+          throw new Error(`Malformed MDX component source: malformed closing '${type}'`);
+        }
+        if (!open) throw new Error(`Malformed MDX component source: unexpected closing '${type}'`);
+        if (open.type !== type) {
+          throw new Error(`Malformed MDX component source: closing '${type}' does not match open '${open.type}'`);
+        }
+        const props = parseAttrs(open.attrs);
+        blocks.push({
+          id: typeof props.id === "string" ? props.id : "",
+          type,
+          props,
+          body: body.slice(open.bodyStart, start).trim(),
+        });
+        open = undefined;
+        continue;
+      }
+
+      if (open) {
+        if (supported) {
+          throw new Error(`Malformed MDX component source: nested '${type}' inside '${open.type}' is not supported`);
+        }
+        continue;
+      }
+
+      const attrs = selfClosing ? suffix.replace(/\/\s*$/, "") : suffix;
+      if (selfClosing) {
+        const props = parseAttrs(attrs);
+        blocks.push({ id: typeof props.id === "string" ? props.id : "", type, props, body: "" });
+      } else {
+        open = { attrs, bodyStart: tagEnd + 1, type };
+      }
     }
 
-    if (open) {
-      if (supported) {
-        throw new Error(`Malformed MDX component source: nested '${type}' inside '${open.type}' is not supported`);
-      }
-      continue;
-    }
-
-    const attrs = selfClosing ? suffix.replace(/\/\s*$/, "") : suffix;
-    if (selfClosing) {
-      const props = parseAttrs(attrs);
-      blocks.push({ id: typeof props.id === "string" ? props.id : "", type, props, body: "" });
-    } else {
-      open = { attrs, bodyStart: tagEnd + 1, type };
-    }
+    if (open) throw new Error(`Malformed MDX component source: unclosed '${open.type}'`);
+    return blocks;
   }
 
-  if (open) throw new Error(`Malformed MDX component source: unclosed '${open.type}'`);
-  return blocks;
+  return scan(0, undefined, []);
 }
 
 export function parseMdxSource(source: string): ParsedPlanSource {

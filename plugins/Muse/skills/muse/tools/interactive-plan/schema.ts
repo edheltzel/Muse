@@ -1,3 +1,4 @@
+import { parse, parseFragment, type DefaultTreeAdapterTypes } from "parse5";
 import { findUnquotedTagEnd, KNOWN_MDX_COMPONENTS, splitTabPanels } from "./shared";
 
 export type VisualPlanKind = "plan" | "recap" | "styleguide";
@@ -86,87 +87,127 @@ export function validateReviewState(value: unknown): string[] {
 
 const HTML_ID_GRAMMAR = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-function* openingTags(source: string): Generator<string> {
+const HTML_RAW_TEXT_ELEMENTS: Readonly<Record<string, true | undefined>> = Object.freeze({
+  iframe: true,
+  noembed: true,
+  noframes: true,
+  plaintext: true,
+  script: true,
+  style: true,
+  textarea: true,
+  title: true,
+  xmp: true,
+});
+
+interface HtmlId {
+  hasValue: boolean;
+  value: string;
+}
+
+interface HtmlIdScope {
+  ids: HtmlId[];
+  name: string;
+}
+
+function isHtmlElement(node: DefaultTreeAdapterTypes.Node): node is DefaultTreeAdapterTypes.Element {
+  return "tagName" in node;
+}
+
+function htmlIdScopes(source: string, documentMode: boolean): HtmlIdScope[] {
+  const root: DefaultTreeAdapterTypes.Node = documentMode
+    ? parse(source, { sourceCodeLocationInfo: true })
+    : parseFragment(source, { sourceCodeLocationInfo: true });
+  const scopes: HtmlIdScope[] = [{ ids: [], name: documentMode ? "document" : "fragment" }];
+  let templateCount = 0;
+  let shadowCount = 0;
+
+  const walk = (node: DefaultTreeAdapterTypes.Node, scope: HtmlIdScope): void => {
+    if (isHtmlElement(node)) {
+      const shadowMode = node.tagName === "template"
+        ? node.attrs.find(({ name }) => name === "shadowrootmode")?.value.toLowerCase()
+        : undefined;
+      const declarativeShadow = shadowMode === "open" || shadowMode === "closed";
+      if (!declarativeShadow) {
+        const id = node.attrs.find(({ name }) => name === "id");
+        if (id) {
+          const location = node.sourceCodeLocation?.attrs?.id;
+          scope.ids.push({
+            hasValue: location ? source.slice(location.startOffset, location.endOffset).includes("=") : true,
+            value: id.value,
+          });
+        }
+      }
+      if (node.tagName === "template") {
+        const name = declarativeShadow ? `shadow root ${++shadowCount}` : `template ${++templateCount}`;
+        const nestedScope = { ids: [], name };
+        scopes.push(nestedScope);
+        walk((node as DefaultTreeAdapterTypes.Template).content, nestedScope);
+        return;
+      }
+    }
+    if ("childNodes" in node) {
+      for (const child of node.childNodes) walk(child, scope);
+    }
+  };
+
+  walk(root, scopes[0]);
+  return scopes;
+}
+
+function findUnterminatedRawContext(source: string): string | undefined {
   for (let cursor = 0; cursor < source.length;) {
     const start = source.indexOf("<", cursor);
-    if (start === -1) return;
+    if (start === -1) return undefined;
     if (source.startsWith("<!--", start)) {
-      const commentEnd = source.indexOf("-->", start + 4);
-      cursor = commentEnd === -1 ? source.length : commentEnd + 3;
+      const end = source.indexOf("-->", start + 4);
+      if (end === -1) return "comment";
+      cursor = end + 3;
       continue;
     }
-    if (!/[A-Za-z]/.test(source[start + 1] ?? "")) {
+    const opening = source.slice(start).match(/^<([A-Za-z][A-Za-z0-9-]*)\b/);
+    if (!opening) {
       cursor = start + 1;
       continue;
     }
-    const end = findUnquotedTagEnd(source, start + 1);
-    if (end === -1) return;
-    const tag = source.slice(start, end + 1);
-    yield tag;
-    cursor = end + 1;
+    const tagEnd = findUnquotedTagEnd(source, start + opening[0].length);
+    if (tagEnd === -1) return opening[1].toLowerCase();
+    const tagName = opening[1].toLowerCase();
+    cursor = tagEnd + 1;
+    if (!HTML_RAW_TEXT_ELEMENTS[tagName]) continue;
+    if (tagName === "plaintext") return tagName;
 
-    const rawTextElement = tag.match(/^<(script|style)\b/i)?.[1];
-    if (rawTextElement) {
-      const closingStart = source.slice(cursor).search(new RegExp(`</${rawTextElement}\\s*>`, "i"));
-      if (closingStart === -1) return;
-      cursor += closingStart + source.slice(cursor + closingStart).indexOf(">") + 1;
-    }
+    const closingStart = source.slice(cursor).search(new RegExp(`</${tagName}(?=[\\t\\n\\f\\r />])`, "i"));
+    if (closingStart === -1) return tagName;
+    const closingEnd = findUnquotedTagEnd(source, cursor + closingStart + tagName.length + 2);
+    if (closingEnd === -1) return tagName;
+    cursor = closingEnd + 1;
   }
+  return undefined;
 }
 
-function* idAttributes(source: string): Generator<string | undefined> {
-  for (const tag of openingTags(source)) {
-    let cursor = tag.search(/\s|\/?>/);
-    while (cursor !== -1 && cursor < tag.length - 1) {
-      while (/[\s/]/.test(tag[cursor] ?? "")) cursor += 1;
-      const nameStart = cursor;
-      while (cursor < tag.length && !/[\s=/>]/.test(tag[cursor])) cursor += 1;
-      if (cursor === nameStart) {
-        cursor += 1;
-        continue;
-      }
-      const name = tag.slice(nameStart, cursor).toLowerCase();
-      while (/\s/.test(tag[cursor] ?? "")) cursor += 1;
-      if (tag[cursor] !== "=") {
-        if (name === "id") yield undefined;
-        continue;
-      }
-      cursor += 1;
-      while (/\s/.test(tag[cursor] ?? "")) cursor += 1;
-      const quote = tag[cursor] === '"' || tag[cursor] === "'" ? tag[cursor++] : "";
-      const valueStart = cursor;
-      if (quote) {
-        while (cursor < tag.length && tag[cursor] !== quote) cursor += 1;
-      } else {
-        while (cursor < tag.length && !/[\s>]/.test(tag[cursor])) cursor += 1;
-      }
-      const value = tag.slice(valueStart, cursor);
-      if (quote && tag[cursor] === quote) cursor += 1;
-      if (name === "id") yield value;
-    }
-  }
-}
-
-export function validateRenderedHtmlIds(html: string): string[] {
-  const ids: string[] = [];
-  new HTMLRewriter()
-    .on("[id]", {
-      element(element) {
-        ids.push(element.getAttribute("id") ?? "");
-      },
-    })
-    .transform(html);
-
+export function validateRenderedHtmlIds(html: string, expectedIds: readonly string[] = []): string[] {
+  const scopes = htmlIdScopes(html, true);
   const errors: string[] = [];
-  const emittedIds = new Set<string>();
-  for (const id of ids) {
-    if (!id) {
-      errors.push("Rendered HTML contains empty id");
-      continue;
+  for (const scope of scopes) {
+    const seen = new Set<string>();
+    const prefix = scope.name === "document" ? "Rendered HTML" : `Rendered HTML scope '${scope.name}'`;
+    for (const id of scope.ids) {
+      if (!id.hasValue || !id.value) {
+        errors.push(`${prefix} contains empty id`);
+        continue;
+      }
+      if (!HTML_ID_GRAMMAR.test(id.value)) errors.push(`${prefix} contains unsafe id '${id.value}'`);
+      if (seen.has(id.value)) errors.push(`${prefix} contains duplicate id '${id.value}'`);
+      seen.add(id.value);
     }
-    if (!HTML_ID_GRAMMAR.test(id)) errors.push(`Rendered HTML contains unsafe id '${id}'`);
-    if (emittedIds.has(id)) errors.push(`Rendered HTML contains duplicate id '${id}'`);
-    emittedIds.add(id);
+  }
+
+  const documentIds = scopes[0].ids.map(({ value }) => value);
+  for (const expectedId of new Set(expectedIds)) {
+    const count = documentIds.filter((id) => id === expectedId).length;
+    if (count !== 1) {
+      errors.push(`Expected rendered HTML id '${expectedId}' to materialize exactly once; found ${count}`);
+    }
   }
   return errors;
 }
@@ -217,22 +258,46 @@ export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[
 
   for (const block of blocks) {
     if (block.type !== "Wireframe" && block.type !== "StateGallery") continue;
-    for (const id of idAttributes(block.body)) {
-      if (id === undefined) {
+    const unterminated = findUnterminatedRawContext(block.body);
+    if (unterminated) {
+      errors.push(`${block.type} '${block.id}' contains unterminated ${unterminated}`);
+      continue;
+    }
+
+    const [fragmentScope, ...nestedScopes] = htmlIdScopes(block.body, false);
+    for (const id of fragmentScope.ids) {
+      if (!id.hasValue) {
         errors.push(`${block.type} '${block.id}' contains an id attribute without a value`);
         continue;
       }
-      if (!id) {
+      if (!id.value) {
         errors.push(`${block.type} '${block.id}' contains an empty id attribute`);
         continue;
       }
-      if (!HTML_ID_GRAMMAR.test(id)) {
-        errors.push(`${block.type} descendant has unsafe id '${id}' in '${block.id}'`);
+      if (!HTML_ID_GRAMMAR.test(id.value)) {
+        errors.push(`${block.type} descendant has unsafe id '${id.value}' in '${block.id}'`);
       }
-      if (emittedIds.has(id)) {
-        errors.push(`${block.type} descendant id '${id}' in '${block.id}' collides with another emitted id`);
+      if (emittedIds.has(id.value)) {
+        errors.push(`${block.type} descendant id '${id.value}' in '${block.id}' collides with another emitted id`);
       }
-      emittedIds.add(id);
+      emittedIds.add(id.value);
+    }
+
+    for (const scope of nestedScopes) {
+      const seen = new Set<string>();
+      for (const id of scope.ids) {
+        if (!id.hasValue || !id.value) {
+          errors.push(`${block.type} '${block.id}' ${scope.name} contains empty id`);
+          continue;
+        }
+        if (!HTML_ID_GRAMMAR.test(id.value)) {
+          errors.push(`${block.type} '${block.id}' ${scope.name} contains unsafe id '${id.value}'`);
+        }
+        if (seen.has(id.value)) {
+          errors.push(`${block.type} '${block.id}' ${scope.name} contains duplicate id '${id.value}'`);
+        }
+        seen.add(id.value);
+      }
     }
   }
   return errors;

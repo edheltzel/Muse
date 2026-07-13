@@ -69,5 +69,8 @@
     "prompts": [
       "./plugins/Muse/commands"
     ]
+  },
+  "dependencies": {
+    "parse5": "8.0.1"
   }
 }

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { type ChildProcess } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,14 +67,55 @@ function expectedState(type: TabType, activeIndex: number, activeId: string, def
   };
 }
 
+// OS child exits and signal escalation use the real clock; fake timers cannot drive process exit events.
+async function waitForProcessExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const onExit = () => resolve(true);
+  const timer = setTimeout(() => resolve(false), timeoutMs);
+  child.once("exit", onExit);
+  const exited = await promise;
+  clearTimeout(timer);
+  child.off("exit", onExit);
+  return exited;
+}
+
+async function closeManagedBrowser(browser: Browser, child: ChildProcess | null): Promise<void> {
+  let cleanupFailure: unknown;
+  if (browser.connected) {
+    const { promise: deadline, reject } = Promise.withResolvers<never>();
+    const timer = setTimeout(() => reject(new Error("Timed out closing managed Chrome")), 2_000);
+    try {
+      await Promise.race([browser.close(), deadline]);
+    } catch (error) {
+      cleanupFailure = error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  if (child && !(await waitForProcessExit(child, 250))) {
+    child.kill("SIGTERM");
+    if (!(await waitForProcessExit(child, 1_000))) {
+      child.kill("SIGKILL");
+      if (!(await waitForProcessExit(child, 1_000))) {
+        cleanupFailure ??= new Error(`Managed Chrome process ${child.pid ?? "unknown"} did not terminate`);
+      }
+    }
+  }
+  if (cleanupFailure) throw cleanupFailure;
+}
+
 describe("interactive plan tabs in managed Chrome for Testing", () => {
   let browser: Browser | undefined;
+  let browserProcess: ChildProcess | null = null;
   let primaryFailure: unknown;
 
   async function withPage(run: (page: Page) => Promise<void>): Promise<void> {
-    const page = await browser!.newPage();
+    let page: Page | undefined;
     let testFailure: unknown;
     try {
+      page = await browser!.newPage();
       await run(page);
     } catch (error) {
       testFailure = error;
@@ -81,24 +123,33 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
       throw error;
     } finally {
       try {
-        if (!page.isClosed()) await page.close({ runBeforeUnload: false });
+        if (page && !page.isClosed()) await page.close({ runBeforeUnload: false });
       } catch (error) {
-        if (!testFailure && browser?.connected) throw error;
+        if (!testFailure && browser?.connected) {
+          primaryFailure ??= error;
+          throw error;
+        }
       }
     }
   }
 
   beforeAll(async () => {
-    browser = await puppeteer.launch({
-      executablePath: await puppeteer.executablePath(),
-      headless: true,
-    });
+    try {
+      browser = await puppeteer.launch({
+        executablePath: await puppeteer.executablePath(),
+        headless: true,
+      });
+      browserProcess = browser.process();
+    } catch (error) {
+      primaryFailure ??= error;
+      throw error;
+    }
   });
 
   afterAll(async () => {
-    if (!browser?.connected) return;
+    if (!browser) return;
     try {
-      await browser.close();
+      await closeManagedBrowser(browser, browserProcess);
     } catch (error) {
       if (!primaryFailure) throw error;
     }
@@ -134,7 +185,41 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
       }
 
       await page.keyboard.press("Tab");
+      expect(await tabState(page, type)).toEqual(expectedState(type, 0, `${blockId}-panel-0`, "false"));
+      await page.keyboard.press("Tab");
       expect(await tabState(page, type)).toEqual(expectedState(type, 0, "after-tabs", "false"));
+    });
+  });
+
+  test("tablists expose distinct stable names in Chrome accessibility tree", async () => {
+    await withPage(async (page) => {
+      await page.setContent(`<!doctype html><html><body>${tabBlock("Tabs")}${tabBlock("DiffTabs")}<script>${interactivePlanInteractionScript}</script></body></html>`);
+      const snapshot = await page.accessibility.snapshot({ interestingOnly: false });
+      const names: string[] = [];
+      const visit = (node: { role?: string; name?: string; children?: unknown[] } | null): void => {
+        if (!node) return;
+        if (node.role === "tablist" && node.name) names.push(node.name);
+        for (const child of node.children ?? []) visit(child as typeof node);
+      };
+      visit(snapshot);
+
+      expect(names).toEqual([
+        "Tabs interaction contract tabs (tabs)",
+        "DiffTabs interaction contract tabs (difftabs)",
+      ]);
+    });
+  });
+
+  test.each(["Tabs", "DiffTabs"] as const)("%s keyboard behavior stays isolated with a neighboring composite", async (type) => {
+    await withPage(async (page) => {
+      await page.setContent(`<!doctype html><html><body>${tabBlock("Tabs")}${tabBlock("DiffTabs")}<script>${interactivePlanInteractionScript}</script></body></html>`);
+      const blockId = type.toLowerCase();
+      const neighbor = type === "Tabs" ? "DiffTabs" : "Tabs";
+      await page.focus(`#${blockId}-tab-0`);
+      await page.keyboard.press("ArrowRight");
+
+      expect(await tabState(page, type)).toEqual(expectedState(type, 1, `${blockId}-tab-1`));
+      expect(await tabState(page, neighbor)).toEqual(expectedState(neighbor, 0, `${blockId}-tab-1`));
     });
   });
 
@@ -194,6 +279,7 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
       });
     } catch (error) {
       testFailure = error;
+      primaryFailure ??= error;
       throw error;
     } finally {
       try {
@@ -203,4 +289,103 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
       }
     }
   });
+  test("Chrome confirms unterminated tokenizer states swallow following tab IDs", async () => {
+    await withPage(async (page) => {
+      for (const opening of ["<!--", "<iframe>", "<noembed>", "<noframes>", "<plaintext>", '<script type="text/plain">', "<style>", "<textarea>", "<title>", "<xmp>"]) {
+        await page.setContent(`<!doctype html><html><body>${opening}${tabBlock("Tabs")}</body></html>`);
+        expect(await page.evaluate(() => document.getElementById("tabs"))).toBeNull();
+      }
+    });
+  });
+
+  test("Chrome isolates light, template, and declarative shadow ID scopes", async () => {
+    await withPage(async (page) => {
+      await page.setContent('<!doctype html><html><body><div id="scoped"></div><template id="template"><div id="scoped"></div></template><section id="host"><template shadowrootmode="open"><div id="scoped"></div></template></section></body></html>');
+
+      expect(await page.evaluate(() => {
+        const template = document.getElementById("template") as HTMLTemplateElement | null;
+        return {
+          light: document.querySelectorAll("#scoped").length,
+          shadow: document.getElementById("host")?.shadowRoot?.querySelectorAll("#scoped").length,
+          template: template?.content.querySelectorAll("#scoped").length,
+        };
+      })).toEqual({ light: 1, shadow: 1, template: 1 });
+    });
+  });
+
+  test("Chrome ignores duplicate structural start tags like the final audit", async () => {
+    await withPage(async (page) => {
+      await page.setContent('<!doctype html><html id="structure"><html id="ignored-html"><body id="page"><body id="ignored-body"><main id="content"></main></body></html>');
+
+      expect(await page.evaluate(() => ({
+        body: document.body.id,
+        content: document.querySelectorAll("#content").length,
+        html: document.documentElement.id,
+        ignoredBody: document.querySelectorAll("#ignored-body").length,
+        ignoredHtml: document.querySelectorAll("#ignored-html").length,
+      }))).toEqual({
+        body: "page",
+        content: 1,
+        html: "structure",
+        ignoredBody: 0,
+        ignoredHtml: 0,
+      });
+    });
+  });
+
+  test("rendered tab ID inventory equals the Chrome document inventory", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-expected-ids-"));
+    let testFailure: unknown;
+    try {
+      await writeFile(join(planDir, "plan.mdx"), '<Tabs id="tabs">\nfile: alpha.ts\nalpha\n---\nfile: beta.ts\nbeta\n</Tabs>\n');
+      const { indexPath } = await renderPlanFolder(planDir);
+      await withPage(async (page) => {
+        await page.goto(pathToFileURL(indexPath).href, { waitUntil: "domcontentloaded" });
+        const ids = await page.evaluate(() => [...document.querySelectorAll("[id]")].map(({ id }) => id).sort());
+        expect(ids).toEqual([
+          "tabs",
+          "tabs-panel-0",
+          "tabs-panel-1",
+          "tabs-tab-0",
+          "tabs-tab-1",
+        ]);
+      });
+    } catch (error) {
+      testFailure = error;
+      primaryFailure ??= error;
+      throw error;
+    } finally {
+      try {
+        await rm(planDir, { recursive: true, force: true });
+      } catch (error) {
+        if (!testFailure) throw error;
+      }
+    }
+  });
+
+  test("managed Chrome cleanup terminates a retained process after disconnect", async () => {
+    let disconnectedBrowser: Browser | undefined;
+    let disconnectedProcess: ChildProcess | null = null;
+    try {
+      disconnectedBrowser = await puppeteer.launch({
+        executablePath: await puppeteer.executablePath(),
+        headless: true,
+      });
+      disconnectedProcess = disconnectedBrowser.process();
+      expect(disconnectedProcess).not.toBeNull();
+      disconnectedBrowser.disconnect();
+
+      await closeManagedBrowser(disconnectedBrowser, disconnectedProcess);
+
+      expect(await waitForProcessExit(disconnectedProcess!, 100)).toBe(true);
+    } catch (error) {
+      primaryFailure ??= error;
+      if (disconnectedProcess && disconnectedProcess.exitCode === null && disconnectedProcess.signalCode === null) {
+        disconnectedProcess.kill("SIGKILL");
+        await waitForProcessExit(disconnectedProcess, 1_000);
+      }
+      throw error;
+    }
+  });
+
 });

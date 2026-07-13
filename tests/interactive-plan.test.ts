@@ -8,6 +8,7 @@ import { renderBlock } from "../plugins/Muse/skills/muse/tools/interactive-plan/
 import { interactivePlanInteractionScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
 import { renderPlanFolder, renderPlanHtml } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
+import { validateRenderedHtmlIds } from "../plugins/Muse/skills/muse/tools/interactive-plan/schema.ts";
 import {
   addComment,
   approvePlan,
@@ -280,6 +281,59 @@ describe("interactive plan MDX loading", () => {
     }
   });
 
+  test("backtracks past standalone literal raw closing examples", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-raw-closing-"));
+    const source = `<AnnotatedCode id="annotated">\nconst example = \`\n</AnnotatedCode>\n\`;\n</AnnotatedCode>\n<Tabs id="tabs">\nfile: tabs.tsx\nconst example = \`\n</Tabs>\n\`;\n</Tabs>\n<DiffTabs id="diffs">\nfile: diff.ts\nconst example = \`\n</DiffTabs>\n\`;\n</DiffTabs>\n<AnnotatedCode id="following">\nconst following = true;\n</AnnotatedCode>\n`;
+    try {
+      await writeFile(join(planDir, "plan.mdx"), source);
+
+      const plan = await loadPlanFolder(planDir);
+
+      expect(plan.plan.blocks.map(({ id, type }) => ({ id, type }))).toEqual([
+        { id: "annotated", type: "AnnotatedCode" },
+        { id: "tabs", type: "Tabs" },
+        { id: "diffs", type: "DiffTabs" },
+        { id: "following", type: "AnnotatedCode" },
+      ]);
+      expect(plan.plan.blocks[0].body).toContain("\n</AnnotatedCode>\n");
+      expect(plan.plan.blocks[1].body).toContain("\n</Tabs>\n");
+      expect(plan.plan.blocks[2].body).toContain("\n</DiffTabs>\n");
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["\n", "\r\n"])("keeps raw and opaque JSX boundaries intact with %j line endings", async (newline) => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-parser-boundaries-"));
+    const lines = [
+      '<Tabs.Panel id="opaque-tab">Dotted</Tabs.Panel>',
+      '<UI:Callout id="opaque-callout">Namespaced</UI:Callout>',
+      '<AnnotatedCode id="raw">',
+      'const close = "</AnnotatedCode>";',
+      '</AnnotatedCode>',
+      '<DiffTabs id="diffs">',
+      "file: before.ts",
+      "before",
+      "---",
+      "file: after.ts",
+      "after",
+      "</DiffTabs>",
+    ];
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `${lines.join(newline)}${newline}`);
+
+      const plan = await loadPlanFolder(planDir);
+
+      expect(plan.plan.blocks.map(({ id, type }) => ({ id, type }))).toEqual([
+        { id: "raw", type: "AnnotatedCode" },
+        { id: "diffs", type: "DiffTabs" },
+      ]);
+      expect(plan.plan.blocks[0].body).toBe('const close = "</AnnotatedCode>";');
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
   test("keeps dotted and namespaced JSX names opaque", async () => {
     const planDir = await mkdtemp(join(tmpdir(), "ve-ip-opaque-jsx-"));
     try {
@@ -418,6 +472,133 @@ describe("interactive plan MDX loading", () => {
     } finally {
       await rm(planDir, { recursive: true, force: true });
     }
+  });
+
+  test.each([
+    ["script", "const value = '<div id=\"shared\"></div>';"],
+    ["style", "#example[id=\"shared\"] { color: red; }"],
+    ["textarea", '<div id="shared"></div>'],
+    ["title", '<div id="shared"></div>'],
+    ["xmp", '<div id="shared"></div>'],
+    ["iframe", '<div id="shared"></div>'],
+    ["noembed", '<div id="shared"></div>'],
+    ["noframes", '<div id="shared"></div>'],
+  ])("matches HTML raw/RCDATA semantics for %s descendant ID inventory", async (tag, contents) => {
+    const planDir = await mkdtemp(join(tmpdir(), `ve-ip-${tag}-ids-`));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<Callout id="shared">Authored block</Callout>\n<StateGallery id="states">\n<${tag}>${contents}</${tag}>\n</StateGallery>\n`);
+
+      const plan = await loadPlanFolder(planDir);
+
+      expect(plan.plan.blocks.map((block) => block.id)).toEqual(["shared", "states"]);
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    ["script", "const value = '<div id=\"opaque\"></div>';"],
+    ["style", "#example[id=\"opaque\"] { color: red; }"],
+    ["textarea", '<div id="opaque"></div>'],
+    ["title", '<div id="opaque"></div>'],
+    ["xmp", '<div id="opaque"></div>'],
+    ["iframe", '<div id="opaque"></div>'],
+    ["noembed", '<div id="opaque"></div>'],
+    ["noframes", '<div id="opaque"></div>'],
+    ["plaintext", '<div id="opaque"></div>'],
+  ])("matches final browser-document raw/RCDATA semantics for %s", (tag, contents) => {
+    expect(validateRenderedHtmlIds(`<div id="live"></div><${tag}>${contents}</${tag}>`)).toEqual([]);
+  });
+
+  test.each([
+    ["comment", "<!--"],
+    ["iframe", "<iframe>"],
+    ["noembed", "<noembed>"],
+    ["noframes", "<noframes>"],
+    ["plaintext", "<plaintext>"],
+    ["script", '<script type="text/plain">'],
+    ["style", "<style>"],
+    ["textarea", "<textarea>"],
+    ["title", "<title>"],
+    ["xmp", "<xmp>"],
+  ])("rejects unterminated %s state before raw fragments can swallow following blocks", async (context, opening) => {
+    const planDir = await mkdtemp(join(tmpdir(), `ve-ip-unclosed-${context}-`));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<StateGallery id="states">\n${opening}<div id="hidden"></div>\n</StateGallery>\n<Tabs id="tabs">\nFirst\n---\nSecond\n</Tabs>\n`);
+      let message = "";
+      try {
+        await loadPlanFolder(planDir);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+
+      expect(message).toContain(`StateGallery 'states' contains unterminated ${context}`);
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test("requires every expected renderer ID to survive browser parsing exactly once", () => {
+    const errors = validateRenderedHtmlIds(
+      '<!doctype html><html><body><textarea><section id="required"></section></textarea></body></html>',
+      ["required"],
+    );
+
+    expect(errors).toContain("Expected rendered HTML id 'required' to materialize exactly once; found 0");
+  });
+
+  test("validates IDs within light DOM, template, and declarative shadow scopes", () => {
+    const scoped = '<div id="shared"></div><template><div id="shared"></div></template><section><template shadowrootmode="open"><div id="shared"></div></template></section>';
+    expect(validateRenderedHtmlIds(scoped, ["shared"])).toEqual([]);
+    expect(validateRenderedHtmlIds('<template><div id="duplicate"></div><div id="duplicate"></div></template>'))
+      .toContain("Rendered HTML scope 'template 1' contains duplicate id 'duplicate'");
+    expect(validateRenderedHtmlIds('<section><template shadowrootmode="open"><div id="duplicate"></div><div id="duplicate"></div></template></section>'))
+      .toContain("Rendered HTML scope 'shadow root 1' contains duplicate id 'duplicate'");
+  });
+
+  test("applies scoped ID semantics while validating raw fragments", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-scoped-fragment-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), '<StateGallery id="states">\n<div id="shared"></div>\n<template><div id="shared"></div></template>\n<section><template shadowrootmode="open"><div id="shared"></div></template></section>\n</StateGallery>\n');
+      expect((await loadPlanFolder(planDir)).plan.blocks.map(({ id }) => id)).toEqual(["states"]);
+
+      await writeFile(join(planDir, "plan.mdx"), '<StateGallery id="states">\n<template><div id="duplicate"></div><div id="duplicate"></div></template>\n</StateGallery>\n');
+      let message = "";
+      try {
+        await loadPlanFolder(planDir);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).toContain("StateGallery 'states' template 1 contains duplicate id 'duplicate'");
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rendering rejects expected IDs swallowed by shell tokenizer state", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-swallowed-render-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), '<Tabs id="tabs">\nFirst\n---\nSecond\n</Tabs>\n');
+      const plan = await loadPlanFolder(planDir);
+      const shell = '<!doctype html><html><body><textarea>{{CONTENT}}</textarea><script>{{CLIENT}}</script></body></html>';
+      let message = "";
+      try {
+        await renderPlanHtml(plan, false, shell);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+
+      for (const expectedId of ["tabs", "tabs-tab-0", "tabs-panel-0", "tabs-tab-1", "tabs-panel-1"]) {
+        expect(message).toContain(`Expected rendered HTML id '${expectedId}' to materialize exactly once; found 0`);
+      }
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses parsed document semantics for duplicate html and body start tags", () => {
+    const html = '<!doctype html><html id="structure"><html id="structure"><body id="page"><body id="page"><main id="content"></main></body></html>';
+    expect(validateRenderedHtmlIds(html, ["structure", "page", "content"])).toEqual([]);
   });
 
   test("audits only parsed HTML elements at the final rendered boundary", async () => {
