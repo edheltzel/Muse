@@ -5,7 +5,15 @@ import type { PathLike } from "node:fs";
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Browser, Window } from "happy-dom";
+import {
+  Browser,
+  Window,
+  type Document as HappyDocument,
+  type Element as HappyElement,
+  type HTMLElement as HappyHTMLElement,
+  type IKeyboardEventInit,
+  type KeyboardEvent as HappyKeyboardEvent,
+} from "happy-dom";
 
 import { renderBlock } from "../plugins/Muse/skills/muse/tools/interactive-plan/components.ts";
 import { interactivePlanInteractionScript, interactivePlanReviewScript, staticPlanClientScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
@@ -189,16 +197,16 @@ function tabBlock(type: string, id: string): string {
 
 function pressTabKey(
   window: Window,
-  target: Element,
+  target: HappyElement,
   key: string,
-  modifiers: Partial<Pick<KeyboardEventInit, "altKey" | "ctrlKey" | "metaKey" | "shiftKey">> = {},
-): KeyboardEvent {
+  modifiers: Partial<Pick<IKeyboardEventInit, "altKey" | "ctrlKey" | "metaKey" | "shiftKey">> = {},
+): HappyKeyboardEvent {
   const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...modifiers });
   target.dispatchEvent(event);
   return event;
 }
 
-function expectActiveTab(document: Document, blockId: string, index: number): void {
+function expectActiveTab(document: HappyDocument, blockId: string, index: number): void {
   const tabs = [...document.querySelectorAll(`#${blockId} > .ve-ip-body > .ve-ip-tabs > [role="tablist"] > [role="tab"]`)];
   const panels = [...document.querySelectorAll(`#${blockId} > .ve-ip-body > .ve-ip-tabs > [role="tabpanel"]`)];
   tabs.forEach((tab, tabIndex) => {
@@ -206,6 +214,10 @@ function expectActiveTab(document: Document, blockId: string, index: number): vo
     expect(tab.getAttribute("tabindex")).toBe(tabIndex === index ? "0" : "-1");
     expect(panels[tabIndex].hasAttribute("hidden")).toBe(tabIndex !== index);
   });
+}
+
+function queryHtml(document: HappyDocument, selector: string): HappyHTMLElement | null {
+  return document.querySelector(selector) as HappyHTMLElement | null;
 }
 const emittedIdCollisionCases = [
   {
@@ -1133,7 +1145,7 @@ describe("interactive plan rendering", () => {
       const installInteractions = new Function("window", "document", "HTMLElement", "HTMLInputElement", interactivePlanInteractionScript);
       installInteractions(window, document, window.HTMLElement, window.HTMLInputElement);
 
-      const primaryTabs = [...document.querySelectorAll('#primary > .ve-ip-body > .ve-ip-tabs > [role="tablist"] > [role="tab"]')];
+      const primaryTabs = [...document.querySelectorAll('#primary > .ve-ip-body > .ve-ip-tabs > [role="tablist"] > [role="tab"]')] as HappyHTMLElement[];
       const primaryTablist = primaryTabs[0].parentElement;
       if (!primaryTablist) throw new Error("Primary tablist was not rendered");
 
@@ -1179,7 +1191,7 @@ describe("interactive plan rendering", () => {
       expectActiveTab(document, "nested", 0);
       expectActiveTab(document, "secondary", 0);
 
-      const nestedTabs = [...document.querySelectorAll('#nested > .ve-ip-body > .ve-ip-tabs > [role="tablist"] > [role="tab"]')];
+      const nestedTabs = [...document.querySelectorAll('#nested > .ve-ip-body > .ve-ip-tabs > [role="tablist"] > [role="tab"]')] as HappyHTMLElement[];
       nestedTabs[1].click();
       expect(document.activeElement).toBe(primaryTabs[0]);
       expectActiveTab(document, "nested", 1);
@@ -1270,8 +1282,8 @@ describe("generic table and Mermaid accessibility", () => {
       page.evaluate(staticPlanClientScript);
       const window = page.mainFrame.window;
 
-      const viewport = window.document.querySelector<HTMLElement>(".mermaid-viewport");
-      const canvas = window.document.querySelector<HTMLElement>(".mermaid-canvas");
+      const viewport = queryHtml(window.document, ".mermaid-viewport");
+      const canvas = queryHtml(window.document, ".mermaid-canvas");
       expect(viewport).not.toBeNull();
       expect(canvas).not.toBeNull();
       if (!viewport || !canvas) throw new Error("Rendered diagram is missing its viewport or canvas");
@@ -1333,9 +1345,9 @@ describe("generic table and Mermaid accessibility", () => {
       Object.assign(page.mainFrame.window, { Math, WeakMap });
       page.evaluate(staticPlanClientScript);
       const window = page.mainFrame.window;
-      const viewport = window.document.querySelector<HTMLElement>(".mermaid-viewport");
-      const canvas = window.document.querySelector<HTMLElement>(".mermaid-canvas");
-      const reset = window.document.querySelector<HTMLElement>('[data-zoom="reset"]');
+      const viewport = queryHtml(window.document, ".mermaid-viewport");
+      const canvas = queryHtml(window.document, ".mermaid-canvas");
+      const reset = queryHtml(window.document, '[data-zoom="reset"]');
       if (!viewport || !canvas || !reset) throw new Error("Rendered diagram is missing interaction controls");
       Object.assign(viewport, { setPointerCapture() {} });
 
@@ -1360,13 +1372,13 @@ describe("generic table and Mermaid accessibility", () => {
       expect(pointerMove.defaultPrevented).toBe(false);
       expect(canvas.style.transform).toBe("translate(25px, 35px) scale(1)");
 
-      const plainWheel = new window.Event("wheel", { bubbles: true, cancelable: true }) as WheelEvent;
+      const plainWheel = new window.Event("wheel", { bubbles: true, cancelable: true });
       Object.defineProperty(plainWheel, "deltaY", { value: -1 });
       viewport.dispatchEvent(plainWheel);
       expect(plainWheel.defaultPrevented).toBe(false);
       expect(canvas.style.transform).toBe("translate(25px, 35px) scale(1)");
 
-      const ctrlWheel = new window.Event("wheel", { bubbles: true, cancelable: true }) as WheelEvent;
+      const ctrlWheel = new window.Event("wheel", { bubbles: true, cancelable: true });
       Object.defineProperties(ctrlWheel, {
         ctrlKey: { value: true },
         metaKey: { value: false },
@@ -1380,7 +1392,7 @@ describe("generic table and Mermaid accessibility", () => {
       expect(canvas.style.transform).toBe("translate(0px, 0px) scale(1)");
       expect(reset.textContent).toBe("100%");
 
-      const metaWheel = new window.Event("wheel", { bubbles: true, cancelable: true }) as WheelEvent;
+      const metaWheel = new window.Event("wheel", { bubbles: true, cancelable: true });
       Object.defineProperties(metaWheel, {
         ctrlKey: { value: false },
         metaKey: { value: true },
@@ -1432,7 +1444,7 @@ describe("generic table and Mermaid accessibility", () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      page.mainFrame.window.document.querySelector<HTMLElement>("[data-expand]")?.click();
+      queryHtml(page.mainFrame.window.document, "[data-expand]")?.click();
       expect(renderIds).toEqual(["ve-mermaid-expand-diagram"]);
       expect(writes).toHaveLength(1);
       expect(writes[0]).toContain('<svg data-expanded="true"></svg>');
@@ -1470,7 +1482,7 @@ describe("generic table and Mermaid accessibility", () => {
 
       const window = page.mainFrame.window;
       expect(window.document.querySelector(".mermaid-wrap")?.getAttribute("data-render-state")).toBe("missing-runtime");
-      window.document.querySelector<HTMLElement>("[data-expand]")?.click();
+      queryHtml(window.document, "[data-expand]")?.click();
       expect(writes).toHaveLength(1);
       expect(writes[0]).toContain(source);
       expect(writes[0]).not.toContain("<svg");
@@ -1507,9 +1519,9 @@ describe("generic table and Mermaid accessibility", () => {
       await Promise.resolve();
 
       const window = page.mainFrame.window;
-      const wrap = window.document.querySelector<HTMLElement>(".mermaid-wrap");
-      const source = window.document.querySelector<HTMLElement>(".mermaid-source");
-      const error = window.document.querySelector<HTMLElement>(".mermaid-error");
+      const wrap = queryHtml(window.document, ".mermaid-wrap");
+      const source = queryHtml(window.document, ".mermaid-source");
+      const error = queryHtml(window.document, ".mermaid-error");
       expect(wrap?.getAttribute("data-render-state")).toBe("error");
       expect(source?.textContent?.trim()).toBe(malformedSource);
       expect(error?.textContent).toBe(`Parse error near ${malformedSource}`);
@@ -1564,10 +1576,10 @@ describe("generic table and Mermaid accessibility", () => {
       page.evaluate(staticPlanClientScript);
       await completeRender();
 
-      const toggle = window.document.querySelector<HTMLElement>("[data-theme-toggle]");
-      const zoomIn = window.document.querySelector<HTMLElement>('[data-zoom="in"]');
-      const canvas = window.document.querySelector<HTMLElement>(".mermaid-canvas");
-      const source = window.document.querySelector<HTMLElement>(".mermaid-source");
+      const toggle = queryHtml(window.document, "[data-theme-toggle]");
+      const zoomIn = queryHtml(window.document, '[data-zoom="in"]');
+      const canvas = queryHtml(window.document, ".mermaid-canvas");
+      const source = queryHtml(window.document, ".mermaid-source");
       expect(toggle).not.toBeNull();
       expect(zoomIn).not.toBeNull();
       expect(canvas).not.toBeNull();
