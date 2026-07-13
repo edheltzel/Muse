@@ -42,6 +42,36 @@ function expectNoForbiddenRuntimeReferences(html: string): void {
   expect(html).not.toMatch(/\breact-dom\b/i);
 }
 
+const emittedIdCollisionCases = [
+  {
+    component: "ArchitectureDiagram",
+    body: "flowchart LR\nA --> B",
+    emittedIds: ["diagram-instructions", "ve-mermaid-diagram"],
+  },
+  {
+    component: "DiffTabs",
+    body: "file: first.ts\n+ first\n---\nfile: second.ts\n+ second",
+    emittedIds: ["diagram-0", "diagram-1"],
+  },
+  {
+    component: "Tabs",
+    body: "First\n---\nSecond",
+    emittedIds: ["diagram-0", "diagram-1"],
+  },
+].flatMap(({ component, body, emittedIds }) => {
+  const generated = `<${component} id="diagram">${body}</${component}>`;
+  return emittedIds.flatMap((emittedId) => {
+    const authored = `<Callout id="${emittedId}">Collision</Callout>`;
+    return [
+      { direction: `${component}: authored → emitted in plan`, planBlocks: [authored, generated], canvasBlocks: [], emittedId },
+      { direction: `${component}: emitted → authored in plan`, planBlocks: [generated, authored], canvasBlocks: [], emittedId },
+      { direction: `${component}: plan authored → canvas emitted`, planBlocks: [authored], canvasBlocks: [generated], emittedId },
+      { direction: `${component}: plan emitted → canvas authored`, planBlocks: [generated], canvasBlocks: [authored], emittedId },
+    ];
+  });
+});
+
+
 describe("interactive plan MDX loading", () => {
   test("loads every checked-in fixture through schema validation", async () => {
     const fixtureExpectations = [
@@ -123,46 +153,22 @@ describe("interactive plan MDX loading", () => {
     expect(message).toContain("Duplicate MDX component id 'canvas'");
   });
 
-  test.each([
-    {
-      direction: "plan authored → plan emitted",
-      planBlocks: [
-        `<Callout id="diagram-instructions">Collision</Callout>`,
-        `<ArchitectureDiagram id="diagram">flowchart LR\nA --> B</ArchitectureDiagram>`,
-      ],
-      canvasBlocks: [],
-    },
-    {
-      direction: "canvas authored → canvas emitted",
-      planBlocks: [`<PlanSummary id="summary">Summary</PlanSummary>`],
-      canvasBlocks: [
-        `<ArchitectureDiagram id="diagram">flowchart LR\nA --> B</ArchitectureDiagram>`,
-        `<Callout id="diagram-instructions">Collision</Callout>`,
-      ],
-    },
-    {
-      direction: "plan authored → canvas emitted",
-      planBlocks: [`<Callout id="diagram-instructions">Collision</Callout>`],
-      canvasBlocks: [`<ArchitectureDiagram id="diagram">flowchart LR\nA --> B</ArchitectureDiagram>`],
-    },
-    {
-      direction: "plan emitted → canvas authored",
-      planBlocks: [`<ArchitectureDiagram id="diagram">flowchart LR\nA --> B</ArchitectureDiagram>`],
-      canvasBlocks: [`<Callout id="diagram-instructions">Collision</Callout>`],
-    },
-  ])("rejects $direction id collisions", async ({ planBlocks, canvasBlocks }) => {
-    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-derived-id-collision-"));
-    try {
-      await writeFile(join(planDir, "plan.mdx"), planBlocks.join("\n\n"));
-      if (canvasBlocks.length > 0) {
-        await writeFile(join(planDir, "canvas.mdx"), canvasBlocks.join("\n\n"));
-      }
+  test.each(emittedIdCollisionCases)(
+    "rejects $direction id collisions",
+    async ({ planBlocks, canvasBlocks, emittedId }) => {
+      const planDir = await mkdtemp(join(tmpdir(), "ve-ip-derived-id-collision-"));
+      try {
+        await writeFile(join(planDir, "plan.mdx"), planBlocks.join("\n\n"));
+        if (canvasBlocks.length > 0) {
+          await writeFile(join(planDir, "canvas.mdx"), canvasBlocks.join("\n\n"));
+        }
 
-      await expect(loadPlanFolder(planDir)).rejects.toThrow("Duplicate rendered id 'diagram-instructions'");
-    } finally {
-      await rm(planDir, { recursive: true, force: true });
-    }
-  });
+        await expect(loadPlanFolder(planDir)).rejects.toThrow(`Duplicate rendered id '${emittedId}'`);
+      } finally {
+        await rm(planDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("interactive plan rendering", () => {
@@ -324,6 +330,165 @@ describe("generic table and Mermaid accessibility", () => {
       input.dispatchEvent(editableArrow);
       expect(editableArrow.defaultPrevented).toBe(false);
       expect(canvas.style.transform).toBe("translate(-40px, -40px) scale(1)");
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("pointer drag, modified wheel zoom, and reset preserve expected default handling", async () => {
+    const browser = new Browser();
+    const page = browser.newPage();
+    try {
+      page.content = renderBlock({
+        id: "interaction-diagram",
+        type: "ArchitectureDiagram",
+        props: { title: "Interaction diagram" },
+        body: "flowchart LR\nA --> B",
+      }, { staticMode: false });
+      Object.assign(page.mainFrame.window, { Math, WeakMap });
+      page.evaluate(staticPlanClientScript);
+      const window = page.mainFrame.window;
+      const viewport = window.document.querySelector<HTMLElement>(".mermaid-viewport");
+      const canvas = window.document.querySelector<HTMLElement>(".mermaid-canvas");
+      const reset = window.document.querySelector<HTMLElement>('[data-zoom="reset"]');
+      if (!viewport || !canvas || !reset) throw new Error("Rendered diagram is missing interaction controls");
+      Object.assign(viewport, { setPointerCapture() {} });
+
+      const pointerDown = new window.PointerEvent("pointerdown", {
+        pointerId: 1,
+        clientX: 10,
+        clientY: 20,
+        bubbles: true,
+        cancelable: true,
+      });
+      viewport.dispatchEvent(pointerDown);
+      const pointerMove = new window.PointerEvent("pointermove", {
+        pointerId: 1,
+        clientX: 35,
+        clientY: 55,
+        bubbles: true,
+        cancelable: true,
+      });
+      viewport.dispatchEvent(pointerMove);
+      viewport.dispatchEvent(new window.PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+      expect(pointerDown.defaultPrevented).toBe(false);
+      expect(pointerMove.defaultPrevented).toBe(false);
+      expect(canvas.style.transform).toBe("translate(25px, 35px) scale(1)");
+
+      const plainWheel = new window.Event("wheel", { bubbles: true, cancelable: true }) as WheelEvent;
+      Object.defineProperty(plainWheel, "deltaY", { value: -1 });
+      viewport.dispatchEvent(plainWheel);
+      expect(plainWheel.defaultPrevented).toBe(false);
+      expect(canvas.style.transform).toBe("translate(25px, 35px) scale(1)");
+
+      const ctrlWheel = new window.Event("wheel", { bubbles: true, cancelable: true }) as WheelEvent;
+      Object.defineProperties(ctrlWheel, {
+        ctrlKey: { value: true },
+        metaKey: { value: false },
+        deltaY: { value: -1 },
+      });
+      viewport.dispatchEvent(ctrlWheel);
+      expect(ctrlWheel.defaultPrevented).toBe(true);
+      expect(canvas.style.transform).toBe("translate(25px, 35px) scale(1.1)");
+
+      reset.click();
+      expect(canvas.style.transform).toBe("translate(0px, 0px) scale(1)");
+      expect(reset.textContent).toBe("100%");
+
+      const metaWheel = new window.Event("wheel", { bubbles: true, cancelable: true }) as WheelEvent;
+      Object.defineProperties(metaWheel, {
+        ctrlKey: { value: false },
+        metaKey: { value: true },
+        deltaY: { value: 1 },
+      });
+      viewport.dispatchEvent(metaWheel);
+      expect(metaWheel.defaultPrevented).toBe(true);
+      expect(canvas.style.transform).toBe("translate(0px, 0px) scale(0.9)");
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("expand opens rendered SVG using the deterministic Mermaid render id", async () => {
+    const browser = new Browser();
+    const page = browser.newPage();
+    const writes: string[] = [];
+    const renderIds: string[] = [];
+    try {
+      page.content = renderBlock({
+        id: "expand-diagram",
+        type: "ArchitectureDiagram",
+        props: { title: "Expand diagram" },
+        body: "flowchart LR\nA --> B",
+      }, { staticMode: false });
+      Object.assign(page.mainFrame.window, {
+        Array,
+        Math,
+        String,
+        WeakMap,
+        mermaid: {
+          initialize() {},
+          render(id: string) {
+            renderIds.push(id);
+            return Promise.resolve({ svg: '<svg data-expanded="true"></svg>' });
+          },
+        },
+        open() {
+          return {
+            document: {
+              write(value: string) { writes.push(value); },
+              close() {},
+            },
+          };
+        },
+      });
+      page.evaluate(staticPlanClientScript);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      page.mainFrame.window.document.querySelector<HTMLElement>("[data-expand]")?.click();
+      expect(renderIds).toEqual(["ve-mermaid-expand-diagram"]);
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toContain('<svg data-expanded="true"></svg>');
+      expect(writes[0]).toContain("<title>Muse diagram</title>");
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("missing Mermaid runtime marks the fallback and expands authored source", async () => {
+    const browser = new Browser();
+    const page = browser.newPage();
+    const writes: string[] = [];
+    const source = "flowchart LR\nA --> B";
+    try {
+      page.content = renderBlock({
+        id: "fallback-diagram",
+        type: "ArchitectureDiagram",
+        props: { title: "Fallback diagram" },
+        body: source,
+      }, { staticMode: false });
+      Object.assign(page.mainFrame.window, {
+        Math,
+        WeakMap,
+        open() {
+          return {
+            document: {
+              write(value: string) { writes.push(value); },
+              close() {},
+            },
+          };
+        },
+      });
+      page.evaluate(staticPlanClientScript);
+
+      const window = page.mainFrame.window;
+      expect(window.document.querySelector(".mermaid-wrap")?.getAttribute("data-render-state")).toBe("missing-runtime");
+      window.document.querySelector<HTMLElement>("[data-expand]")?.click();
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toContain(source);
+      expect(writes[0]).not.toContain("<svg");
     } finally {
       await browser.close();
     }

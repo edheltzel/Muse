@@ -29,19 +29,49 @@ export const KNOWN_MDX_COMPONENTS: Readonly<Record<string, true | undefined>> = 
   Object.fromEntries(MDX_COMPONENT_NAMES.map((name) => [name, true])) as Record<string, true>,
 );
 
-type RendererOwnedIdFactory = (blockId: string) => string;
+export interface RendererOwnedIdContext {
+  id: string;
+  type: string;
+  body: string;
+  props?: Readonly<Record<string, string | boolean | number>>;
+}
+
+type RendererOwnedIdFactory = (block: RendererOwnedIdContext) => readonly string[];
+type RendererOwnedIdRoles = Readonly<Record<string, RendererOwnedIdFactory>>;
+
+const tabPanelIds: RendererOwnedIdFactory = (block) =>
+  splitTabbedSections(block.body).map((_, index) => `${block.id}-${index}`);
 
 export const RENDERER_OWNED_ID_INVENTORY = {
   ArchitectureDiagram: {
-    instructions: (blockId: string) => `${blockId}-instructions`,
+    instructions: (block) => [`${block.id}-instructions`],
+    renderRoot: (block) => [`ve-mermaid-${block.id}`],
   },
-} as const satisfies Partial<Record<MdxComponentName, Readonly<Record<string, RendererOwnedIdFactory>>>>;
+  DiffTabs: {
+    panels: tabPanelIds,
+  },
+  Tabs: {
+    panels: tabPanelIds,
+  },
+} as const satisfies Partial<Record<MdxComponentName, RendererOwnedIdRoles>>;
 
-export function getRendererOwnedIds(block: { id: string; type: string }): string[] {
-  const inventory = RENDERER_OWNED_ID_INVENTORY[
+
+export function getRendererOwnedIdsByRole(block: RendererOwnedIdContext, role: string): readonly string[] {
+  const roles = RENDERER_OWNED_ID_INVENTORY[
     block.type as keyof typeof RENDERER_OWNED_ID_INVENTORY
-  ];
-  return inventory ? Object.values(inventory).map((createId) => createId(block.id)) : [];
+  ] as RendererOwnedIdRoles | undefined;
+  return roles?.[role]?.(block) ?? [];
+}
+
+export function getRendererOwnedIds(block: RendererOwnedIdContext): string[] {
+  const roles = RENDERER_OWNED_ID_INVENTORY[
+    block.type as keyof typeof RENDERER_OWNED_ID_INVENTORY
+  ] as RendererOwnedIdRoles | undefined;
+  return roles ? Object.values(roles).flatMap((createIds) => createIds(block)) : [];
+}
+
+export function splitTabbedSections(body: string): string[] {
+  return body.split(/^---\s*$/m).map((chunk) => chunk.trim()).filter(Boolean);
 }
 
 export function splitLines(body: string): string[] {

@@ -87,7 +87,8 @@ const baseClientScript = `
         const canvas = wrap.querySelector(".mermaid-canvas");
         if (!source || !canvas) continue;
         try {
-          const id = "ve-mermaid-" + (wrap.getAttribute("data-diagram-id") || Math.random().toString(36).slice(2));
+          const id = wrap.getAttribute("data-mermaid-render-id");
+          if (!id) continue;
           const rendered = await mermaid.render(id, source);
           if (version !== mermaidRenderVersion) return;
           canvas.innerHTML = rendered.svg;

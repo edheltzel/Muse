@@ -1,5 +1,5 @@
 import { type MdxBlock } from "./schema";
-import { RENDERER_OWNED_ID_INVENTORY, type MdxComponentName, splitLines, splitPipeFields } from "./shared";
+import { getRendererOwnedIdsByRole, type MdxComponentName, splitLines, splitPipeFields, splitTabbedSections } from "./shared";
 
 export interface RenderContext {
   staticMode: boolean;
@@ -47,8 +47,9 @@ function renderDecisionMatrix(block: MdxBlock): string {
 }
 
 function renderArchitectureDiagram(block: MdxBlock): string {
-  const instructionsId = escapeHtml(RENDERER_OWNED_ID_INVENTORY.ArchitectureDiagram.instructions(block.id));
-  return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint" id="${instructionsId}">Use arrow keys to pan. Hold Ctrl or Command while scrolling to zoom, drag to pan, or expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}"><div class="zoom-controls"><button type="button" data-zoom="out" aria-label="Zoom out">−</button><button type="button" data-zoom="reset" aria-label="Reset zoom and position">100%</button><button type="button" data-zoom="in" aria-label="Zoom in">+</button><button type="button" data-expand aria-label="Expand diagram">⛶</button></div><div class="mermaid-viewport" tabindex="0" role="region" aria-label="${title(block)} interactive diagram" aria-describedby="${instructionsId}"><pre class="mermaid-source">${escapeHtml(block.body)}</pre><div class="mermaid-canvas" aria-label="${title(block)} diagram"></div></div></div></div>`);
+  const instructionsId = escapeHtml(getRendererOwnedIdsByRole(block, "instructions")[0]);
+  const renderRootId = escapeHtml(getRendererOwnedIdsByRole(block, "renderRoot")[0]);
+  return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint" id="${instructionsId}">Use arrow keys to pan. Hold Ctrl or Command while scrolling to zoom, drag to pan, or expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}" data-mermaid-render-id="${renderRootId}"><div class="zoom-controls"><button type="button" data-zoom="out" aria-label="Zoom out">−</button><button type="button" data-zoom="reset" aria-label="Reset zoom and position">100%</button><button type="button" data-zoom="in" aria-label="Zoom in">+</button><button type="button" data-expand aria-label="Expand diagram">⛶</button></div><div class="mermaid-viewport" tabindex="0" role="region" aria-label="${title(block)} interactive diagram" aria-describedby="${instructionsId}"><pre class="mermaid-source">${escapeHtml(block.body)}</pre><div class="mermaid-canvas" aria-label="${title(block)} diagram"></div></div></div></div>`);
 }
 
 function renderTimeline(block: MdxBlock): string {
@@ -74,12 +75,13 @@ function renderAnnotatedCode(block: MdxBlock): string {
 }
 
 function renderDiffTabs(block: MdxBlock): string {
-  const chunks = block.body.split(/^---\s*$/m).map((chunk) => chunk.trim()).filter(Boolean);
+  const chunks = splitTabbedSections(block.body);
+  const panelIds = getRendererOwnedIdsByRole(block, "panels");
   const tabs = chunks.map((chunk, index) => {
     const firstLine = chunk.match(/^[^\r\n]*/)?.[0] || `Diff ${index + 1}`;
-    return `<button type="button" role="tab" data-tab-target="${escapeHtml(block.id)}-${index}" ${index === 0 ? "aria-selected=\"true\"" : ""}>${escapeHtml(firstLine.replace(/^file:\s*/, ""))}</button>`;
+    return `<button type="button" role="tab" data-tab-target="${escapeHtml(panelIds[index])}" ${index === 0 ? "aria-selected=\"true\"" : ""}>${escapeHtml(firstLine.replace(/^file:\s*/, ""))}</button>`;
   }).join("");
-  const panels = chunks.map((chunk, index) => `<div role="tabpanel" id="${escapeHtml(block.id)}-${index}" ${index === 0 ? "" : "hidden"}><pre class="code-block code-block--scroll"><code>${escapeHtml(chunk)}</code></pre></div>`).join("");
+  const panels = chunks.map((chunk, index) => `<div role="tabpanel" id="${escapeHtml(panelIds[index])}" ${index === 0 ? "" : "hidden"}><pre class="code-block code-block--scroll"><code>${escapeHtml(chunk)}</code></pre></div>`).join("");
   return card(block, "ve-ip-card", `<div class="ve-ip-tabs"><div class="ve-ip-tab-list" role="tablist">${tabs}</div>${panels}</div>`);
 }
 
