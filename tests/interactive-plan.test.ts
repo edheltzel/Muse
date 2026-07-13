@@ -5,7 +5,7 @@ import { chmod, cp, lstat, mkdtemp, readFile, readdir, readlink, rm, writeFile }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { formatAgentHandoffMarkdown } from "../plugins/Muse/skills/muse/tools/interactive-plan/handoff.ts";
+import { decodeMarkdownText, encodeMarkdownText, formatAgentHandoffMarkdown, parseAgentHandoffMarkdown } from "../plugins/Muse/skills/muse/tools/interactive-plan/handoff.ts";
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
 import { acquirePlanLock } from "../plugins/Muse/skills/muse/tools/interactive-plan/plan-lock.ts";
 import type { AgentHandoff, ReviewState } from "../plugins/Muse/skills/muse/tools/interactive-plan/schema.ts";
@@ -219,6 +219,39 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
+  test("keeps an approved generation byte-identical across repeated and concurrent resolution", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const id = "c-idempotent-resolution";
+      await addComment(planDir, { id, blockId: "summary", body: "Resolve once before approval." });
+      const [resolved] = await resolveComment(planDir, id);
+      const handoff = await approvePlan(planDir, "tester");
+      const store = join(planDir, ".muse-review");
+      const pointer = join(store, "current");
+      const committedTarget = await readlink(pointer);
+      const bundle = join(store, committedTarget);
+      const files = ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"];
+      const committedBytes = await Promise.all(files.map((file) => readFile(join(bundle, file))));
+
+      const [first, second] = await Promise.all([
+        resolveComment(planDir, id),
+        resolveComment(planDir, id),
+      ]);
+
+      expect(first).toEqual(second);
+      expect(first[0]?.resolvedAt).toBe(resolved.resolvedAt);
+      expect(await readlink(pointer)).toBe(committedTarget);
+      const currentBytes = await Promise.all(files.map((file) => readFile(join(bundle, file))));
+      expect(currentBytes).toEqual(committedBytes);
+      expect(await readReviewState(planDir)).toMatchObject({
+        status: "approved",
+        approvedAt: handoff.approvedAt,
+        approvalDigest: handoff.approvalDigest,
+      });
+      expect(JSON.parse(await readPublishedArtifact(planDir, "agent-handoff.json"))).toEqual(handoff);
+    });
+  });
+
+
   test("serializes state mutations across processes without losing either revision", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const worker = join(repoRoot, "tests", "helpers", "review-state-writer.ts");
@@ -386,6 +419,34 @@ describe("interactive plan review state and handoff", () => {
       }, null, 2)}\n`);
 
       expect((await readReviewState(planDir)).answers.operator).toBe("latest edit");
+    });
+  });
+
+  test("abandons and retries a migration candidate when legacy bytes change before replacement", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const statePath = join(planDir, "plan-state.json");
+      const state = {
+        status: "in_review",
+        answers: { operator: "captured" },
+        checklist: {},
+        unresolvedCommentIds: [],
+      };
+      await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+      await writeFile(join(planDir, "comments.json"), "[]\n");
+      const originalSymlink = fs.symlink;
+      let raced = false;
+      spyOn(fs, "symlink").mockImplementation(async (target, path, type) => {
+        const result = await originalSymlink(target, path, type);
+        if (!raced && String(path).includes(".plan-state.json.") && String(path).endsWith(".link")) {
+          raced = true;
+          await writeFile(statePath, `${JSON.stringify({ ...state, answers: { operator: "concurrent edit" } }, null, 2)}\n`);
+        }
+        return result;
+      });
+
+      expect((await readReviewState(planDir)).answers.operator).toBe("concurrent edit");
+      expect(await readlink(statePath)).toBe(".muse-review/current/plan-state.json");
+      expect(await temporaryPublicationEntries(planDir)).toEqual([]);
     });
   });
 
@@ -581,6 +642,49 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
+  test("strictly validates manifest paths, scalar types, enums, arrays, and unknown fields", async () => {
+    const invalidManifests: Record<string, unknown>[] = [
+      { kind: "unknown" },
+      { source: ["valid", 42] },
+      { slug: "two\nlines" },
+      { title: "two\nlines" },
+      { entry: "../outside.mdx" },
+      { entry: "/absolute/plan.mdx" },
+      { unexpected: true },
+    ];
+    for (const patch of invalidManifests) {
+      await withFixture("minimal-plan", async (planDir) => {
+        const path = join(planDir, "visual-explainer.json");
+        const manifest = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+        await writeFile(path, JSON.stringify({ ...manifest, ...patch }));
+        await expect(loadPlanFolder(planDir)).rejects.toThrow(/manifest|kind|source|slug|title|entry|unknown/i);
+      });
+    }
+  });
+
+  test("rejects unknown comment fields and incoherent resolution timestamps", async () => {
+    const base = {
+      id: "c-invalid",
+      blockId: "summary",
+      body: "Invalid persisted comment",
+      status: "open",
+      createdAt: "2026-07-01T12:00:00.000Z",
+    };
+    const invalidComments = [
+      { ...base, unexpected: true },
+      { ...base, resolvedAt: "2026-07-01T12:01:00.000Z" },
+      { ...base, status: "resolved" },
+      { ...base, status: "resolved", resolvedAt: "not-a-date" },
+      { ...base, createdAt: "not-a-date" },
+    ];
+    for (const comment of invalidComments) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await writeFile(join(planDir, "comments.json"), JSON.stringify([comment]));
+        await expect(readComments(planDir)).rejects.toThrow(/comment|timestamp|resolved|unknown/i);
+      });
+    }
+  });
+
   test("validates canonical handoff plan identity and nested runtime fields", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const handoff = await approvePlan(planDir, "tester");
@@ -609,49 +713,30 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
-  test("control-encodes Markdown scalar and list fields without creating headings", () => {
-    const markdown = formatAgentHandoffMarkdown({
+  test("round-trips every handoff field through injective structural-safe Markdown", () => {
+    const handoff: AgentHandoff = {
       status: "approved",
       planSlug: "safe\n## Forged",
       planPath: "/tmp/plan\rStatus: rejected",
       approvedAt: "2026-07-01T12:00:00.000Z",
       approvedScope: ["Scope\u0000entry"],
-      decisions: [],
-      answers: {},
+      decisions: ["<script>unsafe</script>"],
+      answers: { "\\u000a": ["line\nbreak"] },
       implementationEntry: "/tmp/implementation\n## Forged",
       approvalDigest: "a".repeat(64),
       verification: [],
       openRisks: [],
-    });
+    };
 
-    expect(markdown).toBe(`# Agent Handoff: safe\\u000a## Forged
+    const markdown = formatAgentHandoffMarkdown(handoff);
 
-Status: approved
-Approved: 2026-07-01T12:00:00.000Z
-Plan: /tmp/plan\\u000dStatus: rejected
-
-## Approved Scope
-
-- Scope\\u0000entry
-
-## Decisions
-
-- None recorded
-
-## Answers
-
-\`\`\`json
-{}
-\`\`\`
-
-## Verification
-
-- None recorded
-
-## Open Risks
-
-- None recorded
-`);
+    expect(parseAgentHandoffMarkdown(markdown)).toEqual(handoff);
+    expect(markdown).toContain(`Implementation-Entry: ${encodeMarkdownText(handoff.implementationEntry)}`);
+    expect(markdown).toContain(`Approval-Digest: ${handoff.approvalDigest}`);
+    expect(markdown).not.toContain("\n## Forged");
+    expect(markdown).not.toContain("<script>");
+    expect(encodeMarkdownText("\n")).not.toBe(encodeMarkdownText("\\u000a"));
+    expect(decodeMarkdownText(encodeMarkdownText("\\u000a\n"))).toBe("\\u000a\n");
   });
 
   test("revalidates approved state against current plan and canonical handoff content", async () => {
@@ -719,279 +804,92 @@ Plan: /tmp/plan\\u000dStatus: rejected
     }
   });
 
-  test("returns committed approval when lock removal fails and recovers the released claim", async () => {
+  test("serializes OS-backed locks without renaming or deleting a successor pathname", async () => {
     await withFixture("minimal-plan", async (planDir) => {
+      const lockPath = join(planDir, ".muse-review.lock");
+      const originalRename = fs.rename;
       const originalRm = fs.rm;
+      const destructiveLockOperations: string[] = [];
+      const originalOpen = fs.open;
+      let openCount = 0;
+      let expectedAttempt = 2;
+      let attemptGate = Promise.withResolvers<void>();
+      spyOn(fs, "open").mockImplementation((async (path: PathLike, flags: string | number, mode?: number) => {
+        const handle = await originalOpen(path, flags, mode);
+        if (String(path).endsWith("/.muse-review.lock") && ++openCount >= expectedAttempt) attemptGate.resolve();
+        return handle;
+      }) as typeof fs.open);
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        if (String(from) === lockPath || String(to) === lockPath) destructiveLockOperations.push("rename");
+        return originalRename(from, to);
+      });
       spyOn(fs, "rm").mockImplementation(async (path, options) => {
-        if (String(path).endsWith(".muse-review.lock")) throw Object.assign(new Error("release denied"), { code: "EACCES" });
+        if (String(path) === lockPath) destructiveLockOperations.push("remove");
         return originalRm(path, options);
       });
 
-      const handoff = await approvePlan(planDir, "tester");
-      expect(handoff.status).toBe("approved");
-      mock.restore();
-      expect((await readReviewState(planDir)).status).toBe("approved");
+      const first = await acquirePlanLock(planDir);
+      let secondAcquired = false;
+      const secondPending = acquirePlanLock(planDir).then((lock) => {
+        secondAcquired = true;
+        return lock;
+      });
+      await attemptGate.promise;
+      expect(secondAcquired).toBe(false);
+      await first.release();
+      const second = await secondPending;
+      await first.release();
 
-      const revised = await updateReviewState(planDir, { answers: { afterReleaseFailure: "saved" } });
-      expect(revised.answers.afterReleaseFailure).toBe("saved");
-      await expect(lstat(join(planDir, ".muse-review.lock"))).rejects.toThrow();
+      let thirdAcquired = false;
+      expectedAttempt = openCount + 1;
+      attemptGate = Promise.withResolvers<void>();
+      const thirdPending = acquirePlanLock(planDir).then((lock) => {
+        thirdAcquired = true;
+        return lock;
+      });
+      await attemptGate.promise;
+      expect(thirdAcquired).toBe(false);
+      await second.release();
+      const third = await thirdPending;
+      await third.release();
+
+      expect((await lstat(lockPath)).isFile()).toBe(true);
+      expect(destructiveLockOperations).toEqual([]);
     });
   });
 
-  test("never follows a replacement claim symlink while releasing", async () => {
+  test("rejects a symlinked lock path without touching its target", async () => {
     await withFixture("minimal-plan", async (planDir) => {
-      const lock = await acquirePlanLock(planDir);
-      const externalDir = await mkdtemp(join(tmpdir(), "ve-ip-external-claim-"));
-      const external = join(externalDir, "owner.json");
+      const externalDir = await mkdtemp(join(tmpdir(), "ve-ip-external-lock-"));
+      const external = join(externalDir, "owner");
+      const lockPath = join(planDir, ".muse-review.lock");
       try {
         await writeFile(external, "operator-owned\n");
-        await rm(lock.claimPath);
-        await fs.symlink(external, lock.claimPath);
+        await fs.symlink(external, lockPath);
 
-        await lock.release();
-
+        await expect(acquirePlanLock(planDir)).rejects.toThrow();
         expect(await readFile(external, "utf8")).toBe("operator-owned\n");
+        expect(await readlink(lockPath)).toBe(external);
       } finally {
         await rm(externalDir, { recursive: true, force: true });
       }
     });
   });
-  test("uses nonce ownership across paused owners, successors, and a third writer", async () => {
+
+  test("recovers the OS lock when its owning process exits", async () => {
     await withFixture("minimal-plan", async (planDir) => {
-      const lockPath = join(planDir, ".muse-review.lock");
-      const first = await acquirePlanLock(planDir);
-      await fs.utimes(first.claimPath, new Date(0), new Date(0));
-      const originalReadlink = fs.readlink;
-      let watchedNonce = first.nonce;
-      let signalContention: () => void = () => undefined;
-      let contention = new Promise<void>((resolve) => {
-        signalContention = resolve;
+      const owner = Bun.spawn([process.execPath, join(repoRoot, "tests", "helpers", "review-lock-owner.ts"), planDir], {
+        cwd: repoRoot,
+        stdout: "pipe",
       });
-      spyOn(fs, "readlink").mockImplementation((async (path: PathLike) => {
-        const target = await originalReadlink(path);
-        if (String(path) === lockPath && String(target).includes(watchedNonce)) signalContention();
-        return target;
-      }) as typeof fs.readlink);
+      const ready = await owner.stdout.getReader().read();
+      expect(new TextDecoder().decode(ready.value)).toContain("ready");
+      owner.kill();
+      await owner.exited;
 
-      const secondPending = acquirePlanLock(planDir);
-      await contention;
-      await first.release();
-      const second = await secondPending;
-      await first.release();
-      expect(await readlink(lockPath)).toContain(second.nonce);
-
-      watchedNonce = second.nonce;
-      contention = new Promise<void>((resolve) => {
-        signalContention = resolve;
-      });
-      const thirdPending = acquirePlanLock(planDir);
-      await contention;
-      await first.release();
-      expect(await readlink(lockPath)).toContain(second.nonce);
-      await second.release();
-      const third = await thirdPending;
-      expect(await readlink(lockPath)).toContain(third.nonce);
-      await third.release();
-    });
-  });
-
-  test("does not let a paused release delete a successor lock generation", async () => {
-    await withFixture("minimal-plan", async (planDir) => {
-      const lockPath = join(planDir, ".muse-review.lock");
-      const claimsDir = join(planDir, ".muse-review-locks");
-      const first = await acquirePlanLock(planDir);
-      const successorNonce = "123e4567-e89b-42d3-a456-426614174001";
-      const successorTarget = join(".muse-review-locks", `${successorNonce}.json`);
-      await writeFile(join(claimsDir, `${successorNonce}.json`), `${JSON.stringify({
-        nonce: successorNonce,
-        pid: process.pid,
-        createdAt: Date.now(),
-      })}\n`);
-      const originalRename = fs.rename;
-      let continueRemoval: () => void = () => undefined;
-      const removalPaused = new Promise<void>((resolve) => {
-        continueRemoval = resolve;
-      });
-      let signalPaused: () => void = () => undefined;
-      const paused = new Promise<void>((resolve) => {
-        signalPaused = resolve;
-      });
-      spyOn(fs, "rename").mockImplementation(async (from, to) => {
-        const result = await originalRename(from, to);
-        if (String(from) === lockPath) {
-          await fs.symlink(successorTarget, lockPath);
-          signalPaused();
-          await removalPaused;
-        }
-        return result;
-      });
-
-      const releasing = first.release();
-      await paused;
-      continueRemoval();
-      await releasing;
-
-      expect(await readlink(lockPath)).toBe(successorTarget);
-      mock.restore();
-      await rm(lockPath, { force: true });
-      await rm(join(claimsDir, `${successorNonce}.json`), { force: true });
-    });
-  });
-
-  test("does not let paused stale eviction delete a successor lock generation", async () => {
-    await withFixture("minimal-plan", async (planDir) => {
-      const claimsDir = join(planDir, ".muse-review-locks");
-      const staleTarget = join(".muse-review-locks", `${canonicalId}.json`);
-      const lockPath = join(planDir, ".muse-review.lock");
-      const successorNonce = "123e4567-e89b-42d3-a456-426614174001";
-      const successorTarget = join(".muse-review-locks", `${successorNonce}.json`);
-      await fs.mkdir(claimsDir);
-      await writeFile(join(planDir, staleTarget), `${JSON.stringify({ nonce: canonicalId, pid: 2_147_483_647, createdAt: 0 })}\n`);
-      await fs.utimes(join(planDir, staleTarget), new Date(0), new Date(0));
-      await writeFile(join(planDir, successorTarget), `${JSON.stringify({
-        nonce: successorNonce,
-        pid: process.pid,
-        createdAt: Date.now(),
-      })}\n`);
-      await fs.symlink(staleTarget, lockPath);
-      const originalRename = fs.rename;
-      const originalRm = fs.rm;
-      let continueRemoval: () => void = () => undefined;
-      const removalPaused = new Promise<void>((resolve) => {
-        continueRemoval = resolve;
-      });
-      let signalPaused: () => void = () => undefined;
-      const paused = new Promise<void>((resolve) => {
-        signalPaused = resolve;
-      });
-      let signalRemoved: () => void = () => undefined;
-      const removed = new Promise<void>((resolve) => {
-        signalRemoved = resolve;
-      });
-      spyOn(fs, "rename").mockImplementation(async (from, to) => {
-        const result = await originalRename(from, to);
-        if (String(from) === lockPath) {
-          await fs.symlink(successorTarget, lockPath);
-          signalPaused();
-          await removalPaused;
-        }
-        return result;
-      });
-      spyOn(fs, "rm").mockImplementation(async (path, options) => {
-        const result = await originalRm(path, options);
-        if (String(path).includes(".quarantine")) signalRemoved();
-        return result;
-      });
-
-      const pending = acquirePlanLock(planDir);
-      await paused;
-      continueRemoval();
-      await removed;
-
-      expect(await readlink(lockPath)).toBe(successorTarget);
-      mock.restore();
-      await rm(lockPath, { force: true });
-      await rm(join(planDir, successorTarget), { force: true });
-      const lock = await pending;
-      await lock.release();
-    });
-  });
-
-  test("does not let paused stale eviction delete a successor guard generation", async () => {
-    await withFixture("minimal-plan", async (planDir) => {
-      const guardPath = join(planDir, ".muse-review.lock.guard");
-      const successorNonce = "123e4567-e89b-42d3-a456-426614174001";
-      await fs.mkdir(guardPath);
-      await writeFile(join(guardPath, "owner.json"), `${JSON.stringify({
-        nonce: canonicalId,
-        pid: 2_147_483_647,
-        createdAt: 0,
-      })}\n`);
-      await fs.utimes(guardPath, new Date(0), new Date(0));
-      const originalRename = fs.rename;
-      const originalRm = fs.rm;
-      let continueRemoval: () => void = () => undefined;
-      const removalPaused = new Promise<void>((resolve) => {
-        continueRemoval = resolve;
-      });
-      let signalPaused: () => void = () => undefined;
-      const paused = new Promise<void>((resolve) => {
-        signalPaused = resolve;
-      });
-      let signalRemoved: () => void = () => undefined;
-      const removed = new Promise<void>((resolve) => {
-        signalRemoved = resolve;
-      });
-      spyOn(fs, "rename").mockImplementation(async (from, to) => {
-        const result = await originalRename(from, to);
-        if (String(from) === guardPath) {
-          await fs.mkdir(guardPath);
-          await writeFile(join(guardPath, "owner.json"), `${JSON.stringify({
-            nonce: successorNonce,
-            pid: process.pid,
-            createdAt: Date.now(),
-          })}\n`);
-          signalPaused();
-          await removalPaused;
-        }
-        return result;
-      });
-      spyOn(fs, "rm").mockImplementation(async (path, options) => {
-        const result = await originalRm(path, options);
-        if (String(path).includes(".quarantine")) signalRemoved();
-        return result;
-      });
-
-      const pending = acquirePlanLock(planDir);
-      await paused;
-      continueRemoval();
-      await removed;
-
-      expect(JSON.parse(await readFile(join(guardPath, "owner.json"), "utf8")).nonce).toBe(successorNonce);
-      mock.restore();
-      await rm(guardPath, { recursive: true, force: true });
-      const lock = await pending;
-      await lock.release();
-    });
-  });
-
-  test("rejects malformed lock targets without deleting their targets", async () => {
-    const invalidTargets = [
-      "victim.json",
-      "../victim.json",
-      "/tmp/victim.json",
-      ".muse-review-locks/123e4567-e89b-42d3-a456-426614174000.json/extra",
-      `.muse-review-locks/${canonicalId}.txt`,
-      ".muse-review-locks/not-a-generated-id.json",
-    ];
-    for (const target of invalidTargets) {
-      await withFixture("minimal-plan", async (planDir) => {
-        const victim = join(planDir, "victim.json");
-        const lockPath = join(planDir, ".muse-review.lock");
-        await writeFile(victim, "operator-owned\n");
-        await fs.symlink(target, lockPath);
-
-        await expect(acquirePlanLock(planDir)).rejects.toThrow(/Invalid review lock target/);
-        expect(await readlink(lockPath)).toBe(target);
-        expect(await readFile(victim, "utf8")).toBe("operator-owned\n");
-      });
-    }
-  });
-
-  test("reclaims a malformed stale owner through nonce-safe eviction", async () => {
-    await withFixture("minimal-plan", async (planDir) => {
-      const claimsDir = join(planDir, ".muse-review-locks");
-      const target = join(".muse-review-locks", `${canonicalId}.json`);
-      const claimPath = join(planDir, target);
-      const lockPath = join(planDir, ".muse-review.lock");
-      await fs.mkdir(claimsDir, { recursive: true });
-      await writeFile(claimPath, "{truncated");
-      await fs.utimes(claimPath, new Date(0), new Date(0));
-      await fs.symlink(target, lockPath);
-
-      const recovered = await acquirePlanLock(planDir);
-      expect(await readlink(lockPath)).toContain(recovered.nonce);
-      await recovered.release();
+      const successor = await acquirePlanLock(planDir);
+      await successor.release();
+      expect((await lstat(join(planDir, ".muse-review.lock"))).isFile()).toBe(true);
     });
   });
 
@@ -1121,16 +1019,16 @@ Plan: /tmp/plan\\u000dStatus: rejected
         }
 
         const bypass = await post(server, "/api/state", { status: "approved", approvedAt: "fake", reviewer: "attacker" });
-        expect(bypass.ok).toBe(false);
+        expect(bypass.status).toBe(409);
         expect(await bypass.text()).toMatch(/only be set through \/api\/approve/i);
 
         const blocked = await post(server, "/api/approve", { reviewer: "tester" });
-        expect(blocked.ok).toBe(false);
+        expect(blocked.status).toBe(422);
         expect(await blocked.text()).toMatch(/unresolved blocking comments/i);
         await post(server, "/api/comments", { resolveId: "c-durable" });
 
         const required = await post(server, "/api/approve", { reviewer: "tester" });
-        expect(required.ok).toBe(false);
+        expect(required.status).toBe(422);
         expect(await required.text()).toMatch(/runtime|schema/i);
 
         const [stateResponse, racedApproval] = await Promise.all([
@@ -1192,7 +1090,7 @@ Plan: /tmp/plan\\u000dStatus: rejected
     });
   });
 
-  test("rejects foreign simple requests before every mutating route without changing authority", async () => {
+  test("rejects foreign and null browser origins before simple mutations change authority", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await readReviewState(planDir);
       const pointer = join(planDir, ".muse-review", "current");
@@ -1201,13 +1099,15 @@ Plan: /tmp/plan\\u000dStatus: rejected
       const server = await servePlan(planDir, 0);
       try {
         if (server.port === undefined) throw new Error("Test server did not bind a port");
-        for (const path of ["/api/state", "/api/comments", "/api/approve"]) {
-          const response = await fetch(`http://localhost:${server.port}${path}`, {
-            method: "POST",
-            headers: { origin: "https://foreign.invalid", "content-type": "text/plain" },
-            body: "{}",
-          });
-          expect(response.status).toBe(403);
+        for (const origin of ["https://foreign.invalid", "null"]) {
+          for (const path of ["/api/state", "/api/comments", "/api/approve"]) {
+            const response = await fetch(`http://localhost:${server.port}${path}`, {
+              method: "POST",
+              headers: { origin, "content-type": "text/plain" },
+              body: "{}",
+            });
+            expect(response.status).toBe(403);
+          }
         }
         expect(await readlink(pointer)).toBe(committedPointer);
         expect(await readReviewState(planDir)).toEqual(committedState);
@@ -1217,11 +1117,15 @@ Plan: /tmp/plan\\u000dStatus: rejected
     });
   });
 
-  test("requires JSON media type on every direct mutating API request", async () => {
+  test("supports trusted originless JSON clients and rejects their non-JSON mutations", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const server = await servePlan(planDir, 0);
       try {
         if (server.port === undefined) throw new Error("Test server did not bind a port");
+        const trusted = await post(server, "/api/state", { answers: { localCli: "supported" } });
+        expect(trusted.status).toBe(200);
+        expect((await trusted.json()).answers.localCli).toBe("supported");
+
         for (const path of ["/api/state", "/api/comments", "/api/approve"]) {
           const response = await fetch(`http://localhost:${server.port}${path}`, {
             method: "POST",
@@ -1254,6 +1158,8 @@ Plan: /tmp/plan\\u000dStatus: rejected
           const response = await post(server, "/api/comments", body);
           expect(response.status).toBe(400);
         }
+        const unknownComment = await post(server, "/api/comments", { resolveId: "missing" });
+        expect(unknownComment.status).toBe(404);
         for (const body of [null, [], { unknown: true }, { answers: 42 }, { checklist: { schema: "yes" } }]) {
           const response = await post(server, "/api/state", body);
           expect(response.status).toBe(400);
@@ -1271,62 +1177,6 @@ Plan: /tmp/plan\\u000dStatus: rejected
       } finally {
         server.stop(true);
       }
-    });
-  });
-  test("rejects symlinked claim parents without reading, writing, or deleting external claims", async () => {
-    for (const operation of ["new-claim", "stale-eviction", "release"] as const) {
-      await withFixture("minimal-plan", async (planDir) => {
-        const external = await mkdtemp(join(tmpdir(), "ve-ip-external-claims-"));
-        const claimsDir = join(planDir, ".muse-review-locks");
-        const lockPath = join(planDir, ".muse-review.lock");
-        const externalClaim = join(external, `${canonicalId}.json`);
-        try {
-          if (operation === "release") {
-            const lock = await acquirePlanLock(planDir);
-            await rm(claimsDir, { recursive: true });
-            await writeFile(join(external, `${lock.nonce}.json`), "external-owner\n");
-            await fs.symlink(external, claimsDir);
-            await lock.release();
-            expect(await readFile(join(external, `${lock.nonce}.json`), "utf8")).toBe("external-owner\n");
-            expect(await readlink(lockPath)).toContain(lock.nonce);
-            return;
-          }
-
-          await writeFile(externalClaim, operation === "stale-eviction"
-            ? `${JSON.stringify({ nonce: canonicalId, pid: 2_147_483_647, createdAt: 0 })}\n`
-            : "external-owner\n");
-          await fs.utimes(externalClaim, new Date(0), new Date(0));
-          await fs.symlink(external, claimsDir);
-          if (operation === "stale-eviction") {
-            await fs.symlink(join(".muse-review-locks", `${canonicalId}.json`), lockPath);
-          }
-
-          await expect(acquirePlanLock(planDir)).rejects.toThrow(/plan-local non-symlink directory/i);
-          expect(await readFile(externalClaim, "utf8")).toContain(operation === "stale-eviction" ? canonicalId : "external-owner");
-          if (operation === "stale-eviction") {
-            expect(await readlink(lockPath)).toBe(join(".muse-review-locks", `${canonicalId}.json`));
-          }
-        } finally {
-          await rm(external, { recursive: true, force: true });
-        }
-      });
-    }
-  });
-
-  test("recovers an abandoned stale guard owned by a killed process without debris", async () => {
-    await withFixture("minimal-plan", async (planDir) => {
-      const helper = join(repoRoot, "tests", "helpers", "review-guard-owner.ts");
-      const owner = Bun.spawn([process.execPath, helper, planDir], { stdout: "pipe", stderr: "pipe" });
-      const reader = owner.stdout.getReader();
-      const ready = await reader.read();
-      expect(new TextDecoder().decode(ready.value)).toContain("ready");
-      owner.kill();
-      await owner.exited;
-
-      const successor = await acquirePlanLock(planDir);
-      await successor.release();
-      await expect(lstat(join(planDir, ".muse-review.lock.guard"))).rejects.toThrow();
-      await expect(lstat(join(planDir, ".muse-review.lock"))).rejects.toThrow();
     });
   });
 
@@ -1443,7 +1293,7 @@ Plan: /tmp/plan\\u000dStatus: rejected
     }
   });
 
-  test("detects source mutation during approval and immediately before approved reads", async () => {
+  test("detects source mutation after immutable capture during approval and approved reads", async () => {
     for (const phase of ["approval", "read"] as const) {
       await withFixture("minimal-plan", async (planDir) => {
         if (phase === "read") await approvePlan(planDir, "tester");
@@ -1451,26 +1301,63 @@ Plan: /tmp/plan\\u000dStatus: rejected
         const pointer = join(planDir, ".muse-review", "current");
         const committedTarget = await readlink(pointer);
         const planPath = join(planDir, "plan.mdx");
-        const originalReadFile = fs.readFile;
         const originalWriteFile = fs.writeFile;
-        let planReads = 0;
-        spyOn(fs, "readFile").mockImplementation((async (path: PathLike, options?: unknown) => {
-          const result = await originalReadFile(path, options as never);
-          if (String(path) === planPath && ++planReads === 2) {
-            await originalWriteFile(planPath, `${String(result)}\nRaced source mutation.\n`);
-          }
-          return result;
-        }) as typeof fs.readFile);
+        let mutated = false;
 
         if (phase === "approval") {
+          spyOn(fs, "writeFile").mockImplementation(async (path, data, options) => {
+            const result = await originalWriteFile(path, data, options);
+            if (!mutated && String(path).includes(".staging/agent-handoff.md")) {
+              mutated = true;
+              await originalWriteFile(planPath, `${await readFile(planPath, "utf8")}\nRaced source mutation.\n`);
+            }
+            return result;
+          });
           await expect(approvePlan(planDir, "raced")).rejects.toThrow(/changed during approval/i);
           expect(await readlink(pointer)).toBe(committedTarget);
         } else {
-          await expect(readReviewState(planDir)).rejects.toThrow(/identity changed/i);
+          const originalOpen = fs.open;
+          spyOn(fs, "open").mockImplementation((async (path: PathLike, flags: string | number, mode?: number) => {
+            if (!mutated && String(path).includes(".muse-review/bundles/") && String(path).endsWith("/plan-state.json")) {
+              mutated = true;
+              await originalWriteFile(planPath, `${await readFile(planPath, "utf8")}\nRaced source mutation.\n`);
+            }
+            return originalOpen(path, flags, mode);
+          }) as typeof fs.open);
+          await expect(readReviewState(planDir)).rejects.toThrow(/changed|identity/i);
         }
         mock.restore();
       });
     }
+  });
+
+  test("restores the exact prior approval when postcommit source verification fails", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const original = await approvePlan(planDir, "first");
+      const store = join(planDir, ".muse-review");
+      const pointer = join(store, "current");
+      const committedTarget = await readlink(pointer);
+      const priorBundle = join(store, committedTarget);
+      const files = ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"];
+      const committedBytes = await Promise.all(files.map((file) => readFile(join(priorBundle, file))));
+      const planPath = join(planDir, "plan.mdx");
+      const originalRename = fs.rename;
+      let mutated = false;
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        const result = await originalRename(from, to);
+        if (!mutated && String(to) === pointer) {
+          mutated = true;
+          await writeFile(planPath, `${await readFile(planPath, "utf8")}\nPostcommit mutation.\n`);
+        }
+        return result;
+      });
+
+      await expect(approvePlan(planDir, "second")).rejects.toThrow(/changed during approval/i);
+
+      expect(await readlink(pointer)).toBe(committedTarget);
+      expect(await Promise.all(files.map((file) => readFile(join(priorBundle, file))))).toEqual(committedBytes);
+      expect(JSON.parse(await readFile(join(priorBundle, "agent-handoff.json"), "utf8"))).toEqual(original);
+    });
   });
 
   test("quarantines invalid approved authority until needs-revision recovery commits", async () => {
@@ -1501,7 +1388,7 @@ Plan: /tmp/plan\\u000dStatus: rejected
       const committedTarget = await readlink(pointer);
       await writeFile(join(planDir, "visual-explainer.json"), JSON.stringify({ slug: "" }));
 
-      await expect(approvePlan(planDir, "tester")).rejects.toThrow(/planSlug.*nonblank/i);
+      await expect(approvePlan(planDir, "tester")).rejects.toThrow(/manifest|slug/i);
       expect(await readlink(pointer)).toBe(committedTarget);
     });
   });
@@ -1523,7 +1410,30 @@ Plan: /tmp/plan\\u000dStatus: rejected
         return originalOpen(path, flags, mode);
       }) as typeof fs.open);
 
-      await expect(readReviewState(planDir)).rejects.toThrow(/changed while it was being read/i);
+      await expect(readReviewState(planDir)).rejects.toThrow(/changed|rebound/i);
+    });
+  });
+
+  test("rejects pathname replacement of the current bundle directory generation", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const bundle = await currentBundlePath(planDir);
+      const replacement = `${bundle}.replacement`;
+      const displaced = `${bundle}.displaced`;
+      await cp(bundle, replacement, { recursive: true });
+      const originalOpen = fs.open;
+      let swapped = false;
+      spyOn(fs, "open").mockImplementation((async (path, flags, mode) => {
+        const handle = await originalOpen(path, flags, mode);
+        if (!swapped && String(path).endsWith("/comments.json") && String(path).startsWith(bundle)) {
+          swapped = true;
+          await fs.rename(bundle, displaced);
+          await fs.rename(replacement, bundle);
+        }
+        return handle;
+      }) as typeof fs.open);
+
+      await expect(readReviewState(planDir)).rejects.toThrow(/generation|rebound|changed|stable regular/i);
     });
   });
 
@@ -1560,7 +1470,6 @@ Plan: /tmp/plan\\u000dStatus: rejected
         const commentsPath = join(planDir, "comments.json");
         const jsonPath = join(planDir, "agent-handoff.json");
         const markdownPath = join(planDir, "agent-handoff.md");
-        const targetPath = join(planDir, "operator-handoff.json");
         const originalState = Buffer.from(`${JSON.stringify({
           status: "in_review",
           answers: {},
@@ -1569,8 +1478,7 @@ Plan: /tmp/plan\\u000dStatus: rejected
         }, null, 2)}\n`);
         await writeFile(statePath, originalState);
         await writeFile(commentsPath, "[]\n");
-        await writeFile(targetPath, "operator-owned\n");
-        await fs.symlink("operator-handoff.json", jsonPath);
+        await writeFile(jsonPath, "operator-owned\n");
         const originalRename = fs.rename;
         spyOn(fs, "rename").mockImplementation(async (from, to) => {
           if (String(to) === join(planDir, failedFile)) throw new Error(`fault at ${failedFile}`);
@@ -1580,7 +1488,7 @@ Plan: /tmp/plan\\u000dStatus: rejected
         await expect(readReviewState(planDir)).rejects.toThrow(`fault at ${failedFile}`);
         expect(await readFile(statePath)).toEqual(originalState);
         expect(await readFile(commentsPath, "utf8")).toBe("[]\n");
-        expect(await readlink(jsonPath)).toBe("operator-handoff.json");
+        expect(await readFile(jsonPath, "utf8")).toBe("operator-owned\n");
         expect(await Bun.file(markdownPath).exists()).toBe(false);
         mock.restore();
       });

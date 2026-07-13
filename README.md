@@ -245,6 +245,10 @@ The browser page supports:
 - light/dark theme toggle,
 - static export for sharing without the local bridge.
 
+The review bridge binds to loopback and exposes a trusted originless local API for CLI clients. Originless mutations are intentional, but they must use `Content-Type: application/json`. Browser mutations that send `Origin` must match the bridge's exact loopback origin; foreign origins and opaque `Origin: null` requests are rejected. This is not a strict same-origin policy because trusted originless local clients remain supported by design.
+
+Review mutations and approval publication are atomic against concurrent live Muse processes: an OS-backed file lock serializes writers, and one pointer replacement publishes a complete state/handoff generation. This is a live-process atomicity guarantee, not crash durability. Muse does not `fsync` files or directories, so power loss or an OS crash may still lose the latest filesystem writes; the next operation revalidates the surviving generation before using it.
+
 ## Component library fixture
 
 Use the checked-in style-guide fixture when you want to see the whole component system at once:

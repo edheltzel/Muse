@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { type MdxBlock, type ParsedPlanSource, type VisualPlanManifest, validateBlocks } from "./schema";
 
 export interface LoadedPlanFolder {
@@ -7,6 +7,12 @@ export interface LoadedPlanFolder {
   manifest: VisualPlanManifest;
   plan: ParsedPlanSource;
   canvas?: ParsedPlanSource;
+}
+
+export interface PlanFolderSources {
+  plan: string;
+  canvas?: string;
+  manifest?: string;
 }
 
 export function parseFrontmatter(source: string): { frontmatter: Record<string, string>; body: string } {
@@ -17,7 +23,7 @@ export function parseFrontmatter(source: string): { frontmatter: Record<string, 
   const frontmatter: Record<string, string> = {};
   for (const line of raw.split(/\r?\n/)) {
     const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (match) frontmatter[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
+    if (match) frontmatter[match[1]] = match[2].replace(/^["']|["']$/g, "");
   }
   return { frontmatter, body: source.slice(end + 5).replace(/^\n/, "") };
 }
@@ -35,7 +41,7 @@ function parseAttrs(raw: string): Record<string, string | boolean | number> {
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     } else if (value.startsWith("{") && value.endsWith("}")) {
-      value = value.slice(1, -1).trim().replace(/^['"]|['"]$/g, "");
+      value = value.slice(1, -1).trim().replace(/^["']|["']$/g, "");
     }
     if (/^-?\d+(?:\.\d+)?$/.test(value)) props[key] = Number(value);
     else if (value === "true" || value === "false") props[key] = value === "true";
@@ -71,38 +77,85 @@ export function parseMdxSource(source: string): ParsedPlanSource {
   return { frontmatter, blocks, raw: source };
 }
 
+function singleLine(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function confinedEntry(rootDir: string, entry: string): boolean {
+  if (isAbsolute(entry) || /^[A-Za-z]:[\\/]/.test(entry) || entry.startsWith("\\\\") || entry.includes("\0") || entry.replaceAll("\\", "/").split("/").includes("..")) return false;
+  const root = resolve(rootDir);
+  const path = resolve(root, entry);
+  const fromRoot = relative(root, path);
+  return fromRoot.length > 0 && !fromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(fromRoot);
+}
+
+function parseManifest(rootDir: string, plan: ParsedPlanSource, source?: string): VisualPlanManifest {
+  let value: Record<string, unknown>;
+  if (source === undefined) {
+    value = {
+      kind: plan.frontmatter.kind ?? "plan",
+      slug: plan.frontmatter.slug ?? basename(rootDir),
+      title: plan.frontmatter.title ?? plan.frontmatter.slug ?? basename(rootDir),
+      createdAt: new Date().toISOString(),
+      source: [],
+      entry: "plan.mdx",
+      dist: "dist",
+      localOnly: true,
+    };
+  } else {
+    const parsed = JSON.parse(source) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Visual plan manifest must be an object");
+    value = parsed as Record<string, unknown>;
+    const allowed: Record<string, true> = {
+      kind: true,
+      slug: true,
+      title: true,
+      createdAt: true,
+      source: true,
+      entry: true,
+      dist: true,
+      localOnly: true,
+    };
+    const unknown = Object.keys(value).filter((key) => !allowed[key]);
+    if (unknown.length) throw new Error(`Visual plan manifest contains unknown field '${unknown[0]}'`);
+  }
+
+  const errors: string[] = [];
+  if (value.kind !== "plan" && value.kind !== "recap" && value.kind !== "styleguide") errors.push("kind must be plan, recap, or styleguide");
+  if (!singleLine(value.slug)) errors.push("slug must be a nonblank single-line string");
+  if (!singleLine(value.title)) errors.push("title must be a nonblank single-line string");
+  if (!singleLine(value.createdAt) || !Number.isFinite(Date.parse(value.createdAt))) errors.push("createdAt must be a valid timestamp");
+  if (!Array.isArray(value.source) || value.source.some((entry) => typeof entry !== "string")) errors.push("source must be a string array");
+  if (!singleLine(value.entry) || !confinedEntry(rootDir, value.entry)) errors.push("entry must be a relative path confined beneath the plan root");
+  if (!singleLine(value.dist)) errors.push("dist must be a nonblank single-line string");
+  if (value.localOnly !== true) errors.push("localOnly must be true");
+  if (errors.length) throw new Error(`Invalid visual plan manifest:\n${errors.join("\n")}`);
+  return value as unknown as VisualPlanManifest;
+}
+
+export function loadPlanFolderFromSources(rootDir: string, sources: PlanFolderSources): LoadedPlanFolder {
+  const plan = parseMdxSource(sources.plan);
+  const canvas = sources.canvas === undefined ? undefined : parseMdxSource(sources.canvas);
+  const manifest = parseManifest(rootDir, plan, sources.manifest);
+  const errors = validateBlocks([...plan.blocks, ...(canvas?.blocks ?? [])]);
+  if (errors.length) throw new Error(`Invalid plan source:\n${errors.join("\n")}`);
+  return { rootDir, manifest, plan, canvas };
+}
+
 async function readOptionalFile(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, "utf8");
   } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      return undefined;
-    }
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return undefined;
     throw error;
   }
 }
 
 export async function loadPlanFolder(rootDir: string): Promise<LoadedPlanFolder> {
-  const planPath = join(rootDir, "plan.mdx");
-  const plan = parseMdxSource(await readFile(planPath, "utf8"));
-  const canvasPath = join(rootDir, "canvas.mdx");
-  const canvasSource = await readOptionalFile(canvasPath);
-  const canvas = canvasSource !== undefined ? parseMdxSource(canvasSource) : undefined;
-  const manifestPath = join(rootDir, "visual-explainer.json");
-  const manifestSource = await readOptionalFile(manifestPath);
-  const manifestFromFile = manifestSource !== undefined ? JSON.parse(manifestSource) : {};
-  const slug = String(manifestFromFile.slug ?? plan.frontmatter.slug ?? basename(rootDir));
-  const manifest: VisualPlanManifest = {
-    kind: manifestFromFile.kind ?? plan.frontmatter.kind ?? "plan",
-    slug,
-    title: manifestFromFile.title ?? plan.frontmatter.title ?? slug,
-    createdAt: manifestFromFile.createdAt ?? new Date().toISOString(),
-    source: Array.isArray(manifestFromFile.source) ? manifestFromFile.source : [],
-    entry: manifestFromFile.entry ?? "plan.mdx",
-    dist: manifestFromFile.dist ?? "dist",
-    localOnly: true,
-  };
-  const errors = validateBlocks([...plan.blocks, ...(canvas?.blocks ?? [])]);
-  if (errors.length) throw new Error(`Invalid plan source:\n${errors.join("\n")}`);
-  return { rootDir, manifest, plan, canvas };
+  const [plan, canvas, manifest] = await Promise.all([
+    readFile(join(rootDir, "plan.mdx"), "utf8"),
+    readOptionalFile(join(rootDir, "canvas.mdx")),
+    readOptionalFile(join(rootDir, "visual-explainer.json")),
+  ]);
+  return loadPlanFolderFromSources(rootDir, { plan, canvas, manifest });
 }

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { renderPlanFolder } from "./render";
-import { addComment, approvePlan, readComments, readPublishedArtifact, readReviewState, resolveComment, updateReviewState } from "./state-store";
+import { addComment, approvePlan, readComments, readPublishedArtifact, readReviewState, resolveComment, ReviewOperationError, updateReviewState } from "./state-store";
 import { validateReviewStatePatch } from "./schema";
 
 async function json(request: Request): Promise<unknown> {
@@ -95,7 +95,7 @@ export async function servePlan(planDir: string, port = 7374) {
           if (body && typeof body === "object" && !Array.isArray(body)) {
             const candidate = body as Record<string, unknown>;
             if (candidate.status === "approved" || "approvedAt" in candidate || "reviewer" in candidate || "approvalDigest" in candidate) {
-              throw new Response("Approval status and metadata can only be set through /api/approve", { status: 400 });
+              throw new Response("Approval status and metadata can only be set through /api/approve", { status: 409 });
             }
           }
           const errors = validateReviewStatePatch(body);
@@ -127,6 +127,10 @@ export async function servePlan(planDir: string, port = 7374) {
         return new Response("Not found", { status: 404 });
       } catch (error) {
         if (error instanceof Response) return error;
+        if (error instanceof ReviewOperationError) {
+          const status = error.failure === "not_found" ? 404 : 422;
+          return new Response(error.message, { status });
+        }
         return new Response(error instanceof Error ? error.message : String(error), { status: 500 });
       }
     },
