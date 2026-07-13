@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { constants, type BigIntStats } from "node:fs";
+import { lstat, mkdir, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile, type FileHandle } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { generateAgentHandoff, formatAgentHandoffMarkdown } from "./handoff";
 import { type LoadedPlanFolder, loadPlanFolder } from "./mdx-loader";
@@ -35,31 +35,85 @@ interface BundleReference {
   path: string;
 }
 
-function storePath(planDir: string): string {
-  return join(planDir, STORE_DIR);
+interface OpenBundleMember {
+  file: BundleFile;
+  handle: FileHandle;
+  before: BigIntStats;
 }
 
-function currentPath(planDir: string): string {
-  return join(storePath(planDir), CURRENT_LINK);
+
+async function resolveStoreDirectory(planDir: string, create: boolean): Promise<string> {
+  const path = join(planDir, STORE_DIR);
+  if (create) {
+    try {
+      await mkdir(path);
+    } catch (error) {
+      if (!(typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST")) throw error;
+    }
+  }
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error(`Review store must be a plan-local non-symlink directory at ${path}`);
+  }
+  const [planRoot, storeRoot] = await Promise.all([realpath(planDir), realpath(path)]);
+  if (storeRoot !== resolve(planRoot, STORE_DIR)) {
+    throw new Error(`Review store escapes the plan directory at ${path}`);
+  }
+  return path;
 }
 
-async function resolveCurrentBundle(planDir: string): Promise<BundleReference> {
-  const target = await readlink(currentPath(planDir));
+async function resolveBundlesDirectory(planDir: string, create: boolean): Promise<string> {
+  const store = await resolveStoreDirectory(planDir, create);
+  const path = join(store, "bundles");
+  if (create) {
+    try {
+      await mkdir(path);
+    } catch (error) {
+      if (!(typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST")) throw error;
+    }
+  }
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error(`Review bundles root must be a plan-local non-symlink directory at ${path}`);
+  }
+  const [storeRoot, bundlesRoot] = await Promise.all([realpath(store), realpath(path)]);
+  if (bundlesRoot !== resolve(storeRoot, "bundles")) {
+    throw new Error(`Review bundles root escapes the review store at ${path}`);
+  }
+  return path;
+}
+
+async function resolveBundleReferenceFromLink(planDir: string, linkPath: string): Promise<BundleReference> {
+  const store = await resolveStoreDirectory(planDir, false);
+  const bundles = await resolveBundlesDirectory(planDir, false);
+  const target = await readlink(linkPath);
   const match = target.match(/^bundles\/([0-9a-f-]+)$/);
   if (!match || !UUID_PATTERN.test(match[1])) {
     throw new Error(`Invalid current review bundle target '${target}'`);
   }
-  const path = join(storePath(planDir), target);
+  const path = join(bundles, match[1]);
   const metadata = await lstat(path);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+  if (!metadata.isDirectory() || metadata.isSymbolicLink() || resolve(store, target) !== path) {
     throw new Error(`Current review bundle is not a regular directory at ${path}`);
   }
   return { id: match[1], path };
 }
 
+async function resolveCurrentBundle(planDir: string): Promise<BundleReference> {
+  const store = await resolveStoreDirectory(planDir, false);
+  return resolveBundleReferenceFromLink(planDir, join(store, CURRENT_LINK));
+}
+
 async function resolveCurrentBundleIfPresent(planDir: string): Promise<BundleReference | undefined> {
+  let store;
   try {
-    await lstat(currentPath(planDir));
+    store = await resolveStoreDirectory(planDir, false);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    await lstat(join(store, CURRENT_LINK));
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return undefined;
     throw error;
@@ -163,7 +217,7 @@ async function computeApprovalDigest(
 }
 
 
-async function readBundleMember(root: string, file: BundleFile): Promise<string> {
+async function openBundleMember(root: string, file: BundleFile): Promise<OpenBundleMember> {
   let handle;
   try {
     handle = await open(join(root, file), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -173,13 +227,12 @@ async function readBundleMember(root: string, file: BundleFile): Promise<string>
     }
     throw error;
   }
-  try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile()) throw new Error(`Review bundle member '${file}' must be a regular non-symlink file`);
-    return await handle.readFile("utf8");
-  } finally {
+  const before = await handle.stat({ bigint: true });
+  if (!before.isFile()) {
     await handle.close();
+    throw new Error(`Review bundle member '${file}' must be a regular non-symlink file`);
   }
+  return { file, handle, before };
 }
 
 async function readSnapshotFrom(root: string, allowMissingCore = false): Promise<ReviewSnapshot> {
@@ -213,8 +266,24 @@ async function readSnapshotFrom(root: string, allowMissingCore = false): Promise
   if (handoffCount === 1) throw new Error(`Review bundle must contain a coherent handoff pair at ${root}`);
 
   const contents: Partial<Record<BundleFile, string>> = {};
-  for (const entry of entriesBefore) {
-    contents[entry as BundleFile] = await readBundleMember(root, entry as BundleFile);
+  const members: OpenBundleMember[] = [];
+  try {
+    for (const entry of entriesBefore) members.push(await openBundleMember(root, entry as BundleFile));
+    for (const member of members) contents[member.file] = await member.handle.readFile("utf8");
+    for (const member of members) {
+      const after = await member.handle.stat({ bigint: true });
+      if (
+        after.dev !== member.before.dev
+        || after.ino !== member.before.ino
+        || after.size !== member.before.size
+        || after.mtimeNs !== member.before.mtimeNs
+        || after.ctimeNs !== member.before.ctimeNs
+      ) {
+        throw new Error(`Review bundle member '${member.file}' changed while it was being read at ${root}`);
+      }
+    }
+  } finally {
+    await Promise.allSettled(members.map((member) => member.handle.close()));
   }
   const [entriesAfter, directoryAfter] = await Promise.all([
     readdir(root).then((entries) => entries.sort()),
@@ -289,8 +358,8 @@ async function publishSnapshot(
   snapshot: ReviewSnapshot,
   beforeCommit?: () => Promise<void>,
 ): Promise<BundleReference> {
-  const store = storePath(planDir);
-  const bundles = join(store, "bundles");
+  const store = await resolveStoreDirectory(planDir, true);
+  const bundles = await resolveBundlesDirectory(planDir, true);
   const identity = randomUUID();
   const staging = join(bundles, `${identity}.staging`);
   const bundle = join(bundles, identity);
@@ -307,7 +376,7 @@ async function publishSnapshot(
     bundlePublished = true;
     await symlink(join("bundles", identity), pointer);
     await beforeCommit?.();
-    await rename(pointer, currentPath(planDir));
+    await rename(pointer, join(store, CURRENT_LINK));
   } catch (error) {
     await Promise.allSettled([
       rm(staging, { recursive: true, force: true }),
@@ -317,6 +386,35 @@ async function publishSnapshot(
     throw error;
   }
   return { id: identity, path: bundle };
+}
+
+async function publishInvalidation(
+  planDir: string,
+  current: BundleReference,
+  snapshot: ReviewSnapshot,
+): Promise<BundleReference> {
+  const store = await resolveStoreDirectory(planDir, false);
+  const invalidatedPointer = join(store, `current.${randomUUID()}.invalid`);
+  await rename(join(store, CURRENT_LINK), invalidatedPointer);
+  const quarantined = await resolveBundleReferenceFromLink(planDir, invalidatedPointer);
+  if (quarantined.id !== current.id) {
+    throw new Error("Current approval generation changed while being invalidated");
+  }
+  const published = await publishSnapshot(planDir, snapshot);
+  try {
+    await rm(invalidatedPointer, { force: true });
+  } catch (error) {
+    console.warn(`Invalidation committed; deferred pointer cleanup: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return published;
+}
+
+async function recoverInvalidatedBundle(planDir: string): Promise<BundleReference | undefined> {
+  const store = await resolveStoreDirectory(planDir, false);
+  const invalidated = (await readdir(store)).filter((entry) => entry.startsWith("current.") && entry.endsWith(".invalid"));
+  if (invalidated.length === 0) return undefined;
+  if (invalidated.length !== 1) throw new Error("Review store has multiple invalidated approval generations");
+  return resolveBundleReferenceFromLink(planDir, join(store, invalidated[0]));
 }
 
 interface CompatibilitySnapshot {
@@ -400,7 +498,8 @@ async function ensureStore(
   plan: LoadedPlanFolder,
   normalize = true,
 ): Promise<BundleReference> {
-  const store = storePath(planDir);
+  const store = await resolveStoreDirectory(planDir, true);
+  await resolveBundlesDirectory(planDir, true);
   const marker = join(store, INITIALIZED_MARKER);
   const initialized = await pathExists(marker);
 
@@ -408,27 +507,25 @@ async function ensureStore(
     if (!(await compatibilityLinksReady(planDir))) {
       throw new Error("Initialized review store has missing or replaced compatibility paths");
     }
-    if (!currentReference) throw new Error("Initialized review store is missing its current bundle");
-    if (!normalize) return currentReference;
-    const current = await readSnapshotFrom(currentReference.path);
-    const normalized = await normalizeSnapshot(planDir, current, plan);
-    return isDeepStrictEqual(normalized, current)
-      ? currentReference
+    const recoveringInvalidation = currentReference === undefined;
+    const authoritative = currentReference ?? await recoverInvalidatedBundle(planDir);
+    if (!authoritative) throw new Error("Initialized review store is missing its current bundle");
+    if (!normalize) return authoritative;
+    const current = await readSnapshotFrom(authoritative.path);
+    let normalized = await normalizeSnapshot(planDir, current, plan);
+    if (recoveringInvalidation && normalized.state.status === "approved") {
+      const { approvedAt: _approvedAt, reviewer: _reviewer, approvalDigest: _approvalDigest, ...rest } = normalized.state;
+      normalized = { state: { ...rest, status: "needs_revision" }, comments: normalized.comments };
+    }
+    if (isDeepStrictEqual(normalized, current)) return authoritative;
+    if (recoveringInvalidation) return publishSnapshot(planDir, normalized);
+    return current.state.status === "approved" && normalized.state.status !== "approved"
+      ? publishInvalidation(planDir, authoritative, normalized)
       : publishSnapshot(planDir, normalized);
   }
 
-  await mkdir(join(store, "bundles"), { recursive: true });
-  let publishedReference = currentReference;
-  if (!publishedReference) {
-    const legacy = await readSnapshotFrom(planDir, true);
-    publishedReference = await publishSnapshot(planDir, await normalizeSnapshot(planDir, legacy, plan));
-  } else {
-    const current = await readSnapshotFrom(publishedReference.path);
-    const normalized = await normalizeSnapshot(planDir, current, plan);
-    if (!isDeepStrictEqual(normalized, current)) {
-      publishedReference = await publishSnapshot(planDir, normalized);
-    }
-  }
+  const legacy = await readSnapshotFrom(planDir, true);
+  const publishedReference = await publishSnapshot(planDir, await normalizeSnapshot(planDir, legacy, plan));
   if (!(await compatibilityLinksReady(planDir))) await installCompatibilityLinks(planDir);
   const temporaryMarker = join(store, `${INITIALIZED_MARKER}.${randomUUID()}.tmp`);
   await writeFile(temporaryMarker, "v1\n");
@@ -437,8 +534,8 @@ async function ensureStore(
 }
 
 async function cleanupAbandonedPublications(planDir: string, currentReference: BundleReference): Promise<void> {
-  const store = storePath(planDir);
-  const bundles = join(store, "bundles");
+  const store = await resolveStoreDirectory(planDir, false);
+  const bundles = await resolveBundlesDirectory(planDir, false);
   const bundleEntries = await readdir(bundles).catch((error) => {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return [];
     throw error;
@@ -452,7 +549,7 @@ async function cleanupAbandonedPublications(planDir: string, currentReference: B
       .filter((entry) => entry.endsWith(".staging") || entry !== currentReference.id)
       .map((entry) => rm(join(bundles, entry), { recursive: true, force: true })),
     ...storeEntries
-      .filter((entry) => (entry.startsWith("current.") && entry.endsWith(".pointer")) || (entry.startsWith(`${INITIALIZED_MARKER}.`) && entry.endsWith(".tmp")))
+      .filter((entry) => (entry.startsWith("current.") && (entry.endsWith(".pointer") || entry.endsWith(".invalid"))) || (entry.startsWith(`${INITIALIZED_MARKER}.`) && entry.endsWith(".tmp")))
       .map((entry) => rm(join(store, entry), { force: true })),
   ]);
 }
@@ -638,12 +735,16 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
       handoffJson,
       handoffMarkdown,
     }, verifyIdentity);
-    await cleanupAbandonedPublications(planDir, published);
+    try {
+      await cleanupAbandonedPublications(planDir, published);
+    } catch (error) {
+      console.warn(`Approval committed; deferred review-store cleanup: ${error instanceof Error ? error.message : String(error)}`);
+    }
     try {
       await verifyIdentity();
     } catch (error) {
       const { approvedAt: _approvedAt, reviewer: _reviewer, approvalDigest: _approvalDigest, ...rest } = state;
-      await publishSnapshot(planDir, {
+      await publishInvalidation(planDir, published, {
         state: { ...rest, status: "needs_revision" },
         comments: snapshot.comments,
       });

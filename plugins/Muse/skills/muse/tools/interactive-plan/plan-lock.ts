@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readlink, realpath, rm, rmdir, stat, symlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, readlink, realpath, rename, rm, rmdir, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 const LOCK_NAME = ".muse-review.lock";
@@ -83,6 +84,63 @@ async function removeClaim(planDir: string, nonce: string): Promise<void> {
   await rm(await resolveClaimPath(planDir, nonce), { force: true });
 }
 
+async function markClaimReleased(planDir: string, claim: OwnerClaim): Promise<boolean> {
+  const claimPath = await resolveClaimPath(planDir, claim.nonce);
+  let handle;
+  try {
+    handle = await open(claimPath, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (error) {
+    if (isMissing(error) || (typeof error === "object" && error !== null && "code" in error && error.code === "ELOOP")) return false;
+    throw error;
+  }
+  try {
+    const [descriptor, pathname] = await Promise.all([
+      handle.stat({ bigint: true }),
+      lstat(claimPath, { bigint: true }),
+    ]);
+    if (
+      !descriptor.isFile()
+      || !pathname.isFile()
+      || pathname.isSymbolicLink()
+      || descriptor.dev !== pathname.dev
+      || descriptor.ino !== pathname.ino
+    ) {
+      return false;
+    }
+    const current = parseOwner(await handle.readFile("utf8"));
+    if (current?.nonce !== claim.nonce) return false;
+    const content = Buffer.from(`${JSON.stringify({ ...claim, releasedAt: Date.now() })}\n`);
+    await handle.truncate(0);
+    let offset = 0;
+    while (offset < content.length) {
+      const { bytesWritten } = await handle.write(content, offset, content.length - offset, offset);
+      if (bytesWritten === 0) throw new Error(`Could not mark review claim released at ${claimPath}`);
+      offset += bytesWritten;
+    }
+    return true;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function removeOwnedSymlink(path: string, expectedTarget: string): Promise<boolean> {
+  const before = await lstat(path, { bigint: true }).catch((error) => {
+    if (isMissing(error)) return undefined;
+    throw error;
+  });
+  if (!before) return false;
+  if (!before.isSymbolicLink()) throw new Error(`Review lock must be a symlink at ${path}`);
+  const quarantine = `${path}.${randomUUID()}.quarantine`;
+  await rename(path, quarantine);
+  const after = await lstat(quarantine, { bigint: true });
+  const target = await readlink(quarantine);
+  if (after.dev !== before.dev || after.ino !== before.ino || target !== expectedTarget) {
+    throw new Error(`Review lock generation changed while being quarantined at ${path}`);
+  }
+  await rm(quarantine, { force: true });
+  return true;
+}
+
 async function readGuardOwner(guardPath: string): Promise<OwnerClaim | undefined> {
   try {
     return parseOwner(await readFile(join(guardPath, GUARD_OWNER), "utf8"));
@@ -93,7 +151,7 @@ async function readGuardOwner(guardPath: string): Promise<OwnerClaim | undefined
 }
 
 async function evictStaleGuard(guardPath: string): Promise<void> {
-  const metadata = await lstat(guardPath).catch((error) => {
+  const metadata = await lstat(guardPath, { bigint: true }).catch((error) => {
     if (isMissing(error)) return undefined;
     throw error;
   });
@@ -102,10 +160,20 @@ async function evictStaleGuard(guardPath: string): Promise<void> {
     throw new Error(`Review lock guard must be a non-symlink directory at ${guardPath}`);
   }
   const owner = await readGuardOwner(guardPath);
-  if (isOwnerAlive(owner) || Date.now() - metadata.mtimeMs <= STALE_CLAIM_MS) return;
-  const currentOwner = await readGuardOwner(guardPath);
-  if (currentOwner?.nonce !== owner?.nonce || isOwnerAlive(currentOwner)) return;
-  await rm(guardPath, { recursive: true });
+  if (isOwnerAlive(owner) || BigInt(Date.now()) * 1_000_000n - metadata.mtimeNs <= BigInt(STALE_CLAIM_MS) * 1_000_000n) return;
+  const quarantine = `${guardPath}.${owner?.nonce ?? randomUUID()}.quarantine`;
+  await rename(guardPath, quarantine);
+  const quarantinedMetadata = await lstat(quarantine, { bigint: true });
+  const quarantinedOwner = await readGuardOwner(quarantine);
+  if (
+    quarantinedMetadata.dev !== metadata.dev
+    || quarantinedMetadata.ino !== metadata.ino
+    || quarantinedOwner?.nonce !== owner?.nonce
+    || isOwnerAlive(quarantinedOwner)
+  ) {
+    throw new Error(`Review lock guard generation changed while being quarantined at ${guardPath}`);
+  }
+  await rm(quarantine, { recursive: true });
 }
 
 async function acquireGuard(planDir: string): Promise<() => Promise<void>> {
@@ -168,8 +236,7 @@ async function evictStaleClaim(planDir: string): Promise<void> {
   }
   if (current.claim?.releasedAt === undefined && Date.now() - timestamp.mtimeMs <= STALE_CLAIM_MS) return;
   if (await readlink(lockPath).catch(() => undefined) !== current.target) return;
-  await rm(lockPath, { force: true });
-  await removeClaim(planDir, current.nonce);
+  if (await removeOwnedSymlink(lockPath, current.target)) await removeClaim(planDir, current.nonce);
 }
 
 export async function acquirePlanLock(planDir: string): Promise<PlanLock> {
@@ -200,14 +267,14 @@ export async function acquirePlanLock(planDir: string): Promise<PlanLock> {
           claimPath,
           async release() {
             try {
-              await writeFile(await resolveClaimPath(planDir, nonce), `${JSON.stringify({ ...claim, releasedAt: Date.now() })}\n`);
+              if (!(await markClaimReleased(planDir, claim))) return;
             } catch {
               return;
             }
             let releaseOwnershipGuard: (() => Promise<void>) | undefined;
             try {
               releaseOwnershipGuard = await acquireGuard(planDir);
-              if (await readlink(lockPath).catch(() => undefined) === target) await rm(lockPath, { force: true });
+              await removeOwnedSymlink(lockPath, target);
               if (await readlink(lockPath).catch(() => undefined) !== target) await removeClaim(planDir, nonce);
             } catch {
               // A released plan-local claim is recoverable by the next lock taker.

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { renderPlanFolder } from "./render";
 import { addComment, approvePlan, readComments, readPublishedArtifact, readReviewState, resolveComment, updateReviewState } from "./state-store";
+import { validateReviewStatePatch } from "./schema";
 
 async function json(request: Request): Promise<unknown> {
   try {
@@ -14,6 +15,54 @@ async function json(request: Request): Promise<unknown> {
 function jsonObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Response("JSON body must be an object", { status: 400 });
   return value as Record<string, unknown>;
+}
+
+function requireMutationRequest(request: Request, url: URL, serverPort: number): void {
+  const origin = request.headers.get("origin");
+  if (origin !== null) {
+    let parsedOrigin: URL | undefined;
+    try {
+      parsedOrigin = new URL(origin);
+    } catch {
+      // Invalid and opaque origins are both foreign to the local review server.
+    }
+    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+    if (!parsedOrigin || origin === "null" || parsedOrigin.origin !== url.origin || !loopback || Number(url.port) !== serverPort) {
+      throw new Response("Foreign mutation origin", { status: 403 });
+    }
+  }
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
+    throw new Response("Mutating API requests require application/json", { status: 415 });
+  }
+}
+
+function validateCommentBody(body: Record<string, unknown>): {
+  mode: "resolve";
+  resolveId: string;
+} | {
+  mode: "add";
+  blockId: string;
+  anchor?: string;
+  body: string;
+} {
+  const keys = Object.keys(body);
+  if ("resolveId" in body) {
+    if (keys.length !== 1 || typeof body.resolveId !== "string" || body.resolveId.trim().length === 0) {
+      throw new Response("Comment resolution body must be exactly { resolveId: nonblank string }", { status: 400 });
+    }
+    return { mode: "resolve", resolveId: body.resolveId };
+  }
+  if (
+    keys.some((key) => key !== "blockId" && key !== "anchor" && key !== "body")
+    || typeof body.blockId !== "string"
+    || body.blockId.trim().length === 0
+    || typeof body.body !== "string"
+    || body.body.trim().length === 0
+    || (body.anchor !== undefined && (typeof body.anchor !== "string" || body.anchor.trim().length === 0))
+  ) {
+    throw new Response("Comment body must be exactly { blockId: nonblank string, body: nonblank string, anchor?: nonblank string }", { status: 400 });
+  }
+  return { mode: "add", blockId: body.blockId, anchor: body.anchor as string | undefined, body: body.body };
 }
 
 export async function servePlan(planDir: string, port = 7374) {
@@ -38,14 +87,29 @@ export async function servePlan(planDir: string, port = 7374) {
         if (url.pathname === "/agent-handoff.md") {
           return new Response(await readPublishedArtifact(planDir, "agent-handoff.md"), { headers: { "content-type": "text/markdown; charset=utf-8" } });
         }
+        if (url.pathname.startsWith("/api/") && request.method === "POST") {
+          requireMutationRequest(request, url, server.port ?? port);
+        }
         if (url.pathname === "/api/state" && request.method === "POST") {
-          return Response.json(await updateReviewState(planDir, await json(request)));
+          const body = await json(request);
+          if (body && typeof body === "object" && !Array.isArray(body)) {
+            const candidate = body as Record<string, unknown>;
+            if (candidate.status === "approved" || "approvedAt" in candidate || "reviewer" in candidate || "approvalDigest" in candidate) {
+              throw new Response("Approval status and metadata can only be set through /api/approve", { status: 400 });
+            }
+          }
+          const errors = validateReviewStatePatch(body);
+          if (errors.length) throw new Response(errors.join("\n"), { status: 400 });
+          return Response.json(await updateReviewState(planDir, body));
         }
         if (url.pathname === "/api/comments" && request.method === "POST") {
-          const body = jsonObject(await json(request));
-          if (body.resolveId) return Response.json(await resolveComment(planDir, String(body.resolveId)));
-          if (!body.blockId || !body.body) return new Response("blockId and body are required", { status: 400 });
-          return Response.json(await addComment(planDir, { blockId: String(body.blockId), anchor: body.anchor ? String(body.anchor) : undefined, body: String(body.body) }));
+          const body = validateCommentBody(jsonObject(await json(request)));
+          if (body.mode === "resolve") return Response.json(await resolveComment(planDir, body.resolveId));
+          return Response.json(await addComment(planDir, {
+            blockId: body.blockId,
+            anchor: body.anchor,
+            body: body.body,
+          }));
         }
         if (url.pathname === "/api/approve" && request.method === "POST") {
           const body = jsonObject(await json(request));

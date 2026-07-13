@@ -3,6 +3,15 @@ import { type AgentHandoff, type ReviewState, assertApprovedHandoffReady } from 
 import { type LoadedPlanFolder } from "./mdx-loader";
 import { splitLines } from "./shared";
 
+const MARKDOWN_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/g;
+
+function encodeMarkdownText(value: unknown): string {
+  return String(value ?? "").replace(
+    MARKDOWN_CONTROL_CHARACTER,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 function collectBlockLines(plan: LoadedPlanFolder): Record<string, string[]> {
   const linesByType: Record<string, string[]> = {};
   for (const block of plan.plan.blocks) {
@@ -32,6 +41,8 @@ export function generateAgentHandoff(plan: LoadedPlanFolder, state: ReviewState)
 }
 
 export function formatAgentHandoffMarkdown(handoff: AgentHandoff): string {
-  const list = (items: string[]) => items.length ? items.map((item) => `- ${item}`).join("\n") : "- None recorded";
-  return `# Agent Handoff: ${handoff.planSlug}\n\nStatus: ${handoff.status}\nApproved: ${handoff.approvedAt}\nPlan: ${handoff.planPath}\n\n## Approved Scope\n\n${list(handoff.approvedScope)}\n\n## Decisions\n\n${list(handoff.decisions)}\n\n## Answers\n\n\`\`\`json\n${JSON.stringify(handoff.answers, null, 2)}\n\`\`\`\n\n## Verification\n\n${list(handoff.verification)}\n\n## Open Risks\n\n${list(handoff.openRisks)}\n`;
+  const list = (items: string[]) => items.length
+    ? items.map((item) => `- ${encodeMarkdownText(item)}`).join("\n")
+    : "- None recorded";
+  return `# Agent Handoff: ${encodeMarkdownText(handoff.planSlug)}\n\nStatus: ${encodeMarkdownText(handoff.status)}\nApproved: ${encodeMarkdownText(handoff.approvedAt)}\nPlan: ${encodeMarkdownText(handoff.planPath)}\n\n## Approved Scope\n\n${list(handoff.approvedScope)}\n\n## Decisions\n\n${list(handoff.decisions)}\n\n## Answers\n\n\`\`\`json\n${JSON.stringify(handoff.answers, null, 2)}\n\`\`\`\n\n## Verification\n\n${list(handoff.verification)}\n\n## Open Risks\n\n${list(handoff.openRisks)}\n`;
 }

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Cross-origin simple POST fixture</title>
+</head>
+<body>
+  <output id="result">pending</output>
+  <script>
+    const target = new URLSearchParams(location.search).get("target");
+    if (!target) throw new Error("Missing target query parameter");
+    fetch(target, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "{}",
+    }).then(
+      (response) => document.querySelector("#result").textContent = `unexpected response ${response.status}`,
+      (error) => document.querySelector("#result").textContent = `blocked: ${error.name}`,
+    );
+  </script>
+</body>
+</html>
