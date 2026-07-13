@@ -157,14 +157,25 @@ export const staticPlanClientScript = baseClientScript;
 
 export const interactivePlanClientScript = baseClientScript + `
 (() => {
-  const postJson = async (url, body) => {
+  const postJson = async (url, body, idempotencyKey) => {
+    const headers = { "Content-Type": "application/json" };
+    if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
     if (!response.ok) throw new Error(await response.text());
     return response.json();
+  };
+  const pendingCommentIds = new Map();
+  const postComment = async (comment) => {
+    const requestKey = JSON.stringify([comment.blockId, comment.anchor || null, comment.body]);
+    const id = pendingCommentIds.get(requestKey) || "c-" + crypto.randomUUID();
+    pendingCommentIds.set(requestKey, id);
+    const result = await postJson("/api/comments", { id, ...comment }, id);
+    pendingCommentIds.delete(requestKey);
+    return result;
   };
   const writeApprovalOutput = (getText) => {
     const output = document.querySelector("[data-approval-output]");
@@ -184,6 +195,19 @@ export const interactivePlanClientScript = baseClientScript + `
       const group = tab.closest(".ve-ip-tabs");
       group?.querySelectorAll("[role=tabpanel]").forEach((panel) => { panel.hidden = panel.id !== id; });
       group?.querySelectorAll("[role=tab]").forEach((button) => button.setAttribute("aria-selected", String(button === tab)));
+    }
+
+    const commentAnchor = target.closest("[data-comment-anchor]");
+    if (commentAnchor) {
+      const blockId = commentAnchor.getAttribute("data-comment-anchor");
+      const body = prompt("Comment for this section:");
+      if (blockId && body?.trim()) {
+        try {
+          await postComment({ blockId, anchor: blockId, body });
+        } catch (error) {
+          alert("Could not persist comment: " + error.message);
+        }
+      }
     }
 
     if (target.closest("[data-needs-revision]")) {

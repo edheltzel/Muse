@@ -144,7 +144,7 @@ const renderers: Readonly<Record<string, Renderer | undefined>> = {
   ApprovalGate: renderApprovalGate,
   QuestionForm: renderQuestionForm,
   Checklist: renderChecklist,
-  CommentAnchor: (block) => `<span id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}"></span>`,
+  CommentAnchor: (block) => `<button type="button" id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}">Add comment</button>`,
   Callout: (block) => card(block, `ve-ip-callout ve-ip-callout--${escapeHtml(block.props.tone ?? "note")}`),
   Tabs: renderDiffTabs,
   Table: renderTableLike,

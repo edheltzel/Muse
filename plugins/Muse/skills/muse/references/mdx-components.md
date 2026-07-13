@@ -7,7 +7,7 @@ Use these components to make plans visually informative and interactive.
 - `ApprovalGate` — approve/needs-revision controls and handoff generation.
 - `QuestionForm` — reviewer decisions with persisted answers.
 - `Checklist` — review checklist state.
-- `CommentAnchor` — target for anchored feedback.
+- `CommentAnchor` — button target for idempotent, anchored reviewer feedback.
 - `Callout` — decision, warning, note, and risk callouts.
 
 ### Readiness fields

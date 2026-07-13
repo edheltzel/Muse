@@ -81,7 +81,7 @@ function singleLine(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
-function confinedEntry(rootDir: string, entry: string): boolean {
+function confinedRelativePath(rootDir: string, entry: string): boolean {
   if (isAbsolute(entry) || /^[A-Za-z]:[\\/]/.test(entry) || entry.startsWith("\\\\") || entry.includes("\0") || entry.replaceAll("\\", "/").split("/").includes("..")) return false;
   const root = resolve(rootDir);
   const path = resolve(root, entry);
@@ -90,22 +90,21 @@ function confinedEntry(rootDir: string, entry: string): boolean {
 }
 
 function parseManifest(rootDir: string, plan: ParsedPlanSource, source?: string): VisualPlanManifest {
-  let value: Record<string, unknown>;
-  if (source === undefined) {
-    value = {
-      kind: plan.frontmatter.kind ?? "plan",
-      slug: plan.frontmatter.slug ?? basename(rootDir),
-      title: plan.frontmatter.title ?? plan.frontmatter.slug ?? basename(rootDir),
-      createdAt: new Date().toISOString(),
-      source: [],
-      entry: "plan.mdx",
-      dist: "dist",
-      localOnly: true,
-    };
-  } else {
+  const defaults: Record<string, unknown> = {
+    kind: plan.frontmatter.kind ?? "plan",
+    slug: plan.frontmatter.slug ?? basename(rootDir),
+    title: plan.frontmatter.title ?? plan.frontmatter.slug ?? basename(rootDir),
+    createdAt: plan.frontmatter.createdAt ?? "1970-01-01T00:00:00.000Z",
+    source: [],
+    entry: "plan.mdx",
+    dist: "dist",
+    localOnly: true,
+  };
+  let supplied: Record<string, unknown> = {};
+  if (source !== undefined) {
     const parsed = JSON.parse(source) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Visual plan manifest must be an object");
-    value = parsed as Record<string, unknown>;
+    supplied = parsed as Record<string, unknown>;
     const allowed: Record<string, true> = {
       kind: true,
       slug: true,
@@ -116,18 +115,34 @@ function parseManifest(rootDir: string, plan: ParsedPlanSource, source?: string)
       dist: true,
       localOnly: true,
     };
-    const unknown = Object.keys(value).filter((key) => !allowed[key]);
+    const unknown = Object.keys(supplied).filter((key) => !allowed[key]);
     if (unknown.length) throw new Error(`Visual plan manifest contains unknown field '${unknown[0]}'`);
   }
+  const value = { ...defaults, ...supplied };
 
   const errors: string[] = [];
   if (value.kind !== "plan" && value.kind !== "recap" && value.kind !== "styleguide") errors.push("kind must be plan, recap, or styleguide");
   if (!singleLine(value.slug)) errors.push("slug must be a nonblank single-line string");
   if (!singleLine(value.title)) errors.push("title must be a nonblank single-line string");
-  if (!singleLine(value.createdAt) || !Number.isFinite(Date.parse(value.createdAt))) errors.push("createdAt must be a valid timestamp");
-  if (!Array.isArray(value.source) || value.source.some((entry) => typeof entry !== "string")) errors.push("source must be a string array");
-  if (!singleLine(value.entry) || !confinedEntry(rootDir, value.entry)) errors.push("entry must be a relative path confined beneath the plan root");
-  if (!singleLine(value.dist)) errors.push("dist must be a nonblank single-line string");
+  if (
+    !singleLine(value.createdAt)
+    || !Number.isFinite(Date.parse(value.createdAt))
+    || new Date(value.createdAt).toISOString() !== value.createdAt
+  ) {
+    errors.push("createdAt must be a canonical ISO timestamp");
+  }
+  if (
+    !Array.isArray(value.source)
+    || value.source.some((entry) => !singleLine(entry) || !confinedRelativePath(rootDir, entry))
+  ) {
+    errors.push("source must be an array of nonblank single-line relative paths confined beneath the plan root");
+  }
+  if (value.entry !== "plan.mdx" || !confinedRelativePath(rootDir, value.entry)) {
+    errors.push("entry must identify the loaded plan.mdx beneath the plan root");
+  }
+  if (!singleLine(value.dist) || !confinedRelativePath(rootDir, value.dist)) {
+    errors.push("dist must be a nonblank relative path confined beneath the plan root");
+  }
   if (value.localOnly !== true) errors.push("localOnly must be true");
   if (errors.length) throw new Error(`Invalid visual plan manifest:\n${errors.join("\n")}`);
   return value as unknown as VisualPlanManifest;
