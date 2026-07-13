@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import type { PathLike } from "node:fs";
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
@@ -1089,6 +1090,7 @@ describe("interactive plan review state and handoff", () => {
       const first = await acquirePlanLock(planDir);
       await rm(legacyLockPath);
       await writeFile(legacyLockPath, "replacement lock\n");
+      await expect(first.assertOwned()).rejects.toThrow(/lock path generation changed/i);
       const contender = Bun.spawn([
         process.execPath,
         join(repoRoot, "tests", "helpers", "review-lock-owner.ts"),
@@ -1105,6 +1107,119 @@ describe("interactive plan review state and handoff", () => {
       contender.kill();
       await contender.exited;
       expect(await readFile(legacyLockPath, "utf8")).toBe("replacement lock\n");
+    });
+  });
+
+  test("serializes both directions across the exact parent lock protocol", async () => {
+    if (process.platform === "win32") return;
+    await withFixture("minimal-plan", async (planDir) => {
+      const parentHelper = join(repoRoot, "tests", "helpers", "parent-review-process.ts");
+      const currentHelper = join(repoRoot, "tests", "helpers", "review-lock-owner.ts");
+
+      const parentHolder = Bun.spawn([process.execPath, parentHelper, planDir, "--hold"], {
+        cwd: repoRoot,
+        stdout: "pipe",
+      });
+      expect(new TextDecoder().decode((await parentHolder.stdout.getReader().read()).value)).toContain("acquired");
+      const currentContender = Bun.spawn([process.execPath, currentHelper, planDir, "--signal-attempt"], {
+        cwd: repoRoot,
+        stdout: "pipe",
+      });
+      const currentOutput = currentContender.stdout.getReader();
+      const currentAttempt = new TextDecoder().decode((await currentOutput.read()).value);
+      expect(currentAttempt).toContain("attempting");
+      expect(currentAttempt).not.toContain("ready");
+      let currentAcquired = false;
+      const currentReady = currentOutput.read().then((result) => {
+        currentAcquired = true;
+        return result;
+      });
+      // A real delay is required here to prove the OS-level cross-process lock remains blocked.
+      await Bun.sleep(25);
+      expect(currentAcquired).toBe(false);
+      parentHolder.kill();
+      await parentHolder.exited;
+      expect(new TextDecoder().decode((await currentReady).value)).toContain("ready");
+      currentContender.kill();
+      await currentContender.exited;
+
+      const currentHolder = Bun.spawn([process.execPath, currentHelper, planDir], {
+        cwd: repoRoot,
+        stdout: "pipe",
+      });
+      expect(new TextDecoder().decode((await currentHolder.stdout.getReader().read()).value)).toContain("ready");
+      const parentContender = Bun.spawn([process.execPath, parentHelper, planDir, "--signal-attempt"], {
+        cwd: repoRoot,
+        stdout: "pipe",
+      });
+      const parentOutput = parentContender.stdout.getReader();
+      const parentAttempt = new TextDecoder().decode((await parentOutput.read()).value);
+      expect(parentAttempt).toContain("attempting");
+      expect(parentAttempt).not.toContain("acquired");
+      let parentAcquired = false;
+      const parentReady = parentOutput.read().then((result) => {
+        parentAcquired = true;
+        return result;
+      });
+      // A real delay is required here to prove the reverse OS-level lock dependency.
+      await Bun.sleep(25);
+      expect(parentAcquired).toBe(false);
+      currentHolder.kill();
+      await currentHolder.exited;
+      expect(new TextDecoder().decode((await parentReady).value)).toContain("acquired");
+      parentContender.kill();
+      await parentContender.exited;
+    });
+  });
+
+  test("preserves every acknowledged mixed-version write without deadlock", async () => {
+    if (process.platform === "win32") return;
+    await withFixture("minimal-plan", async (planDir) => {
+      const dataPath = join(planDir, "mixed-lock-writes.json");
+      await writeFile(dataPath, "[]\n");
+      const parentHelper = join(repoRoot, "tests", "helpers", "parent-review-process.ts");
+      const currentHelper = join(repoRoot, "tests", "helpers", "review-lock-owner.ts");
+      const expected = Array.from({ length: 24 }, (_, index) => `write-${index}`);
+      const writers = expected.map((key, index) => Bun.spawn([
+        process.execPath,
+        index % 2 === 0 ? parentHelper : currentHelper,
+        planDir,
+        "--write",
+        dataPath,
+        key,
+      ], {
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      }));
+
+      const results = await Promise.all(writers.map(async (writer) => ({
+        exitCode: await writer.exited,
+        output: await new Response(writer.stdout).text(),
+      })));
+      expect(results.map((result) => result.exitCode)).toEqual(expected.map(() => 0));
+      expect(results.every((result) => result.output.includes("acknowledged"))).toBe(true);
+      const persisted = JSON.parse(await readFile(dataPath, "utf8")) as string[];
+      expect(persisted.sort()).toEqual(expected.sort());
+    });
+  });
+
+  test("rejects a legacy lock symlink without touching its target", async () => {
+    if (process.platform === "win32") return;
+    await withFixture("minimal-plan", async (planDir) => {
+      const externalDir = await mkdtemp(join(tmpdir(), "ve-ip-parent-lock-"));
+      const external = join(externalDir, "sentinel");
+      const legacyLockPath = join(planDir, ".muse-review.lock");
+      try {
+        await writeFile(external, "operator-owned\n");
+        await fs.symlink(external, legacyLockPath);
+
+        await expect(acquirePlanLock(planDir)).rejects.toThrow();
+        expect(await readFile(external, "utf8")).toBe("operator-owned\n");
+        expect(await readlink(legacyLockPath)).toBe(external);
+      } finally {
+        await rm(externalDir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -1126,7 +1241,7 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
-  test("recovers the directory lock when its owning process exits", async () => {
+  test("recovers both current and parent lock domains when owners exit", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const owner = Bun.spawn([process.execPath, join(repoRoot, "tests", "helpers", "review-lock-owner.ts"), planDir], {
         cwd: repoRoot,
@@ -1139,6 +1254,23 @@ describe("interactive plan review state and handoff", () => {
 
       const successor = await acquirePlanLock(planDir);
       await successor.release();
+
+      const parentOwner = Bun.spawn([
+        process.execPath,
+        join(repoRoot, "tests", "helpers", "parent-review-process.ts"),
+        planDir,
+        "--hold",
+      ], {
+        cwd: repoRoot,
+        stdout: "pipe",
+      });
+      const parentReady = await parentOwner.stdout.getReader().read();
+      expect(new TextDecoder().decode(parentReady.value)).toContain("acquired");
+      parentOwner.kill();
+      await parentOwner.exited;
+
+      const postParentSuccessor = await acquirePlanLock(planDir);
+      await postParentSuccessor.release();
     });
   });
 
@@ -1161,6 +1293,12 @@ describe("interactive plan review state and handoff", () => {
     expect(source).not.toContain("_get_osfhandle");
     expect(source).not.toContain("msvcrt.dll");
     expect(source.indexOf('"libc.so.6"')).toBeLessThan(source.indexOf('readFile("/proc/self/maps"'));
+    expect(source).toContain("const candidate = await openLegacyLock(root)");
+    expect(source.indexOf("directoryToken = await locking.tryLock(root)")).toBeLessThan(source.indexOf("locking.tryLegacyLock!(candidate)"));
+    const parentSource = await readFile(join(repoRoot, "tests", "helpers", "parent-plan-lock.ts"));
+    expect(createHash("sha256").update(parentSource).digest("hex")).toBe(
+      "5eea7640676468fdd897a8fcb58b02993b566751c81fbaf5670953d135b38bb7",
+    );
   });
 
 

@@ -25,12 +25,20 @@ interface PlanRootBinding {
   descriptor: BigIntStats;
 }
 
+interface LegacyLockBinding {
+  path: string;
+  handle: FileHandle;
+  descriptor: BigIntStats;
+}
+
 interface BackendLock {
   release(): void;
 }
 
 interface LockBackend {
+  kind: "unix" | "windows";
   tryLock(root: PlanRootBinding): Promise<BackendLock | undefined>;
+  tryLegacyLock?(binding: LegacyLockBinding): Promise<BackendLock | undefined>;
 }
 
 let backend: Promise<LockBackend> | undefined;
@@ -73,6 +81,7 @@ async function loadLockBackend(): Promise<LockBackend> {
       },
     });
     return {
+      kind: "windows",
       async tryLock(root) {
         const lockPath = resolve(root.path, LOCK_NAME);
         const path = windowsWideString(lockPath);
@@ -155,11 +164,20 @@ async function loadLockBackend(): Promise<LockBackend> {
     }
   }
   return {
+    kind: "unix",
     async tryLock(root) {
       if (libc.symbols.flock(root.handle.fd, LOCK_EX | LOCK_NB) !== 0) return undefined;
       return {
         release() {
           libc.symbols.flock(root.handle.fd, LOCK_UN);
+        },
+      };
+    },
+    async tryLegacyLock(binding) {
+      if (libc.symbols.flock(binding.handle.fd, LOCK_EX | LOCK_NB) !== 0) return undefined;
+      return {
+        release() {
+          libc.symbols.flock(binding.handle.fd, LOCK_UN);
         },
       };
     },
@@ -211,6 +229,52 @@ async function verifyPlanRoot(root: PlanRootBinding): Promise<void> {
   }
 }
 
+async function openLegacyLock(root: PlanRootBinding): Promise<LegacyLockBinding> {
+  const path = resolve(root.path, LOCK_NAME);
+  const handle = await open(
+    path,
+    constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    0o600,
+  );
+  try {
+    const [descriptor, pathname] = await Promise.all([
+      handle.stat({ bigint: true }),
+      lstat(path, { bigint: true }),
+    ]);
+    if (
+      !descriptor.isFile()
+      || !pathname.isFile()
+      || pathname.isSymbolicLink()
+      || descriptor.dev !== pathname.dev
+      || descriptor.ino !== pathname.ino
+    ) {
+      throw new Error(`Review lock path is not bound to its opened file at ${path}`);
+    }
+    return { path, handle, descriptor };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+async function verifyLegacyLock(binding: LegacyLockBinding): Promise<void> {
+  const [descriptor, pathname] = await Promise.all([
+    binding.handle.stat({ bigint: true }),
+    lstat(binding.path, { bigint: true }),
+  ]);
+  if (
+    !descriptor.isFile()
+    || !pathname.isFile()
+    || pathname.isSymbolicLink()
+    || descriptor.dev !== binding.descriptor.dev
+    || descriptor.ino !== binding.descriptor.ino
+    || pathname.dev !== descriptor.dev
+    || pathname.ino !== descriptor.ino
+  ) {
+    throw new Error(`Review lock path generation changed at ${binding.path}`);
+  }
+}
+
 export interface PlanLock {
   assertOwned(): Promise<void>;
   release(): Promise<void>;
@@ -220,38 +284,69 @@ export async function acquirePlanLock(planDir: string): Promise<PlanLock> {
   const locking = await (backend ??= loadLockBackend());
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const root = await openPlanRoot(planDir);
-    let token: BackendLock | undefined;
+    let directoryToken: BackendLock | undefined;
     try {
-      token = await locking.tryLock(root);
+      directoryToken = await locking.tryLock(root);
     } catch (error) {
       await root.handle.close();
       throw error;
     }
-    if (token !== undefined) {
+    if (directoryToken === undefined) {
+      await root.handle.close();
+      await Bun.sleep(10);
+      continue;
+    }
+
+    let legacyBinding: LegacyLockBinding | undefined;
+    let legacyToken: BackendLock | undefined;
+    try {
+      if (locking.kind === "unix") {
+        for (let legacyAttempt = 0; legacyAttempt < MAX_ATTEMPTS; legacyAttempt += 1) {
+          await verifyPlanRoot(root);
+          const candidate = await openLegacyLock(root);
+          try {
+            legacyToken = await locking.tryLegacyLock!(candidate);
+          } catch (error) {
+            await candidate.handle.close();
+            throw error;
+          }
+          if (legacyToken !== undefined) {
+            legacyBinding = candidate;
+            break;
+          }
+          await candidate.handle.close();
+          await Bun.sleep(10);
+        }
+        if (!legacyBinding || !legacyToken) {
+          throw new Error(`Timed out waiting for legacy review lock at ${resolve(root.path, LOCK_NAME)}`);
+        }
+      }
+
       let released = false;
       const assertOwned = async () => {
         if (released) throw new Error(`Review lock was already released for ${root.path}`);
         await verifyPlanRoot(root);
+        if (legacyBinding) await verifyLegacyLock(legacyBinding);
       };
-      try {
-        await assertOwned();
-        return {
-          assertOwned,
-          async release() {
-            if (released) return;
-            released = true;
-            token.release();
-            await root.handle.close().catch(() => undefined);
-          },
-        };
-      } catch (error) {
-        token.release();
-        await root.handle.close();
-        throw error;
-      }
+      await assertOwned();
+      return {
+        assertOwned,
+        async release() {
+          if (released) return;
+          released = true;
+          legacyToken?.release();
+          await legacyBinding?.handle.close().catch(() => undefined);
+          directoryToken.release();
+          await root.handle.close().catch(() => undefined);
+        },
+      };
+    } catch (error) {
+      legacyToken?.release();
+      await legacyBinding?.handle.close().catch(() => undefined);
+      directoryToken.release();
+      await root.handle.close();
+      throw error;
     }
-    await root.handle.close();
-    await Bun.sleep(10);
   }
   throw new Error(`Timed out waiting for review lock for ${resolve(planDir)}`);
 }

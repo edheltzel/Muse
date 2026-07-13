@@ -1,16 +1,13 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { acquirePlanLock } from "../../plugins/Muse/skills/muse/tools/interactive-plan/plan-lock";
+import { acquirePlanLock } from "./parent-plan-lock";
 
-const planDir = process.argv[2];
+const [planDir, mode = "--hold", dataPath, key] = process.argv.slice(2);
 if (!planDir) throw new Error("plan directory is required");
-const mode = process.argv[3];
 if (mode === "--signal-attempt") console.log("attempting");
 const lock = await acquirePlanLock(planDir);
-console.log("ready");
+console.log("acquired");
 try {
   if (mode === "--write") {
-    const dataPath = process.argv[4];
-    const key = process.argv[5];
     if (!dataPath || !key) throw new Error("data path and key are required for writes");
     const entries = JSON.parse(await readFile(dataPath, "utf8")) as string[];
     entries.push(key);
