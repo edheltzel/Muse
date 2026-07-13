@@ -785,6 +785,7 @@ async function restorePriorPublication(
     } else {
       try {
         await verifyDirectoryBinding(storeBinding);
+        await quarantineCommittedPointer(storeBinding, join(store, CURRENT_LINK), published.pointer, assertOwned);
         await rm(pointer, { force: true });
       } catch {
         // A rebound canonical store is never modified during rollback cleanup.

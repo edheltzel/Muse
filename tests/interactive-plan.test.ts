@@ -2297,8 +2297,8 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
-  test("refuses rollback when the retained prior generation is missing or rebound", async () => {
-    for (const mode of ["missing", "rebound"] as const) {
+  for (const mode of ["missing", "rebound"] as const) {
+    test(`quarantines the rejected approval when the retained prior generation is ${mode}`, async () => {
       mock.restore();
       await withFixture("minimal-plan", async (planDir) => {
         await approvePlan(planDir, "first");
@@ -2306,29 +2306,59 @@ describe("interactive plan review state and handoff", () => {
         const pointer = join(store, "current");
         const priorTarget = await readlink(pointer);
         const priorBundle = join(store, priorTarget);
+        const successorSentinel = join(priorBundle, "external-successor.txt");
         const planPath = join(planDir, "plan.mdx");
         const originalRename = fs.rename;
         let replacementTarget: string | undefined;
+        let replacementPointer: { dev: bigint; ino: bigint } | undefined;
         spyOn(fs, "rename").mockImplementation(async (from, to) => {
           const result = await originalRename(from, to);
           if (replacementTarget === undefined && String(to) === pointer) {
             replacementTarget = await readlink(pointer);
+            const committed = await lstat(pointer, { bigint: true });
+            replacementPointer = { dev: committed.dev, ino: committed.ino };
             await rm(priorBundle, { recursive: true });
-            if (mode === "rebound") await mkdir(priorBundle);
+            if (mode === "rebound") {
+              await mkdir(priorBundle);
+              await writeFile(successorSentinel, "external successor\n");
+            }
             await writeFile(planPath, `${await readFile(planPath, "utf8")}\nPostcommit mutation.\n`);
           }
           return result;
         });
 
-        await expect(approvePlan(planDir, "second")).rejects.toThrow(/prior authority could not be restored/i);
+        let approvalError: unknown;
+        try {
+          await approvePlan(planDir, "second");
+        } catch (error) {
+          approvalError = error;
+        }
 
         mock.restore();
+        expect(approvalError).toBeInstanceOf(AggregateError);
+        const rollbackFailure = approvalError as AggregateError;
+        expect(rollbackFailure.message).toMatch(/prior authority could not be restored/i);
+        expect(rollbackFailure.errors).toHaveLength(2);
+        expect((rollbackFailure.errors[0] as Error).message).toMatch(/changed during approval/i);
         expect(replacementTarget).toBeDefined();
-        expect(await readlink(pointer)).toBe(replacementTarget!);
-        expect(await readlink(pointer)).not.toBe(priorTarget);
+        expect(replacementPointer).toBeDefined();
+        await expect(lstat(pointer)).rejects.toThrow();
+        const quarantined = (await readdir(store))
+          .filter((entry) => entry.startsWith("current.") && entry.endsWith(".invalid"));
+        expect(quarantined).toHaveLength(1);
+        const quarantinedPointer = join(store, quarantined[0]!);
+        expect(await readlink(quarantinedPointer)).toBe(replacementTarget!);
+        const quarantinedIdentity = await lstat(quarantinedPointer, { bigint: true });
+        expect({ dev: quarantinedIdentity.dev, ino: quarantinedIdentity.ino }).toEqual(replacementPointer!);
+        for (const file of ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"]) {
+          await expect(readFile(join(planDir, file))).rejects.toThrow();
+        }
+        if (mode === "rebound") {
+          expect(await readFile(successorSentinel, "utf8")).toBe("external successor\n");
+        }
       });
-    }
-  });
+    });
+  }
 
   test("fails closed when the prior bundle is rebound at rollback commit", async () => {
     await withFixture("minimal-plan", async (planDir) => {
