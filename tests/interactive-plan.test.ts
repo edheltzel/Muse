@@ -1,16 +1,21 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as fs from "node:fs/promises";
-import { chmod, cp, mkdtemp, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import type { PathLike } from "node:fs";
+import { chmod, cp, lstat, mkdtemp, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { formatAgentHandoffMarkdown } from "../plugins/Muse/skills/muse/tools/interactive-plan/handoff.ts";
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
+import { acquirePlanLock } from "../plugins/Muse/skills/muse/tools/interactive-plan/plan-lock.ts";
+import type { AgentHandoff, ReviewState } from "../plugins/Muse/skills/muse/tools/interactive-plan/schema.ts";
 import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 import { servePlan } from "../plugins/Muse/skills/muse/tools/interactive-plan/server.ts";
 import {
   addComment,
   approvePlan,
   readComments,
+  readPublishedArtifact,
   readReviewState,
   resolveComment,
   updateReviewState,
@@ -161,7 +166,7 @@ describe("interactive plan review state and handoff", () => {
     );
   }
 
-  async function post(server: { port: number | undefined }, path: string, body: Record<string, unknown>): Promise<Response> {
+  async function post(server: { port: number | undefined }, path: string, body: unknown): Promise<Response> {
     if (server.port === undefined) throw new Error("Test server did not bind a port");
     return fetch(`http://localhost:${server.port}${path}`, {
       method: "POST",
@@ -175,6 +180,11 @@ describe("interactive plan review state and handoff", () => {
     const bundles = await readdir(join(store, "bundles"));
     const entries = await readdir(store);
     return [...bundles, ...entries].filter((entry) => entry.endsWith(".staging") || entry.endsWith(".pointer") || entry.includes(".restore"));
+  }
+
+  async function currentBundlePath(planDir: string): Promise<string> {
+    const store = join(planDir, ".muse-review");
+    return join(store, await readlink(join(store, "current")));
   }
 
   test("persists review values and treats durable open comments as authoritative", async () => {
@@ -302,6 +312,251 @@ describe("interactive plan review state and handoff", () => {
     }
   });
 
+  test("rejects a semantically contradictory legacy handoff pair", async () => {
+    let approvedState: ReviewState | undefined;
+    let handoffJson = "";
+    let handoffMarkdown = "";
+    await withFixture("minimal-plan", async (sourceDir) => {
+      await approvePlan(sourceDir, "source-reviewer");
+      approvedState = await readReviewState(sourceDir);
+      handoffJson = await readFile(join(sourceDir, "agent-handoff.json"), "utf8");
+      handoffMarkdown = `${await readFile(join(sourceDir, "agent-handoff.md"), "utf8")}\nContradictory trailing approval claim.\n`;
+    });
+
+    await withFixture("minimal-plan", async (planDir) => {
+      await writeFile(join(planDir, "plan-state.json"), JSON.stringify(approvedState));
+      await writeFile(join(planDir, "agent-handoff.json"), handoffJson);
+      await writeFile(join(planDir, "agent-handoff.md"), handoffMarkdown);
+      expect((await readReviewState(planDir)).status).toBe("needs_revision");
+      await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow();
+      await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow();
+    });
+  });
+
+  test("restores every legacy root path when compatibility installation fails", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const legacyState = `${JSON.stringify({ status: "in_review", answers: {}, checklist: {}, unresolvedCommentIds: [] }, null, 2)}\n`;
+      const legacyComments = "[]\n";
+      await writeFile(join(planDir, "plan-state.json"), legacyState);
+      await writeFile(join(planDir, "comments.json"), legacyComments);
+      const originalRename = fs.rename;
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        if (String(to) === join(planDir, "comments.json")) throw new Error("compatibility rename failure");
+        return originalRename(from, to);
+      });
+
+      await expect(readReviewState(planDir)).rejects.toThrow("compatibility rename failure");
+      expect((await lstat(join(planDir, "plan-state.json"))).isFile()).toBe(true);
+      expect((await lstat(join(planDir, "comments.json"))).isFile()).toBe(true);
+      expect(await readFile(join(planDir, "plan-state.json"), "utf8")).toBe(legacyState);
+      expect(await readFile(join(planDir, "comments.json"), "utf8")).toBe(legacyComments);
+    });
+  });
+
+  test("repairs a missing current handoff half before serving state or artifacts", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const current = join(planDir, ".muse-review", "current");
+      await rm(join(planDir, ".muse-review", await readlink(current), "agent-handoff.md"));
+
+      expect((await readReviewState(planDir)).status).toBe("needs_revision");
+      await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow();
+      await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow();
+      expect(await Bun.file(join(planDir, "agent-handoff.json")).exists()).toBe(false);
+      expect(await Bun.file(join(planDir, "agent-handoff.md")).exists()).toBe(false);
+    });
+  });
+
+  test("removes a completed bundle left unreachable by failed pointer publication", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      await readReviewState(planDir);
+      const store = join(planDir, ".muse-review");
+      const pointer = join(store, "current");
+      const currentIdentity = (await readlink(pointer)).split("/").at(-1);
+      if (!currentIdentity) throw new Error("Current bundle identity is missing");
+      const originalRename = fs.rename;
+      const originalRm = fs.rm;
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        if (String(to) === pointer) throw new Error("pointer failure");
+        return originalRename(from, to);
+      });
+      spyOn(fs, "rm").mockImplementation(async (path, options) => {
+        if (String(path).includes("/bundles/") && !String(path).endsWith(".staging") && !String(path).endsWith(String(currentIdentity))) {
+          throw new Error("bundle cleanup failure");
+        }
+        return originalRm(path, options);
+      });
+
+      await expect(approvePlan(planDir, "faulted")).rejects.toThrow("pointer failure");
+      expect((await readdir(join(store, "bundles"))).length).toBeGreaterThan(1);
+      mock.restore();
+      await readReviewState(planDir);
+      expect(await readdir(join(store, "bundles"))).toEqual([currentIdentity]);
+    });
+  });
+
+  test("fails closed when initialized pointers, core files, or compatibility paths are replaced", async () => {
+    for (const missingFile of ["plan-state.json", "comments.json"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await approvePlan(planDir, "tester");
+        await rm(join(await currentBundlePath(planDir), missingFile));
+        await expect(readReviewState(planDir)).rejects.toThrow(new RegExp(`missing ${missingFile}`, "i"));
+      });
+    }
+
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const current = join(planDir, ".muse-review", "current");
+      await rm(current);
+      await expect(readReviewState(planDir)).rejects.toThrow();
+      expect((await readdir(join(planDir, ".muse-review", "bundles"))).length).toBeGreaterThan(0);
+    });
+
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const current = join(planDir, ".muse-review", "current");
+      await rm(current);
+      await fs.symlink(join("bundles", "missing-generation"), current);
+      await expect(readReviewState(planDir)).rejects.toThrow();
+    });
+
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const compatibilityState = join(planDir, "plan-state.json");
+      await rm(compatibilityState);
+      await writeFile(compatibilityState, "operator-owned regular file\n");
+      await expect(updateReviewState(planDir, { answers: { unsafe: "change" } })).rejects.toThrow(/compatibility paths/i);
+      expect(await readFile(compatibilityState, "utf8")).toBe("operator-owned regular file\n");
+    });
+  });
+
+  test("enforces unique collision-safe comment identities and unambiguous resolution", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const first = await addComment(planDir, { blockId: "summary", body: "First" });
+      const second = await addComment(planDir, { blockId: "summary", body: "Second" });
+      expect(first.id).not.toBe(second.id);
+      expect(first.id).toMatch(/^c-[0-9a-f-]+$/);
+      await expect(addComment(planDir, { id: first.id, blockId: "summary", body: "Duplicate" })).rejects.toThrow(/Duplicate comment id/);
+      await expect(resolveComment(planDir, "missing-comment")).rejects.toThrow(/Unknown or ambiguous comment id/);
+    });
+
+    await withFixture("minimal-plan", async (planDir) => {
+      const duplicate = {
+        id: "same-id",
+        blockId: "summary",
+        body: "Duplicate",
+        status: "open",
+        createdAt: "2026-07-01T12:00:00.000Z",
+      };
+      await writeFile(join(planDir, "comments.json"), JSON.stringify([duplicate, duplicate]));
+      await expect(readComments(planDir)).rejects.toThrow(/unique nonblank ids/i);
+    });
+  });
+
+  test("validates canonical handoff plan identity and nested runtime fields", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const handoff = await approvePlan(planDir, "tester");
+      const state = await readReviewState(planDir);
+      const malformed = { ...handoff, approvedScope: [42] } as unknown as AgentHandoff;
+      const bundle = await currentBundlePath(planDir);
+      await writeFile(join(bundle, "agent-handoff.json"), `${JSON.stringify(malformed, null, 2)}\n`);
+      await writeFile(join(bundle, "agent-handoff.md"), formatAgentHandoffMarkdown(malformed));
+      expect((await readReviewState(planDir)).status).toBe("needs_revision");
+      await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow();
+      expect(state.status).toBe("approved");
+    });
+
+    let sourceState: ReviewState | undefined;
+    let wrongIdentity: AgentHandoff | undefined;
+    await withFixture("minimal-plan", async (sourceDir) => {
+      const handoff = await approvePlan(sourceDir, "tester");
+      sourceState = await readReviewState(sourceDir);
+      wrongIdentity = { ...handoff, planSlug: "wrong-plan" };
+    });
+    await withFixture("minimal-plan", async (planDir) => {
+      await writeFile(join(planDir, "plan-state.json"), JSON.stringify(sourceState));
+      await writeFile(join(planDir, "agent-handoff.json"), JSON.stringify(wrongIdentity));
+      await writeFile(join(planDir, "agent-handoff.md"), formatAgentHandoffMarkdown(wrongIdentity!));
+      expect((await readReviewState(planDir)).status).toBe("needs_revision");
+    });
+  });
+
+  test("returns committed approval when lock removal fails and recovers the released claim", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const originalRm = fs.rm;
+      spyOn(fs, "rm").mockImplementation(async (path, options) => {
+        if (String(path).endsWith(".muse-review.lock")) throw Object.assign(new Error("release denied"), { code: "EACCES" });
+        return originalRm(path, options);
+      });
+
+      const handoff = await approvePlan(planDir, "tester");
+      expect(handoff.status).toBe("approved");
+      mock.restore();
+      expect((await readReviewState(planDir)).status).toBe("approved");
+
+      const revised = await updateReviewState(planDir, { answers: { afterReleaseFailure: "saved" } });
+      expect(revised.answers.afterReleaseFailure).toBe("saved");
+      await expect(lstat(join(planDir, ".muse-review.lock"))).rejects.toThrow();
+    });
+  });
+  test("uses nonce ownership across paused owners, successors, and a third writer", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const lockPath = join(planDir, ".muse-review.lock");
+      const first = await acquirePlanLock(planDir);
+      await fs.utimes(first.claimPath, new Date(0), new Date(0));
+      const originalReadlink = fs.readlink;
+      let watchedNonce = first.nonce;
+      let signalContention: () => void = () => undefined;
+      let contention = new Promise<void>((resolve) => {
+        signalContention = resolve;
+      });
+      spyOn(fs, "readlink").mockImplementation((async (path: PathLike) => {
+        const target = await originalReadlink(path);
+        if (String(path) === lockPath && String(target).includes(watchedNonce)) signalContention();
+        return target;
+      }) as typeof fs.readlink);
+
+      const secondPending = acquirePlanLock(planDir);
+      await contention;
+      await first.release();
+      const second = await secondPending;
+      await first.release();
+      expect(await readlink(lockPath)).toContain(second.nonce);
+
+      watchedNonce = second.nonce;
+      contention = new Promise<void>((resolve) => {
+        signalContention = resolve;
+      });
+      const thirdPending = acquirePlanLock(planDir);
+      await contention;
+      await first.release();
+      expect(await readlink(lockPath)).toContain(second.nonce);
+      await second.release();
+      const third = await thirdPending;
+      expect(await readlink(lockPath)).toContain(third.nonce);
+      await third.release();
+    });
+  });
+
+  test("reclaims a malformed stale owner through nonce-safe eviction", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const claimsDir = join(planDir, ".muse-review-locks");
+      const target = join(".muse-review-locks", "malformed.json");
+      const claimPath = join(planDir, target);
+      const lockPath = join(planDir, ".muse-review.lock");
+      await fs.mkdir(claimsDir, { recursive: true });
+      await writeFile(claimPath, "{truncated");
+      await fs.utimes(claimPath, new Date(0), new Date(0));
+      await fs.symlink(target, lockPath);
+
+      const recovered = await acquirePlanLock(planDir);
+      expect(await readlink(lockPath)).toContain(recovered.nonce);
+      await recovered.release();
+    });
+  });
+
+
   test("uses one pointer commit and cleans write, partial-write, rename, cleanup, and permission faults", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const first = await approvePlan(planDir, "first-reviewer");
@@ -374,6 +629,27 @@ describe("interactive plan review state and handoff", () => {
       }]));
       const server = await servePlan(planDir, 0);
       try {
+        const malformedPatches = [
+          [],
+          "string-patch",
+          null,
+          42,
+          { answers: ["array-smuggled"] },
+          { answers: "string-smuggled" },
+          { answers: null },
+          { answers: { runtime: [42] } },
+          { checklist: [false, true] },
+          { checklist: "string-smuggled" },
+          { checklist: null },
+          { checklist: { schema: "true" } },
+        ];
+        for (const malformedPatch of malformedPatches) {
+          const response = await post(server, "/api/state", malformedPatch);
+          expect(response.ok).toBe(false);
+          expect(await response.text()).toMatch(/patch|object|answers|checklist/i);
+        }
+        expect(await readReviewState(planDir)).toMatchObject({ status: "draft", answers: {}, checklist: {} });
+
         const bypass = await post(server, "/api/state", { status: "approved", approvedAt: "fake", reviewer: "attacker" });
         expect(bypass.ok).toBe(false);
         expect(await bypass.text()).toMatch(/only be set through \/api\/approve/i);

@@ -1,12 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { generateAgentHandoff, formatAgentHandoffMarkdown } from "./handoff";
 import { loadPlanFolder } from "./mdx-loader";
-import { createDefaultReviewState, type CommentThread, type ReviewState, validateApprovalReadiness, validateReviewState } from "./schema";
+import { acquirePlanLock } from "./plan-lock";
+import {
+  type AgentHandoff,
+  createDefaultReviewState,
+  type CommentThread,
+  type ReviewState,
+  validateAgentHandoff,
+  validateApprovalReadiness,
+  validateReviewState,
+  validateReviewStatePatch,
+} from "./schema";
 
 const STORE_DIR = ".muse-review";
 const CURRENT_LINK = "current";
+const INITIALIZED_MARKER = "initialized";
 const BUNDLE_FILES = ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"] as const;
 type BundleFile = (typeof BUNDLE_FILES)[number];
 
@@ -17,12 +28,28 @@ interface ReviewSnapshot {
   handoffMarkdown?: string;
 }
 
+interface PlanIdentity {
+  slug: string;
+  path: string;
+}
+
 function storePath(planDir: string): string {
   return join(planDir, STORE_DIR);
 }
 
 function currentPath(planDir: string): string {
   return join(storePath(planDir), CURRENT_LINK);
+}
+
+async function resolveCurrentBundle(planDir: string): Promise<string> {
+  const target = await readlink(currentPath(planDir));
+  const segments = target.split("/");
+  if (segments.length !== 2 || segments[0] !== "bundles" || !segments[1]) {
+    throw new Error(`Invalid current review bundle target '${target}'`);
+  }
+  const bundle = join(storePath(planDir), target);
+  if (!(await lstat(bundle)).isDirectory()) throw new Error(`Current review bundle is not a directory at ${bundle}`);
+  return bundle;
 }
 
 export function statePath(planDir: string): string {
@@ -56,35 +83,50 @@ function parseComments(source: string | undefined): CommentThread[] {
   if (source === undefined) return [];
   const comments = JSON.parse(source) as unknown;
   if (!Array.isArray(comments)) throw new Error("Comments must be an array");
+  const ids = new Set<string>();
   for (const comment of comments) {
     if (
       typeof comment !== "object"
       || comment === null
       || !("id" in comment)
       || typeof comment.id !== "string"
+      || comment.id.trim().length === 0
+      || ids.has(comment.id)
+      || !("blockId" in comment)
+      || typeof comment.blockId !== "string"
+      || !("body" in comment)
+      || typeof comment.body !== "string"
+      || !("createdAt" in comment)
+      || typeof comment.createdAt !== "string"
       || !("status" in comment)
       || (comment.status !== "open" && comment.status !== "resolved")
+      || ("resolvedAt" in comment && comment.resolvedAt !== undefined && typeof comment.resolvedAt !== "string")
     ) {
-      throw new Error("Each comment must have a string id and open or resolved status");
+      throw new Error("Comments must have unique nonblank ids and valid thread fields");
     }
+    ids.add(comment.id);
   }
   return comments as CommentThread[];
 }
 
-async function readSnapshotFrom(root: string): Promise<ReviewSnapshot> {
+async function readSnapshotFrom(root: string, allowMissingCore = false): Promise<ReviewSnapshot> {
   const stateSource = await readOptional(join(root, "plan-state.json"));
+  const commentsSource = await readOptional(join(root, "comments.json"));
+  if (!allowMissingCore && stateSource === undefined) throw new Error(`Review bundle is missing plan-state.json at ${root}`);
+  if (!allowMissingCore && commentsSource === undefined) throw new Error(`Review bundle is missing comments.json at ${root}`);
   const state = stateSource === undefined ? createDefaultReviewState() : JSON.parse(stateSource) as ReviewState;
   const stateErrors = validateReviewState(state);
   if (stateErrors.length) throw new Error(stateErrors.join("\n"));
   return {
     state,
-    comments: parseComments(await readOptional(join(root, "comments.json"))),
+    comments: parseComments(commentsSource),
     handoffJson: await readOptional(join(root, "agent-handoff.json")),
     handoffMarkdown: await readOptional(join(root, "agent-handoff.md")),
   };
 }
 
-function normalizeSnapshot(snapshot: ReviewSnapshot): ReviewSnapshot {
+function normalizeSnapshot(snapshot: ReviewSnapshot, identity: PlanIdentity): ReviewSnapshot {
+
   const unresolvedCommentIds = snapshot.comments
     .filter((comment) => comment.status === "open")
     .map((comment) => comment.id);
@@ -94,20 +136,18 @@ function normalizeSnapshot(snapshot: ReviewSnapshot): ReviewSnapshot {
 
   if (handoffJson !== undefined && handoffMarkdown !== undefined) {
     try {
-      const handoff = JSON.parse(handoffJson) as {
-        status?: unknown;
-        approvedAt?: unknown;
-        planSlug?: unknown;
-        answers?: unknown;
-      };
-      handoffsAgree = handoff.status === "approved"
-        && typeof handoff.approvedAt === "string"
-        && typeof handoff.planSlug === "string"
-        && state.approvedAt === handoff.approvedAt
-        && JSON.stringify(state.answers) === JSON.stringify(handoff.answers)
-        && handoffMarkdown.includes(`Status: ${handoff.status}`)
-        && handoffMarkdown.includes(`Approved: ${handoff.approvedAt}`)
-        && handoffMarkdown.includes(`# Agent Handoff: ${handoff.planSlug}`);
+      const parsed = JSON.parse(handoffJson) as unknown;
+      if (validateAgentHandoff(parsed).length === 0) {
+        const handoff = parsed as AgentHandoff;
+        handoffsAgree = state.approvedAt === handoff.approvedAt
+          && JSON.stringify(state.answers) === JSON.stringify(handoff.answers)
+          && handoff.planSlug === identity.slug
+          && handoff.planPath === identity.path
+          && handoff.implementationEntry === identity.path
+          && formatAgentHandoffMarkdown(handoff) === handoffMarkdown;
+      } else {
+        handoffsAgree = false;
+      }
     } catch {
       handoffsAgree = false;
     }
@@ -120,6 +160,10 @@ function normalizeSnapshot(snapshot: ReviewSnapshot): ReviewSnapshot {
   if (state.status === "approved" && (unresolvedCommentIds.length > 0 || !handoffsAgree || handoffJson === undefined)) {
     const { approvedAt: _approvedAt, reviewer: _reviewer, ...rest } = state;
     state = { ...rest, status: "needs_revision" };
+    handoffJson = undefined;
+    handoffMarkdown = undefined;
+  }
+  if (state.status !== "approved") {
     handoffJson = undefined;
     handoffMarkdown = undefined;
   }
@@ -162,17 +206,66 @@ async function publishSnapshot(planDir: string, snapshot: ReviewSnapshot): Promi
   }
 }
 
-async function installCompatibilityLinks(planDir: string): Promise<void> {
-  for (const file of BUNDLE_FILES) {
-    const destination = join(planDir, file);
-    const temporary = join(planDir, `.${file}.${randomUUID()}.link`);
-    await symlink(join(STORE_DIR, CURRENT_LINK, file), temporary);
-    try {
-      await rename(temporary, destination);
-    } catch (error) {
-      await rm(temporary, { force: true });
-      throw error;
+interface CompatibilitySnapshot {
+  path: string;
+  kind: "missing" | "file" | "symlink";
+  content?: Uint8Array;
+  target?: string;
+}
+
+async function captureCompatibilityPath(path: string): Promise<CompatibilitySnapshot> {
+  try {
+    const metadata = await lstat(path);
+    if (metadata.isSymbolicLink()) return { path, kind: "symlink", target: await readlink(path) };
+    if (metadata.isFile()) return { path, kind: "file", content: await readFile(path) };
+    throw new Error(`Unsupported compatibility path at ${path}`);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return { path, kind: "missing" };
     }
+    throw error;
+  }
+}
+
+async function restoreCompatibilityPath(snapshot: CompatibilitySnapshot): Promise<void> {
+  if (snapshot.kind === "missing") {
+    await rm(snapshot.path, { force: true });
+    return;
+  }
+  const temporary = `${snapshot.path}.${randomUUID()}.restore`;
+  if (snapshot.kind === "symlink") await symlink(snapshot.target!, temporary);
+  else await writeFile(temporary, snapshot.content!);
+  await rename(temporary, snapshot.path);
+}
+
+async function installCompatibilityLinks(planDir: string): Promise<void> {
+  const snapshots = await Promise.all(BUNDLE_FILES.map((file) => captureCompatibilityPath(join(planDir, file))));
+  const replaced: CompatibilitySnapshot[] = [];
+  try {
+    for (let index = 0; index < BUNDLE_FILES.length; index += 1) {
+      const file = BUNDLE_FILES[index];
+      const destination = join(planDir, file);
+      const temporary = join(planDir, `.${file}.${randomUUID()}.link`);
+      await symlink(join(STORE_DIR, CURRENT_LINK, file), temporary);
+      try {
+        await rename(temporary, destination);
+        replaced.push(snapshots[index]);
+      } catch (error) {
+        await rm(temporary, { force: true });
+        throw error;
+      }
+    }
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    for (const snapshot of replaced.reverse()) {
+      try {
+        await restoreCompatibilityPath(snapshot);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], "Compatibility setup failed and rollback was incomplete");
+    throw error;
   }
 }
 
@@ -189,13 +282,40 @@ async function compatibilityLinksReady(planDir: string): Promise<boolean> {
 }
 
 async function ensureStore(planDir: string): Promise<void> {
-  const hasCurrent = await pathExists(currentPath(planDir));
-  await mkdir(join(storePath(planDir), "bundles"), { recursive: true });
-  if (!hasCurrent) await publishSnapshot(planDir, await readSnapshotFrom(planDir));
+  const store = storePath(planDir);
+  const marker = join(store, INITIALIZED_MARKER);
+  const initialized = await pathExists(marker);
+  const plan = await loadPlanFolder(planDir);
+  const identity: PlanIdentity = {
+    slug: plan.manifest.slug,
+    path: join(plan.rootDir, plan.manifest.entry),
+  };
+
+  if (initialized) {
+    if (!(await compatibilityLinksReady(planDir))) {
+      throw new Error("Initialized review store has missing or replaced compatibility paths");
+    }
+    const currentRoot = await resolveCurrentBundle(planDir);
+    const current = await readSnapshotFrom(currentRoot);
+    const normalized = normalizeSnapshot(current, identity);
+    if (JSON.stringify(normalized) !== JSON.stringify(current)) await publishSnapshot(planDir, normalized);
+    return;
+  }
+
+  await mkdir(join(store, "bundles"), { recursive: true });
+  if (!(await pathExists(currentPath(planDir)))) {
+    const legacy = await readSnapshotFrom(planDir, true);
+    await publishSnapshot(planDir, normalizeSnapshot(legacy, identity));
+  } else {
+    const currentRoot = await resolveCurrentBundle(planDir);
+    const current = await readSnapshotFrom(currentRoot);
+    const normalized = normalizeSnapshot(current, identity);
+    if (JSON.stringify(normalized) !== JSON.stringify(current)) await publishSnapshot(planDir, normalized);
+  }
   if (!(await compatibilityLinksReady(planDir))) await installCompatibilityLinks(planDir);
-  const current = await readSnapshotFrom(currentPath(planDir));
-  const normalized = normalizeSnapshot(current);
-  if (JSON.stringify(normalized) !== JSON.stringify(current)) await publishSnapshot(planDir, normalized);
+  const temporaryMarker = join(store, `${INITIALIZED_MARKER}.${randomUUID()}.tmp`);
+  await writeFile(temporaryMarker, "v1\n");
+  await rename(temporaryMarker, marker);
 }
 
 async function cleanupAbandonedPublications(planDir: string): Promise<void> {
@@ -209,70 +329,35 @@ async function cleanupAbandonedPublications(planDir: string): Promise<void> {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return [];
     throw error;
   });
+  let currentIdentity: string | undefined;
+  try {
+    currentIdentity = (await resolveCurrentBundle(planDir)).split("/").at(-1);
+  } catch {
+    currentIdentity = undefined;
+  }
   await Promise.all([
-    ...bundleEntries.filter((entry) => entry.endsWith(".staging")).map((entry) => rm(join(bundles, entry), { recursive: true, force: true })),
-    ...storeEntries.filter((entry) => entry.startsWith("current.") && entry.endsWith(".pointer")).map((entry) => rm(join(store, entry), { force: true })),
+    ...bundleEntries
+      .filter((entry) => entry.endsWith(".staging") || (currentIdentity !== undefined && entry !== currentIdentity))
+      .map((entry) => rm(join(bundles, entry), { recursive: true, force: true })),
+    ...storeEntries
+      .filter((entry) => (entry.startsWith("current.") && entry.endsWith(".pointer")) || (entry.startsWith(`${INITIALIZED_MARKER}.`) && entry.endsWith(".tmp")))
+      .map((entry) => rm(join(store, entry), { force: true })),
   ]);
 }
 
-async function acquirePlanLock(planDir: string): Promise<() => Promise<void>> {
-  const lock = join(planDir, ".muse-review.lock");
-  for (let attempt = 0; attempt < 500; attempt += 1) {
-    try {
-      await mkdir(lock);
-      try {
-        await writeFile(join(lock, "owner.json"), JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
-      } catch (error) {
-        await rm(lock, { recursive: true, force: true });
-        throw error;
-      }
-      return () => rm(lock, { recursive: true, force: true });
-    } catch (error) {
-      if (!(typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST")) throw error;
-      const ownerSource = await readOptional(join(lock, "owner.json"));
-      let ownerIsAlive = false;
-      if (ownerSource !== undefined) {
-        try {
-          const owner = JSON.parse(ownerSource) as { pid?: unknown };
-          if (typeof owner.pid === "number") {
-            process.kill(owner.pid, 0);
-            ownerIsAlive = true;
-          }
-        } catch (ownerError) {
-          if (!(typeof ownerError === "object" && ownerError !== null && "code" in ownerError && ownerError.code === "ESRCH")) {
-            ownerIsAlive = true;
-          }
-        }
-      }
-      if (!ownerIsAlive && Date.now() - (await stat(lock)).mtimeMs > 2_000) {
-        await rm(lock, { recursive: true, force: true });
-        continue;
-      }
-      await Bun.sleep(10);
-    }
-  }
-  throw new Error(`Timed out waiting for review lock at ${lock}`);
-}
-
 async function withPlanLock<T>(planDir: string, action: () => Promise<T>): Promise<T> {
-  const release = await acquirePlanLock(planDir);
+  const lock = await acquirePlanLock(planDir);
   try {
     await cleanupAbandonedPublications(planDir);
     await ensureStore(planDir);
     return await action();
   } finally {
-    await release();
+    await lock.release();
   }
 }
 
-async function ensureStoreForRead(planDir: string): Promise<void> {
-  if (await pathExists(currentPath(planDir)) && await compatibilityLinksReady(planDir)) return;
-  await withPlanLock(planDir, async () => undefined);
-}
-
 async function readCurrentSnapshot(planDir: string): Promise<ReviewSnapshot> {
-  await ensureStoreForRead(planDir);
-  return normalizeSnapshot(await readSnapshotFrom(currentPath(planDir)));
+  return withPlanLock(planDir, async () => readSnapshotFrom(await resolveCurrentBundle(planDir)));
 }
 
 export async function readReviewState(planDir: string): Promise<ReviewState> {
@@ -284,8 +369,11 @@ export async function readComments(planDir: string): Promise<CommentThread[]> {
 }
 
 export async function readPublishedArtifact(planDir: string, file: "agent-handoff.json" | "agent-handoff.md"): Promise<string> {
-  await ensureStoreForRead(planDir);
-  return readFile(join(currentPath(planDir), file), "utf8");
+  const snapshot = await readCurrentSnapshot(planDir);
+  if (snapshot.state.status !== "approved" || snapshot.handoffJson === undefined || snapshot.handoffMarkdown === undefined) {
+    throw new Error("No coherent approved handoff is published");
+  }
+  return file === "agent-handoff.json" ? snapshot.handoffJson : snapshot.handoffMarkdown;
 }
 
 function mergeReviewState(current: ReviewState, patch: Partial<ReviewState>, comments: CommentThread[]): ReviewState {
@@ -298,12 +386,15 @@ function mergeReviewState(current: ReviewState, patch: Partial<ReviewState>, com
   };
 }
 
-export async function updateReviewState(planDir: string, patch: Partial<ReviewState>): Promise<ReviewState> {
+export async function updateReviewState(planDir: string, value: unknown): Promise<ReviewState> {
+  const patchErrors = validateReviewStatePatch(value);
+  if (patchErrors.length) throw new Error(patchErrors.join("\n"));
+  const patch = value as Partial<ReviewState>;
   if (patch.status === "approved" || patch.approvedAt !== undefined || patch.reviewer !== undefined) {
     throw new Error("Approval status and metadata can only be set through /api/approve");
   }
   return withPlanLock(planDir, async () => {
-    const snapshot = normalizeSnapshot(await readSnapshotFrom(currentPath(planDir)));
+    const snapshot = await readSnapshotFrom(await resolveCurrentBundle(planDir));
     let state = mergeReviewState(snapshot.state, patch, snapshot.comments);
     let handoffJson = snapshot.handoffJson;
     let handoffMarkdown = snapshot.handoffMarkdown;
@@ -325,9 +416,12 @@ export async function addComment(
   input: Omit<CommentThread, "id" | "status" | "createdAt"> & { id?: string },
 ): Promise<CommentThread> {
   return withPlanLock(planDir, async () => {
-    const snapshot = normalizeSnapshot(await readSnapshotFrom(currentPath(planDir)));
+    const snapshot = await readSnapshotFrom(await resolveCurrentBundle(planDir));
+    const id = input.id ?? `c-${randomUUID()}`;
+    if (id.trim().length === 0) throw new Error("Comment id must be nonblank");
+    if (snapshot.comments.some((comment) => comment.id === id)) throw new Error(`Duplicate comment id '${id}'`);
     const comment: CommentThread = {
-      id: input.id ?? `c${snapshot.comments.length + 1}`,
+      id,
       blockId: input.blockId,
       anchor: input.anchor,
       body: input.body,
@@ -351,7 +445,9 @@ export async function addComment(
 
 export async function resolveComment(planDir: string, id: string): Promise<CommentThread[]> {
   return withPlanLock(planDir, async () => {
-    const snapshot = normalizeSnapshot(await readSnapshotFrom(currentPath(planDir)));
+    const snapshot = await readSnapshotFrom(await resolveCurrentBundle(planDir));
+    const matches = snapshot.comments.filter((comment) => comment.id === id);
+    if (matches.length !== 1) throw new Error(`Unknown or ambiguous comment id '${id}'`);
     const comments = snapshot.comments.map((comment) => comment.id === id
       ? { ...comment, status: "resolved" as const, resolvedAt: new Date().toISOString() }
       : comment);
@@ -363,7 +459,7 @@ export async function resolveComment(planDir: string, id: string): Promise<Comme
 
 export async function approvePlan(planDir: string, reviewer = "local-reviewer") {
   return withPlanLock(planDir, async () => {
-    const snapshot = normalizeSnapshot(await readSnapshotFrom(currentPath(planDir)));
+    const snapshot = await readSnapshotFrom(await resolveCurrentBundle(planDir));
     const plan = await loadPlanFolder(planDir);
     const readinessBlocks = [...plan.plan.blocks, ...(plan.canvas?.blocks ?? [])];
     const readinessErrors = [

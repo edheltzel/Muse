@@ -30,6 +30,12 @@ copy | Copy reviewed
 
 Readiness item IDs must be nonblank and unique across `plan.mdx` and `canvas.mdx`. Required questions need a nonblank scalar answer or at least one nonblank string in an array answer; required checklist items must be `true`. Advisory and omitted-policy items never gate approval.
 
+### Review-state persistence
+
+The local bridge publishes immutable review bundles beneath `.muse-review/bundles/` and commits a complete generation by atomically replacing `.muse-review/current`. The root `plan-state.json`, `comments.json`, `agent-handoff.json`, and `agent-handoff.md` paths are compatibility links installed during the first locked migration. Existing regular files are validated and ingested before replacement; after initialization, a regular file at any compatibility path is treated as corruption and is preserved rather than silently replaced.
+
+`POST /api/state` accepts only an object patch. `answers` must be an object whose values are strings or string arrays, and `checklist` must be an object whose values are booleans. Approval status, reviewer, and approval timestamps can be written only through `POST /api/approve`.
+
 ## Visual explanation components
 
 - `PlanSummary` — hero summary with goal, scope, audience, and status.

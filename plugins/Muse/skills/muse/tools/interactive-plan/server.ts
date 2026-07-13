@@ -3,12 +3,17 @@ import { join } from "node:path";
 import { renderPlanFolder } from "./render";
 import { addComment, approvePlan, readComments, readPublishedArtifact, readReviewState, resolveComment, updateReviewState } from "./state-store";
 
-async function json(request: Request): Promise<Record<string, unknown>> {
+async function json(request: Request): Promise<unknown> {
   try {
     return await request.json();
   } catch {
     throw new Response("Invalid JSON", { status: 400 });
   }
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Response("JSON body must be an object", { status: 400 });
+  return value as Record<string, unknown>;
 }
 
 export async function servePlan(planDir: string, port = 7374) {
@@ -37,13 +42,13 @@ export async function servePlan(planDir: string, port = 7374) {
           return Response.json(await updateReviewState(planDir, await json(request)));
         }
         if (url.pathname === "/api/comments" && request.method === "POST") {
-          const body = await json(request);
+          const body = jsonObject(await json(request));
           if (body.resolveId) return Response.json(await resolveComment(planDir, String(body.resolveId)));
           if (!body.blockId || !body.body) return new Response("blockId and body are required", { status: 400 });
           return Response.json(await addComment(planDir, { blockId: String(body.blockId), anchor: body.anchor ? String(body.anchor) : undefined, body: String(body.body) }));
         }
         if (url.pathname === "/api/approve" && request.method === "POST") {
-          const body = await json(request);
+          const body = jsonObject(await json(request));
           return Response.json(await approvePlan(planDir, body.reviewer ? String(body.reviewer) : undefined));
         }
         return new Response("Not found", { status: 404 });

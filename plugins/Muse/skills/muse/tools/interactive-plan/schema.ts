@@ -71,6 +71,90 @@ export function createDefaultReviewState(): ReviewState {
   return { status: "draft", answers: {}, checklist: {}, unresolvedCommentIds: [] };
 }
 
+export function validateReviewStatePatch(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return ["ReviewState patch must be an object"];
+  const patch = value as Record<string, unknown>;
+  const errors: string[] = [];
+  const allowedKeys = ["status", "approvedAt", "reviewer", "answers", "checklist", "unresolvedCommentIds"];
+  for (const key of Object.keys(patch)) {
+    if (!allowedKeys.includes(key)) errors.push(`ReviewState patch contains unknown field '${key}'`);
+  }
+  if ("status" in patch && !REVIEW_STATUSES.includes(patch.status as ReviewStatus)) {
+    errors.push(`ReviewState patch status must be one of ${REVIEW_STATUSES.join(", ")}`);
+  }
+  if ("approvedAt" in patch && typeof patch.approvedAt !== "string") errors.push("ReviewState patch approvedAt must be a string");
+  if ("reviewer" in patch && typeof patch.reviewer !== "string") errors.push("ReviewState patch reviewer must be a string");
+  if ("answers" in patch) {
+    if (!patch.answers || typeof patch.answers !== "object" || Array.isArray(patch.answers)) {
+      errors.push("ReviewState patch answers must be an object");
+    } else {
+      for (const [id, answer] of Object.entries(patch.answers)) {
+        if (typeof answer !== "string" && !(Array.isArray(answer) && answer.every((item) => typeof item === "string"))) {
+          errors.push(`ReviewState patch answers['${id}'] must be a string or string array`);
+        }
+      }
+    }
+  }
+  if ("checklist" in patch) {
+    if (!patch.checklist || typeof patch.checklist !== "object" || Array.isArray(patch.checklist)) {
+      errors.push("ReviewState patch checklist must be an object");
+    } else {
+      for (const [id, checked] of Object.entries(patch.checklist)) {
+        if (typeof checked !== "boolean") errors.push(`ReviewState patch checklist['${id}'] must be boolean`);
+      }
+    }
+  }
+  if (
+    "unresolvedCommentIds" in patch
+    && (!Array.isArray(patch.unresolvedCommentIds) || !patch.unresolvedCommentIds.every((id) => typeof id === "string"))
+  ) {
+    errors.push("ReviewState patch unresolvedCommentIds must be a string array");
+  }
+  return errors;
+}
+
+export function validateAgentHandoff(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return ["AgentHandoff must be an object"];
+  const handoff = value as Record<string, unknown>;
+  const errors: string[] = [];
+  const allowedKeys = [
+    "status",
+    "planSlug",
+    "planPath",
+    "approvedAt",
+    "approvedScope",
+    "decisions",
+    "answers",
+    "implementationEntry",
+    "verification",
+    "openRisks",
+  ];
+  for (const key of Object.keys(handoff)) {
+    if (!allowedKeys.includes(key)) errors.push(`AgentHandoff contains unknown field '${key}'`);
+  }
+  if (handoff.status !== "approved") errors.push("AgentHandoff.status must be approved");
+  for (const key of ["planSlug", "planPath", "approvedAt", "implementationEntry"]) {
+    if (typeof handoff[key] !== "string") errors.push(`AgentHandoff.${key} must be a string`);
+  }
+  for (const key of ["approvedScope", "decisions", "verification", "openRisks"]) {
+    const entries = handoff[key];
+    if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === "string")) {
+      errors.push(`AgentHandoff.${key} must be a string array`);
+    }
+  }
+  const answers = handoff.answers;
+  if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
+    errors.push("AgentHandoff.answers must be an object");
+  } else {
+    for (const [id, answer] of Object.entries(answers)) {
+      if (typeof answer !== "string" && !(Array.isArray(answer) && answer.every((item) => typeof item === "string"))) {
+        errors.push(`AgentHandoff.answers['${id}'] must be a string or string array`);
+      }
+    }
+  }
+  return errors;
+}
+
 export function validateReviewState(value: unknown): string[] {
   const errors: string[] = [];
   const state = value as Partial<ReviewState> | null;
