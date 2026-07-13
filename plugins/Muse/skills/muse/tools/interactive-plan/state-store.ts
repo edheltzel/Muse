@@ -606,15 +606,73 @@ function snapshotContent(snapshot: ReviewSnapshot, file: BundleFile): string | u
 async function quarantineCommittedPointer(
   storeBinding: DirectoryBinding,
   currentPath: string,
-  expected: BigIntStats,
+  expected: BundleReference,
   assertOwned: AssertLockOwned,
 ): Promise<boolean> {
+  const quarantine = `${currentPath}.${randomUUID()}.invalid`;
   await verifyDirectoryBinding(storeBinding);
-  const actual = await lstat(currentPath, { bigint: true });
-  if (!sameIdentity(actual, expected)) return false;
   await assertOwned();
-  await rename(currentPath, `${currentPath}.${randomUUID()}.invalid`);
-  return true;
+  await rename(currentPath, quarantine);
+  const moved = await captureCompatibilityPath(quarantine);
+  let movedReference: BundleReference | undefined;
+  let classificationError: unknown;
+  try {
+    movedReference = await resolveBundleReferenceFromLink(resolve(storeBinding.path, ".."), quarantine);
+  } catch (error) {
+    classificationError = error;
+  }
+  if (
+    movedReference
+    && movedReference.id === expected.id
+    && sameGeneration(movedReference.directory, expected.directory)
+  ) {
+    return true;
+  }
+  if (moved.stats && sameIdentity(moved.stats, expected.pointer)) {
+    if (classificationError !== undefined) {
+      throw new AggregateError([classificationError], "Moved expected review pointer could not be verified");
+    }
+    throw new Error("Moved expected review pointer resolved a different publication");
+  }
+  try {
+    if (moved.kind !== "symlink") {
+      throw new Error(`Moved review pointer is not a symlink at ${quarantine}`);
+    }
+    await verifyDirectoryBinding(storeBinding);
+    await assertOwned();
+    await symlink(moved.target!, currentPath);
+    const restored = await resolveBundleReferenceFromLink(resolve(storeBinding.path, ".."), currentPath);
+    if (
+      movedReference
+      && (
+        restored.id !== movedReference.id
+        || !sameGeneration(restored.directory, movedReference.directory)
+      )
+    ) {
+      throw new Error("Restored review successor does not resolve the moved publication");
+    }
+    const restoredPointer: CompatibilitySnapshot = {
+      path: currentPath,
+      kind: "symlink",
+      target: moved.target,
+      stats: restored.pointer,
+    };
+    await assertOwned();
+    await Promise.all([
+      verifyCompatibilitySnapshot(restoredPointer),
+      verifyCompatibilityPayload(moved),
+    ]);
+    await rm(quarantine, { force: true });
+  } catch (restoreError) {
+    throw new AggregateError(
+      [...(classificationError === undefined ? [] : [classificationError]), restoreError],
+      movedReference
+        ? "Distinct review successor could not be restored after conditional quarantine"
+        : "Moved review pointer could not be verified and restoration was incomplete",
+    );
+  }
+  if (classificationError !== undefined) throw classificationError;
+  return false;
 }
 
 async function publishSnapshot(
@@ -708,7 +766,6 @@ async function publishSnapshot(
     await closeBindings();
     throw new Error("Prepared current pointer does not resolve the published review generation");
   }
-  const pointerGeneration = published.pointer;
   await Promise.allSettled([stagingBinding?.handle.close(), bundlesBinding.handle.close()]);
   await assertOwned();
   await rename(pointer, join(store, CURRENT_LINK));
@@ -729,7 +786,7 @@ async function publishSnapshot(
   } catch (error) {
     const restorable = canonicalStore && retainCommittedForRollback && !resolvedCurrent;
     if (canonicalStore && !restorable) {
-      await quarantineCommittedPointer(storeBinding, join(store, CURRENT_LINK), pointerGeneration, assertOwned);
+      await quarantineCommittedPointer(storeBinding, join(store, CURRENT_LINK), published, assertOwned);
     }
     throw new SnapshotCommitVerificationError(published, restorable, error);
   } finally {
@@ -780,18 +837,36 @@ async function restorePriorPublication(
       throw new Error("Canonical current pointer does not resolve the restored prior generation");
     }
   } catch (error) {
-    if (committed && pointerGeneration) {
-      await quarantineCommittedPointer(storeBinding, join(store, CURRENT_LINK), pointerGeneration, assertOwned);
-    } else {
-      try {
+    const recoveryErrors: unknown[] = [];
+    try {
+      if (committed && pointerGeneration) {
+        await quarantineCommittedPointer(
+          storeBinding,
+          join(store, CURRENT_LINK),
+          { ...prior, pointer: pointerGeneration },
+          assertOwned,
+        );
+      } else {
         await verifyDirectoryBinding(storeBinding);
-        await quarantineCommittedPointer(storeBinding, join(store, CURRENT_LINK), published.pointer, assertOwned);
+        await quarantineCommittedPointer(storeBinding, join(store, CURRENT_LINK), published, assertOwned);
+      }
+    } catch (recoveryError) {
+      recoveryErrors.push(recoveryError);
+    }
+    if (!committed) {
+      try {
         await rm(pointer, { force: true });
-      } catch {
-        // A rebound canonical store is never modified during rollback cleanup.
+      } catch (cleanupError) {
+        recoveryErrors.push(cleanupError);
       }
     }
     await Promise.allSettled([priorBinding.handle.close(), storeBinding.handle.close()]);
+    if (recoveryErrors.length) {
+      throw new AggregateError(
+        [error, ...recoveryErrors],
+        "Prior review publication rollback failed and cleanup was incomplete",
+      );
+    }
     throw error;
   }
   await Promise.allSettled([priorBinding.handle.close(), storeBinding.handle.close()]);
@@ -1315,6 +1390,14 @@ async function recoverCompletedMutation(
   assertCanonicalOwned: AssertLockOwned,
 ): Promise<void> {
   await assertCanonicalOwned();
+  const current = await resolveCurrentBundleIfPresent(planDir);
+  if (
+    !current
+    || current.id !== published.id
+    || !sameGeneration(current.directory, published.directory)
+  ) {
+    return;
+  }
   try {
     await verifyDirectoryBinding(priorBinding);
   } catch (priorError) {
@@ -1324,7 +1407,7 @@ async function recoverCompletedMutation(
       const quarantined = await quarantineCommittedPointer(
         storeBinding,
         join(store, CURRENT_LINK),
-        published.pointer,
+        published,
         assertCanonicalOwned,
       );
       if (!quarantined) {
@@ -1401,7 +1484,22 @@ async function withPlanLock<T>(
       if (published) throw new Error("A review transaction cannot publish more than one current generation");
       published = candidate;
     };
-    const result = await action(current, authority, lock.assertOwned, planDir, recordPublication);
+    let result: T;
+    try {
+      result = await action(current, authority, lock.assertOwned, planDir, recordPublication);
+    } catch (actionError) {
+      if (published && priorBinding) {
+        try {
+          await recoverCompletedMutation(planDir, current, priorBinding, published, lock.assertCanonicalOwned);
+        } catch (recoveryError) {
+          throw new AggregateError(
+            [actionError, recoveryError],
+            "Review transaction failed after publication and recovery was incomplete",
+          );
+        }
+      }
+      throw actionError;
+    }
     if (options.mutating) {
       try {
         await lock.assertOwned();
@@ -1658,6 +1756,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
       }
       throw error;
     }
+    recordPublication(published);
     try {
       await verifyIdentity();
     } catch (error) {
@@ -1669,7 +1768,6 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
       throw error;
     }
     await priorBinding.handle.close().catch(() => undefined);
-    recordPublication(published);
     try {
       await cleanupAbandonedPublications(canonicalPlanDir, published, assertOwned);
     } catch (error) {

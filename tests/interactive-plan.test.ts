@@ -2360,6 +2360,128 @@ describe("interactive plan review state and handoff", () => {
     });
   }
 
+  test("quarantines a rejected approval after legacy lock generation loss", async () => {
+    if (process.platform === "win32") return;
+    mock.restore();
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "first");
+      const store = join(planDir, ".muse-review");
+      const pointer = join(store, "current");
+      const priorBundle = join(store, await readlink(pointer));
+      const lockPath = join(planDir, ".muse-review.lock");
+      const displacedLock = `${lockPath}.displaced`;
+      const originalRename = fs.rename;
+      let rejectedTarget: string | undefined;
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        const result = await originalRename(from, to);
+        if (rejectedTarget === undefined && String(to) === pointer) {
+          rejectedTarget = await readlink(pointer);
+          await rm(priorBundle, { recursive: true });
+          await originalRename(lockPath, displacedLock);
+          await writeFile(lockPath, "replacement lock\n");
+        }
+        return result;
+      });
+
+      let approvalError: unknown;
+      try {
+        await approvePlan(planDir, "second");
+      } catch (error) {
+        approvalError = error;
+      }
+
+      mock.restore();
+      expect(approvalError).toBeInstanceOf(AggregateError);
+      const errorMessages: string[] = [];
+      const collectErrorMessages = (error: unknown): void => {
+        if (!(error instanceof Error)) return;
+        errorMessages.push(error.message);
+        if (error instanceof AggregateError) error.errors.forEach(collectErrorMessages);
+      };
+      collectErrorMessages(approvalError);
+      expect(errorMessages.filter((message) => /review lock path generation changed/i.test(message))).toHaveLength(2);
+      expect(rejectedTarget).toBeDefined();
+      await expect(lstat(pointer)).rejects.toThrow();
+      const quarantined = (await readdir(store))
+        .filter((entry) => entry.startsWith("current.") && entry.endsWith(".invalid"));
+      expect(quarantined).toHaveLength(1);
+      expect(await readlink(join(store, quarantined[0]!))).toBe(rejectedTarget!);
+      for (const file of ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"]) {
+        await expect(readFile(join(planDir, file))).rejects.toThrow();
+      }
+    });
+  });
+
+  test("restores a successor moved during rejected approval quarantine", async () => {
+    if (process.platform === "win32") return;
+    mock.restore();
+    await withFixture("minimal-plan", async (planDir) => {
+      const successorHandoff = await approvePlan(planDir, "first");
+      const store = join(planDir, ".muse-review");
+      const pointer = join(store, "current");
+      const priorBundle = join(store, await readlink(pointer));
+      const successorTarget = "bundles/00000000-0000-4000-8000-000000000001";
+      const successorBundle = join(store, successorTarget);
+      await cp(priorBundle, successorBundle, { recursive: true });
+      const lockPath = join(planDir, ".muse-review.lock");
+      const displacedLock = `${lockPath}.displaced`;
+      const rejectedQuarantine = join(store, "current.00000000-0000-4000-8000-000000000002.invalid");
+      const originalRename = fs.rename;
+      let rejectedTarget: string | undefined;
+      let rejectedPointer: { dev: bigint; ino: bigint } | undefined;
+      let successorPointer: { dev: bigint; ino: bigint } | undefined;
+      let raced = false;
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        if (
+          rejectedTarget !== undefined
+          && !raced
+          && String(from) === pointer
+          && String(to).startsWith(`${pointer}.`)
+          && String(to).endsWith(".invalid")
+        ) {
+          raced = true;
+          const rejected = await lstat(pointer, { bigint: true });
+          rejectedPointer = { dev: rejected.dev, ino: rejected.ino };
+          await originalRename(pointer, rejectedQuarantine);
+          await fs.symlink(successorTarget, pointer);
+          const successor = await lstat(pointer, { bigint: true });
+          successorPointer = { dev: successor.dev, ino: successor.ino };
+        }
+        const result = await originalRename(from, to);
+        if (rejectedTarget === undefined && String(to) === pointer) {
+          rejectedTarget = await readlink(pointer);
+          await rm(priorBundle, { recursive: true });
+          await originalRename(lockPath, displacedLock);
+          await writeFile(lockPath, "replacement lock\n");
+        }
+        return result;
+      });
+
+      await expect(approvePlan(planDir, "second")).rejects.toThrow(/recovery was incomplete/i);
+
+      mock.restore();
+      expect(raced).toBe(true);
+      expect(rejectedTarget).toBeDefined();
+      expect(rejectedPointer).toBeDefined();
+      expect(successorPointer).toBeDefined();
+      expect(await readlink(pointer)).toBe(successorTarget);
+      expect(JSON.parse(await readPublishedArtifact(planDir, "agent-handoff.json"))).toEqual(successorHandoff);
+      expect(await readPublishedArtifact(planDir, "agent-handoff.md")).toBe(
+        await readFile(join(successorBundle, "agent-handoff.md"), "utf8"),
+      );
+      expect(JSON.parse(await readFile(join(planDir, "agent-handoff.json"), "utf8"))).toEqual(successorHandoff);
+      expect(await readFile(join(planDir, "agent-handoff.md"), "utf8")).toBe(
+        await readFile(join(successorBundle, "agent-handoff.md"), "utf8"),
+      );
+      const quarantined = (await readdir(store))
+        .filter((entry) => entry.startsWith("current.") && entry.endsWith(".invalid"));
+      expect(quarantined).toEqual([rejectedQuarantine.split("/").at(-1)!]);
+      expect(await readlink(rejectedQuarantine)).toBe(rejectedTarget!);
+      const quarantinedRejection = await lstat(rejectedQuarantine, { bigint: true });
+      expect({ dev: quarantinedRejection.dev, ino: quarantinedRejection.ino }).toEqual(rejectedPointer!);
+    });
+  });
+
   test("fails closed when the prior bundle is rebound at rollback commit", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await approvePlan(planDir, "first");
