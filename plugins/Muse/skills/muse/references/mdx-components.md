@@ -44,4 +44,4 @@ Interactive output uses a single tab stop. Unmodified Left/Right wrap and activa
 
 If a common plan element has a component, use the component. Raw HTML is reserved for exceptional one-off visuals.
 
-Component IDs are document-wide HTML identifiers. Start with a letter and use only letters, numbers, underscores, or hyphens; IDs must not collide across `plan.mdx`, `canvas.mdx`, renderer-owned IDs, or generated tab descendants.
+Component IDs require explicit string values and are document-wide HTML identifiers. Start with a letter and use only letters, numbers, underscores, or hyphens; IDs must not collide across `plan.mdx`, `canvas.mdx`, renderer-owned IDs, generated tab descendants, or raw `Wireframe` descendants. Component tags must be complete and have matching closing tags.

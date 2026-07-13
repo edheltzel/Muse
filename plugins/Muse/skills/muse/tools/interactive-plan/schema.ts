@@ -127,6 +127,32 @@ export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[
       }
     });
   }
+
+  for (const block of blocks) {
+    if (block.type !== "Wireframe") continue;
+    for (const tagMatch of block.body.matchAll(/<[a-z][^>]*>/gi)) {
+      const idPattern = /\sid\b(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/gi;
+      for (const idMatch of tagMatch[0].matchAll(idPattern)) {
+        const rawId = idMatch[1];
+        if (!rawId) {
+          errors.push(`Wireframe '${block.id}' contains an id attribute without a value`);
+          continue;
+        }
+        const id = rawId.replace(/^['"]|['"]$/g, "");
+        if (!id) {
+          errors.push(`Wireframe '${block.id}' contains an empty id attribute`);
+          continue;
+        }
+        if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(id)) {
+          errors.push(`Wireframe descendant has unsafe id '${id}' in '${block.id}'`);
+        }
+        if (emittedIds.has(id)) {
+          errors.push(`Wireframe descendant id '${id}' in '${block.id}' collides with another emitted id`);
+        }
+        emittedIds.add(id);
+      }
+    }
+  }
   return errors;
 }
 

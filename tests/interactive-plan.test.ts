@@ -162,6 +162,47 @@ describe("interactive plan MDX loading", () => {
     }
   });
 
+
+  test("rejects valueless ids and Wireframe descendant collisions", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-wireframe-ids-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<Tabs id="tabs">\nFirst\n---\nSecond\n</Tabs>\n<Callout id="shared">Authored block</Callout>\n<Callout id>Missing id value</Callout>\n<Wireframe id="wireframe">\n<div id="tabs-panel-0"></div>\n<div id="shared"></div>\n<div id="canvas"></div>\n<div id="unsafe id"></div>\n<div id></div>\n</Wireframe>\n`);
+      await writeFile(join(planDir, "canvas.mdx"), `<Callout id="canvas-content">Canvas block</Callout>\n`);
+
+      let message = "";
+      try {
+        await loadPlanFolder(planDir);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+
+      expect(message).toContain("MDX component 'Callout' is missing required id");
+      expect(message).toContain("Wireframe descendant id 'tabs-panel-0' in 'wireframe' collides with another emitted id");
+      expect(message).toContain("Wireframe descendant id 'shared' in 'wireframe' collides with another emitted id");
+      expect(message).toContain("Wireframe descendant id 'canvas' in 'wireframe' collides with another emitted id");
+      expect(message).toContain("Wireframe descendant has unsafe id 'unsafe id' in 'wireframe'");
+      expect(message).toContain("Wireframe 'wireframe' contains an id attribute without a value");
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a mismatched Tabs block even when another block is valid", async () => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-malformed-tabs-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), `<Callout id="valid">Valid block</Callout>\n<Tabs id="broken">\nFirst\n---\nSecond\n</DiffTabs>\n`);
+      let message = "";
+      try {
+        await loadPlanFolder(planDir);
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      expect(message).toContain("Malformed MDX component source");
+      expect(message).toContain("closing 'DiffTabs' does not match open 'Tabs'");
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
   test("rejects empty, separator-only, and blank tab panels", async () => {
     const planDir = await mkdtemp(join(tmpdir(), "ve-ip-empty-tabs-"));
     const cases = [
@@ -335,16 +376,21 @@ describe("interactive plan rendering", () => {
       orphan.setAttribute("data-tab-target", "missing-panel");
       primaryTablist.append(orphan);
       expect(pressTabKey(window, primaryTabs[2], "ArrowRight").defaultPrevented).toBe(false);
+      primaryTabs[0].focus();
+      orphan.click();
+      expect(document.activeElement).toBe(primaryTabs[0]);
       orphan.remove();
       expectActiveTab(document, "primary", 0);
 
       primaryTabs[1].click();
+      expect(document.activeElement).toBe(primaryTabs[0]);
       expectActiveTab(document, "primary", 1);
       expectActiveTab(document, "nested", 0);
       expectActiveTab(document, "secondary", 0);
 
       const nestedTabs = [...document.querySelectorAll('#nested > .ve-ip-body > .ve-ip-tabs > [role="tablist"] > [role="tab"]')];
       nestedTabs[1].click();
+      expect(document.activeElement).toBe(primaryTabs[0]);
       expectActiveTab(document, "nested", 1);
       expectActiveTab(document, "primary", 1);
       expectActiveTab(document, "secondary", 0);

@@ -28,7 +28,7 @@ function parseAttrs(raw: string): Record<string, string | boolean | number> {
   for (const match of raw.matchAll(attrPattern)) {
     const key = match[1];
     if (!match[2]) {
-      props[key] = true;
+      props[key] = key === "id" ? "" : true;
       continue;
     }
     let value = match[2].trim();
@@ -44,19 +44,56 @@ function parseAttrs(raw: string): Record<string, string | boolean | number> {
   return props;
 }
 
+function assertWellFormedComponentTags(body: string): void {
+  const tagPattern = /<(\/?)([A-Z][A-Za-z0-9]*)\b([^>]*)>/g;
+  const incompleteTagPattern = /<\/?[A-Z][A-Za-z0-9]*\b/;
+  const stack: string[] = [];
+  let cursor = 0;
+
+  for (const match of body.matchAll(tagPattern)) {
+    const skipped = body.slice(cursor, match.index);
+    const incomplete = skipped.match(incompleteTagPattern);
+    if (incomplete) {
+      throw new Error(`Malformed MDX component source: incomplete tag '${incomplete[0]}'`);
+    }
+    cursor = (match.index ?? 0) + match[0].length;
+
+    const closing = match[1] === "/";
+    const type = match[2];
+    const selfClosing = /\/\s*$/.test(match[3] ?? "");
+    if (closing) {
+      const openType = stack.pop();
+      if (!openType) throw new Error(`Malformed MDX component source: unexpected closing '${type}'`);
+      if (openType !== type) {
+        throw new Error(`Malformed MDX component source: closing '${type}' does not match open '${openType}'`);
+      }
+    } else if (!selfClosing) {
+      if (stack.length > 0) {
+        throw new Error(`Malformed MDX component source: nested '${type}' inside '${stack.at(-1)}' is not supported`);
+      }
+      stack.push(type);
+    }
+  }
+
+  const incomplete = body.slice(cursor).match(incompleteTagPattern);
+  if (incomplete) throw new Error(`Malformed MDX component source: incomplete tag '${incomplete[0]}'`);
+  if (stack.length > 0) throw new Error(`Malformed MDX component source: unclosed '${stack.at(-1)}'`);
+}
+
 export function parseMdxSource(source: string): ParsedPlanSource {
   const { frontmatter, body } = parseFrontmatter(source);
+  assertWellFormedComponentTags(body);
   const blocks: MdxBlock[] = [];
   const paired = /<([A-Z][A-Za-z0-9]*)\b([^>]*)>([\s\S]*?)<\/\1>/g;
   const selfClosing = /<([A-Z][A-Za-z0-9]*)\b([^>]*)\/>/g;
 
   for (const match of body.matchAll(paired)) {
     const props = parseAttrs(match[2] ?? "");
-    blocks.push({ id: String(props.id ?? ""), type: match[1], props, body: match[3].trim() });
+    blocks.push({ id: typeof props.id === "string" ? props.id : "", type: match[1], props, body: match[3].trim() });
   }
   for (const match of body.matchAll(selfClosing)) {
     const props = parseAttrs(match[2] ?? "");
-    blocks.push({ id: String(props.id ?? ""), type: match[1], props, body: "" });
+    blocks.push({ id: typeof props.id === "string" ? props.id : "", type: match[1], props, body: "" });
   }
 
   if (blocks.length === 0) {
