@@ -2470,6 +2470,54 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
+  test("recovers a rejected approval when postcommit verification loses legacy ownership", async () => {
+    if (process.platform === "win32") return;
+    mock.restore();
+    await withFixture("minimal-plan", async (planDir) => {
+      await readReviewState(planDir);
+      const store = join(planDir, ".muse-review");
+      const pointer = join(store, "current");
+      const lockPath = join(planDir, ".muse-review.lock");
+      const displacedLock = `${lockPath}.displaced`;
+      const originalRename = fs.rename;
+      let faultInjected = false;
+
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        const result = await originalRename(from, to);
+        if (!faultInjected && String(from).endsWith(".pointer") && String(to) === pointer) {
+          faultInjected = true;
+          const committedBundle = join(store, await readlink(pointer));
+          await fs.utimes(committedBundle, new Date(0), new Date(0));
+          await originalRename(lockPath, displacedLock);
+          await writeFile(lockPath, "replacement lock\n");
+        }
+        return result;
+      });
+
+      await expect(approvePlan(planDir, "rejected-reviewer")).rejects.toThrow();
+      expect(faultInjected).toBe(true);
+
+      mock.restore();
+      const recoveredState = await readReviewState(planDir);
+      expect(recoveredState.status).toBe("needs_revision");
+      expect(recoveredState.reviewer).toBeUndefined();
+      expect(await readComments(planDir)).toEqual([]);
+      await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow(
+        /no coherent approved handoff/i,
+      );
+      await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow(
+        /no coherent approved handoff/i,
+      );
+
+      const rootState = JSON.parse(await readFile(join(planDir, "plan-state.json"), "utf8")) as ReviewState;
+      expect(rootState.status).toBe("needs_revision");
+      expect(rootState.reviewer).toBeUndefined();
+      expect(JSON.parse(await readFile(join(planDir, "comments.json"), "utf8"))).toEqual([]);
+      await expect(readFile(join(planDir, "agent-handoff.json"), "utf8")).rejects.toThrow();
+      await expect(readFile(join(planDir, "agent-handoff.md"), "utf8")).rejects.toThrow();
+    });
+  });
+
   async function verifyRejectedApprovalSuccessorRestoration(successorUsesRejectedBundle: boolean): Promise<void> {
     if (process.platform === "win32") return;
     mock.restore();

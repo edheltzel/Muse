@@ -679,6 +679,7 @@ async function publishSnapshot(
   planDir: string,
   snapshot: ReviewSnapshot,
   assertOwned: AssertLockOwned,
+  recordPublication?: RecordPublication,
   beforeCommit?: () => Promise<void>,
   retainCommittedForRollback = false,
 ): Promise<BundleReference> {
@@ -769,6 +770,7 @@ async function publishSnapshot(
   await Promise.allSettled([stagingBinding?.handle.close(), bundlesBinding.handle.close()]);
   await assertOwned();
   await rename(pointer, join(store, CURRENT_LINK));
+  recordPublication?.(published);
   let canonicalStore = false;
   let resolvedCurrent = false;
   try {
@@ -1608,7 +1610,7 @@ export async function updateReviewState(planDir: string, value: unknown): Promis
     }
     const errors = validateReviewState(state);
     if (errors.length) throw new Error(errors.join("\n"));
-    recordPublication(await publishSnapshot(canonicalPlanDir, { ...snapshot, state, handoffJson, handoffMarkdown }, assertOwned));
+    await publishSnapshot(canonicalPlanDir, { ...snapshot, state, handoffJson, handoffMarkdown }, assertOwned, recordPublication);
     return state;
   }, { mutating: true });
 }
@@ -1661,7 +1663,7 @@ export async function addComment(
       handoffJson = undefined;
       handoffMarkdown = undefined;
     }
-    recordPublication(await publishSnapshot(canonicalPlanDir, { ...snapshot, state, comments, handoffJson, handoffMarkdown }, assertOwned));
+    await publishSnapshot(canonicalPlanDir, { ...snapshot, state, comments, handoffJson, handoffMarkdown }, assertOwned, recordPublication);
     return comment;
   }, { mutating: true, preflight: (_snapshot, authority) => requireKnownBlock(authority) });
 }
@@ -1681,7 +1683,7 @@ export async function resolveComment(planDir: string, id: string): Promise<Comme
       ? { ...comment, status: "resolved" as const, resolvedAt: new Date().toISOString() }
       : comment);
     const state = mergeReviewState(snapshot.state, {}, comments);
-    recordPublication(await publishSnapshot(canonicalPlanDir, { ...snapshot, state, comments }, assertOwned));
+    await publishSnapshot(canonicalPlanDir, { ...snapshot, state, comments }, assertOwned, recordPublication);
     return comments;
   }, { mutating: true, preflight: requireComment });
 }
@@ -1744,7 +1746,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
         comments: snapshot.comments,
         handoffJson,
         handoffMarkdown,
-      }, assertOwned, verifyIdentity, true);
+      }, assertOwned, recordPublication, verifyIdentity, true);
     } catch (error) {
       if (error instanceof SnapshotCommitVerificationError && error.restorable) {
         try {
@@ -1757,7 +1759,6 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
       }
       throw error;
     }
-    recordPublication(published);
     try {
       await verifyIdentity();
     } catch (error) {
