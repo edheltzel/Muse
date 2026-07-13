@@ -122,6 +122,47 @@ describe("interactive plan MDX loading", () => {
     expect(message).toContain("Duplicate MDX component id 'shared-diagram'");
     expect(message).toContain("Duplicate MDX component id 'canvas'");
   });
+
+  test.each([
+    {
+      direction: "plan authored → plan emitted",
+      planBlocks: [
+        `<Callout id="diagram-instructions">Collision</Callout>`,
+        `<ArchitectureDiagram id="diagram">flowchart LR\nA --> B</ArchitectureDiagram>`,
+      ],
+      canvasBlocks: [],
+    },
+    {
+      direction: "canvas authored → canvas emitted",
+      planBlocks: [`<PlanSummary id="summary">Summary</PlanSummary>`],
+      canvasBlocks: [
+        `<ArchitectureDiagram id="diagram">flowchart LR\nA --> B</ArchitectureDiagram>`,
+        `<Callout id="diagram-instructions">Collision</Callout>`,
+      ],
+    },
+    {
+      direction: "plan authored → canvas emitted",
+      planBlocks: [`<Callout id="diagram-instructions">Collision</Callout>`],
+      canvasBlocks: [`<ArchitectureDiagram id="diagram">flowchart LR\nA --> B</ArchitectureDiagram>`],
+    },
+    {
+      direction: "plan emitted → canvas authored",
+      planBlocks: [`<ArchitectureDiagram id="diagram">flowchart LR\nA --> B</ArchitectureDiagram>`],
+      canvasBlocks: [`<Callout id="diagram-instructions">Collision</Callout>`],
+    },
+  ])("rejects $direction id collisions", async ({ planBlocks, canvasBlocks }) => {
+    const planDir = await mkdtemp(join(tmpdir(), "ve-ip-derived-id-collision-"));
+    try {
+      await writeFile(join(planDir, "plan.mdx"), planBlocks.join("\n\n"));
+      if (canvasBlocks.length > 0) {
+        await writeFile(join(planDir, "canvas.mdx"), canvasBlocks.join("\n\n"));
+      }
+
+      await expect(loadPlanFolder(planDir)).rejects.toThrow("Duplicate rendered id 'diagram-instructions'");
+    } finally {
+      await rm(planDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("interactive plan rendering", () => {

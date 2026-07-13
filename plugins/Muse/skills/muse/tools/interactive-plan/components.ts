@@ -1,5 +1,5 @@
 import { type MdxBlock } from "./schema";
-import { type MdxComponentName, splitLines, splitPipeFields } from "./shared";
+import { RENDERER_OWNED_ID_INVENTORY, type MdxComponentName, splitLines, splitPipeFields } from "./shared";
 
 export interface RenderContext {
   staticMode: boolean;
@@ -47,7 +47,7 @@ function renderDecisionMatrix(block: MdxBlock): string {
 }
 
 function renderArchitectureDiagram(block: MdxBlock): string {
-  const instructionsId = `${escapeHtml(block.id)}-instructions`;
+  const instructionsId = escapeHtml(RENDERER_OWNED_ID_INVENTORY.ArchitectureDiagram.instructions(block.id));
   return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint" id="${instructionsId}">Use arrow keys to pan. Hold Ctrl or Command while scrolling to zoom, drag to pan, or expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}"><div class="zoom-controls"><button type="button" data-zoom="out" aria-label="Zoom out">−</button><button type="button" data-zoom="reset" aria-label="Reset zoom and position">100%</button><button type="button" data-zoom="in" aria-label="Zoom in">+</button><button type="button" data-expand aria-label="Expand diagram">⛶</button></div><div class="mermaid-viewport" tabindex="0" role="region" aria-label="${title(block)} interactive diagram" aria-describedby="${instructionsId}"><pre class="mermaid-source">${escapeHtml(block.body)}</pre><div class="mermaid-canvas" aria-label="${title(block)} diagram"></div></div></div></div>`);
 }
 

@@ -1,4 +1,4 @@
-import { KNOWN_MDX_COMPONENTS } from "./shared";
+import { getRendererOwnedIds, KNOWN_MDX_COMPONENTS } from "./shared";
 
 export type VisualPlanKind = "plan" | "recap" | "styleguide";
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -87,6 +87,7 @@ export function validateReviewState(value: unknown): string[] {
 export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[] = []): string[] {
   const errors: string[] = [];
   const seen = new Set(reservedIds);
+  const emittedIds: string[] = [];
   for (const block of blocks) {
     if (!KNOWN_MDX_COMPONENTS[block.type]) {
       errors.push(`Unknown MDX component '${block.type}'${block.id ? ` at block '${block.id}'` : ""}`);
@@ -97,9 +98,18 @@ export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[
       errors.push(`Duplicate MDX component id '${block.id}'`);
     } else {
       seen.add(block.id);
+      emittedIds.push(...getRendererOwnedIds(block));
     }
     if (block.type === "Wireframe" && /<\/?(?:html|head|body|script)\b/i.test(block.body)) {
       errors.push(`Wireframe '${block.id}' must be an HTML fragment without html/head/body/script tags`);
+    }
+  }
+  const renderedIds = new Set(seen);
+  for (const emittedId of emittedIds) {
+    if (renderedIds.has(emittedId)) {
+      errors.push(`Duplicate rendered id '${emittedId}'`);
+    } else {
+      renderedIds.add(emittedId);
     }
   }
   return errors;
