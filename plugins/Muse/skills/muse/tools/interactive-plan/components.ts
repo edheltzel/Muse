@@ -1,5 +1,5 @@
 import { type MdxBlock } from "./schema";
-import { type MdxComponentName, splitLines, splitPipeFields, splitTabPanels } from "./shared";
+import { getRendererOwnedIdsByRole, type MdxComponentName, splitLines, splitPipeFields, splitTabPanels } from "./shared";
 
 export interface RenderContext {
   staticMode: boolean;
@@ -47,7 +47,9 @@ function renderDecisionMatrix(block: MdxBlock): string {
 }
 
 function renderArchitectureDiagram(block: MdxBlock): string {
-  return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint">Scroll to zoom, drag to pan, expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}"><div class="zoom-controls"><button type="button" data-zoom="out">−</button><button type="button" data-zoom="reset">100%</button><button type="button" data-zoom="in">+</button><button type="button" data-expand>⛶</button></div><div class="mermaid-viewport"><pre class="mermaid-source">${escapeHtml(block.body)}</pre><div class="mermaid-canvas" aria-label="${title(block)} diagram"></div></div></div></div>`);
+  const instructionsId = escapeHtml(getRendererOwnedIdsByRole(block, "instructions")[0]);
+  const renderRootId = escapeHtml(getRendererOwnedIdsByRole(block, "renderRoot")[0]);
+  return card(block, "ve-ip-card ve-ip-diagram", `<div class="diagram-shell"><div class="diagram-shell__hint" id="${instructionsId}">Use arrow keys to pan. Hold Ctrl or Command while scrolling to zoom, drag to pan, or expand for full size.</div><div class="mermaid-wrap" data-diagram-id="${escapeHtml(block.id)}" data-mermaid-render-id="${renderRootId}"><div class="zoom-controls"><button type="button" data-zoom="out" aria-label="Zoom out">−</button><button type="button" data-zoom="reset" aria-label="Reset zoom and position">100%</button><button type="button" data-zoom="in" aria-label="Zoom in">+</button><button type="button" data-expand aria-label="Expand diagram">⛶</button></div><div class="mermaid-viewport" tabindex="0" role="region" aria-label="${title(block)} interactive diagram" aria-describedby="${instructionsId}"><pre class="mermaid-source">${escapeHtml(block.body)}</pre><div class="mermaid-canvas" aria-label="${title(block)} diagram"></div></div></div></div>`);
 }
 
 function renderTimeline(block: MdxBlock): string {
@@ -74,14 +76,16 @@ function renderAnnotatedCode(block: MdxBlock): string {
 
 function renderDiffTabs(block: MdxBlock, context: RenderContext): string {
   const chunks = splitTabPanels(block.body);
+  const panelIds = getRendererOwnedIdsByRole(block, "panels");
+  const tabIds = getRendererOwnedIdsByRole(block, "tabs");
   const items = chunks.map((chunk, index) => {
     const firstLine = chunk.match(/^[^\r\n]*/)?.[0] ?? "";
     const fallbackLabel = `${block.type === "DiffTabs" ? "Diff" : "Panel"} ${index + 1}`;
     return {
       chunk,
       label: firstLine.replace(/^file:\s*/, "") || fallbackLabel,
-      panelId: `${block.id}-panel-${index}`,
-      tabId: `${block.id}-tab-${index}`,
+      panelId: panelIds[index],
+      tabId: tabIds[index],
     };
   });
 
@@ -162,8 +166,18 @@ function renderStatusDashboard(block: MdxBlock): string {
 }
 
 function renderTableLike(block: MdxBlock): string {
-  const rows = splitLines(block.body).map((line) => `<tr>${splitPipeFields(line).map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("");
-  return card(block, "ve-ip-card", `<table><tbody>${rows}</tbody></table>`);
+  const rows = splitLines(block.body).map(splitPipeFields);
+  const header = rows.shift();
+  if (!header) return card(block, "ve-ip-card", "<table><tbody></tbody></table>");
+
+  rows.forEach((row, index) => {
+    if (row.length !== header.length) {
+      throw new Error(`${block.type} '${block.id}' row ${index + 2} has ${row.length} columns; expected ${header.length}`);
+    }
+  });
+  const head = `<thead><tr>${header.map((cell) => `<th scope="col">${escapeHtml(cell)}</th>`).join("")}</tr></thead>`;
+  const body = rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("");
+  return card(block, "ve-ip-card", `<table>${head}<tbody>${body}</tbody></table>`);
 }
 
 const renderers: Readonly<Record<string, Renderer | undefined>> = {

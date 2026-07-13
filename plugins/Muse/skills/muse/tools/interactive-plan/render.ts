@@ -4,7 +4,7 @@ import { interactivePlanClientScript, staticPlanClientScript } from "./client";
 import { escapeHtml, renderBlocks } from "./components";
 import { loadPlanFolder, type LoadedPlanFolder } from "./mdx-loader";
 import { validateRenderedHtmlIds } from "./schema";
-import { splitTabPanels } from "./shared";
+import { getRendererOwnedIdsByRole } from "./shared";
 
 const defaultShell = `<!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -582,13 +582,10 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
   const blocks = [...plan.plan.blocks, ...(plan.canvas?.blocks ?? [])];
   const expectedIds = blocks.map(({ id }) => id);
   if (plan.canvas) expectedIds.push("canvas");
-  if (!staticMode) {
-    for (const block of blocks) {
-      if (block.type !== "Tabs" && block.type !== "DiffTabs") continue;
-      splitTabPanels(block.body).forEach((_, index) => {
-        expectedIds.push(`${block.id}-tab-${index}`, `${block.id}-panel-${index}`);
-      });
-    }
+  for (const block of blocks) {
+    expectedIds.push(...getRendererOwnedIdsByRole(block, "instructions"));
+    if (staticMode) continue;
+    expectedIds.push(...getRendererOwnedIdsByRole(block, "tabs"), ...getRendererOwnedIdsByRole(block, "panels"));
   }
   const idErrors = validateRenderedHtmlIds(html, expectedIds);
   if (idErrors.length) throw new Error(`Invalid rendered HTML:\n${idErrors.join("\n")}`);

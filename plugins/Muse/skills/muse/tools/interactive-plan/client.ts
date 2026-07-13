@@ -24,10 +24,11 @@ const baseClientScript = `
 
   themeToggle?.addEventListener("click", () => {
     setTheme(root.dataset.theme === "dark" ? "light" : "dark");
+    renderMermaid();
   });
 
-  const mermaidTheme = () => {
-    const dark = root.dataset.theme === "dark";
+  const mermaidTheme = (theme) => {
+    const dark = theme === "dark";
     const palette = dark
       ? {
           primary: "#333a46",
@@ -62,31 +63,50 @@ const baseClientScript = `
     };
   };
 
-  const renderMermaid = async () => {
-    const mermaid = window.mermaid;
-    if (!mermaid) {
-      document.querySelectorAll(".mermaid-wrap").forEach((wrap) => {
-        wrap.setAttribute("data-render-state", "missing-runtime");
-      });
-      return;
-    }
-
-    mermaid.initialize(mermaidTheme());
-    const wraps = Array.from(document.querySelectorAll(".mermaid-wrap"));
-    for (const wrap of wraps) {
-      const source = wrap.querySelector(".mermaid-source")?.textContent?.trim();
-      const canvas = wrap.querySelector(".mermaid-canvas");
-      if (!source || !canvas) continue;
-      try {
-        const id = "ve-mermaid-" + (wrap.getAttribute("data-diagram-id") || Math.random().toString(36).slice(2));
-        const rendered = await mermaid.render(id, source);
-        canvas.innerHTML = rendered.svg;
-        wrap.setAttribute("data-render-state", "rendered");
-      } catch (error) {
-        canvas.innerHTML = '<pre class="mermaid-error">' + String(error?.message || error) + "</pre>";
-        wrap.setAttribute("data-render-state", "error");
+  let mermaidRenderVersion = 0;
+  let renderedMermaidTheme = null;
+  let mermaidRenderQueue = null;
+  const renderMermaid = () => {
+    const version = ++mermaidRenderVersion;
+    const theme = root.dataset.theme === "dark" ? "dark" : "light";
+    const run = async () => {
+      if (version !== mermaidRenderVersion || theme === renderedMermaidTheme) return;
+      const mermaid = window.mermaid;
+      if (!mermaid) {
+        document.querySelectorAll(".mermaid-wrap").forEach((wrap) => {
+          wrap.setAttribute("data-render-state", "missing-runtime");
+        });
+        return;
       }
-    }
+
+      mermaid.initialize(mermaidTheme(theme));
+      const wraps = Array.from(document.querySelectorAll(".mermaid-wrap"));
+      for (const wrap of wraps) {
+        if (version !== mermaidRenderVersion) return;
+        const source = wrap.querySelector(".mermaid-source")?.textContent?.trim();
+        const canvas = wrap.querySelector(".mermaid-canvas");
+        if (!source || !canvas) continue;
+        try {
+          const id = wrap.getAttribute("data-mermaid-render-id");
+          if (!id) continue;
+          const rendered = await mermaid.render(id, source);
+          if (version !== mermaidRenderVersion) return;
+          canvas.innerHTML = rendered.svg;
+          wrap.setAttribute("data-render-state", "rendered");
+        } catch (error) {
+          if (version !== mermaidRenderVersion) return;
+          const message = document.createElement("pre");
+          message.className = "mermaid-error";
+          message.textContent = String(error?.message || error);
+          canvas.replaceChildren(message);
+          wrap.setAttribute("data-render-state", "error");
+        }
+      }
+      renderedMermaidTheme = theme;
+    };
+
+    mermaidRenderQueue = mermaidRenderQueue ? mermaidRenderQueue.then(run, run) : run();
+    return mermaidRenderQueue;
   };
 
   const diagramState = new WeakMap();
@@ -130,6 +150,35 @@ const baseClientScript = `
     const viewport = wrap.querySelector(".mermaid-viewport");
     if (!viewport) return;
     let drag = null;
+    viewport.addEventListener("keydown", (event) => {
+      const target = event.target;
+      if (
+        event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || event.shiftKey
+        || (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName)))
+      ) return;
+      const state = stateFor(wrap);
+      switch (event.key) {
+        case "ArrowLeft":
+          state.x += 40;
+          break;
+        case "ArrowRight":
+          state.x -= 40;
+          break;
+        case "ArrowUp":
+          state.y += 40;
+          break;
+        case "ArrowDown":
+          state.y -= 40;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      applyTransform(wrap);
+    });
     viewport.addEventListener("wheel", (event) => {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();

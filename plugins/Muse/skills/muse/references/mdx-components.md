@@ -43,7 +43,7 @@ The local bridge publishes immutable review bundles beneath `.muse-review/bundle
 - `PlanSummary` — hero summary with goal, scope, audience, and status.
 - `StatusDashboard` — KPI/status cards.
 - `DecisionMatrix` — decision/rationale/status table.
-- `ArchitectureDiagram` — Mermaid diagram wrapped with Muse diagram chrome.
+- `ArchitectureDiagram` — Mermaid diagram with named zoom/expand controls, Ctrl/Command-scroll zoom, and a focusable, arrow-key-pannable viewport.
 - `ImplementationTimeline` — ordered implementation units.
 - `RiskRegister` — risk/mitigation/severity table.
 
@@ -53,8 +53,11 @@ The local bridge publishes immutable review bundles beneath `.muse-review/bundle
 - `AnnotatedCode` — focused code with file header.
 - `DiffTabs` — file-specific changes grouped into labeled panels.
 - `Tabs` — code-styled labeled panels for related evidence.
-- `ApiSurface` — API/command/route contract table.
-- `DataModel` — schema/entity table.
+- `ApiSurface` — API/command/route contract table; the first pipe-separated row defines column headers.
+- `DataModel` — schema/entity table; the first pipe-separated row defines column headers.
+- `Table` — generic data table; the first pipe-separated row defines column headers.
+
+Generic tables may be empty or contain only a header row. Every body row must have the same number of pipe-separated cells as the header; ragged rows fail with the component type, block ID, row number, actual count, and expected count.
 
 ## UI/product components
 

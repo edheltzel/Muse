@@ -1,5 +1,5 @@
 import { parse, parseFragment, type DefaultTreeAdapterTypes } from "parse5";
-import { findUnquotedTagEnd, KNOWN_MDX_COMPONENTS, splitLines, splitPipeFields, splitTabPanels } from "./shared";
+import { findUnquotedTagEnd, getRendererOwnedIds, KNOWN_MDX_COMPONENTS, splitLines, splitPipeFields, splitTabPanels } from "./shared";
 
 export type VisualPlanKind = "plan" | "recap" | "styleguide";
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
@@ -412,6 +412,7 @@ export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[
       }
       if (reservedIdSet.has(block.id)) {
         errors.push(`MDX component id '${block.id}' collides with renderer-owned id '${block.id}'`);
+        errors.push(`Duplicate MDX component id '${block.id}'`);
       }
       if (authoredIds.has(block.id)) errors.push(`Duplicate MDX component id '${block.id}'`);
       else authoredIds.add(block.id);
@@ -449,11 +450,12 @@ export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[
 
   const emittedIds = new Set([...authoredIds, ...reservedIdSet]);
   for (const block of blocks) {
-    if (block.type !== "Tabs" && block.type !== "DiffTabs") continue;
-    const panels = splitTabPanels(block.body);
-    panels.forEach((panel, index) => {
-      if (!panel) errors.push(`${block.type} '${block.id}' contains an empty panel at position ${index + 1}`);
-      for (const generatedId of [`${block.id}-tab-${index}`, `${block.id}-panel-${index}`]) {
+    const generatedIds = getRendererOwnedIds(block);
+    if (block.type === "Tabs" || block.type === "DiffTabs") {
+      splitTabPanels(block.body).forEach((panel, index) => {
+        if (!panel) errors.push(`${block.type} '${block.id}' contains an empty panel at position ${index + 1}`);
+      });
+      for (const generatedId of generatedIds) {
         if (authoredIds.has(generatedId)) {
           errors.push(`Generated HTML id '${generatedId}' for ${block.type} '${block.id}' collides with an authored block id`);
         } else if (reservedIdSet.has(generatedId)) {
@@ -461,9 +463,15 @@ export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[
         } else if (emittedIds.has(generatedId)) {
           errors.push(`Generated HTML id '${generatedId}' for ${block.type} '${block.id}' collides with another emitted id`);
         }
+        if (emittedIds.has(generatedId)) errors.push(`Duplicate rendered id '${generatedId}'`);
         emittedIds.add(generatedId);
       }
-    });
+    } else {
+      for (const generatedId of generatedIds) {
+        if (emittedIds.has(generatedId)) errors.push(`Duplicate rendered id '${generatedId}'`);
+        emittedIds.add(generatedId);
+      }
+    }
   }
 
   for (const block of blocks) {
