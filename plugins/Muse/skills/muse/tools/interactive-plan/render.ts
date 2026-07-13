@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { copyFontAssets, fontFaceCss, MERMAID_SHA384, MERMAID_URL } from "./assets";
+import { copyFontAssets, fontFaceCss, MERMAID_SHA384, MERMAID_URL, readFontNotices } from "./assets";
 import { interactivePlanClientScript, staticPlanClientScript } from "./client";
 import { escapeHtml, renderBlocks } from "./components";
 import { loadPlanFolder, type LoadedPlanFolder } from "./mdx-loader";
@@ -548,6 +548,22 @@ tr:last-child td { border-bottom: 0; }
   color: var(--surface);
   background: var(--accent-sage);
 }
+.ve-ip-third-party-notices > summary {
+  padding: 1rem 1.15rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+.ve-ip-third-party-notices[open] > summary { border-bottom: 1px solid var(--border); }
+.ve-ip-third-party-notices__body { padding: 1rem 1.15rem 1.15rem; }
+.ve-ip-third-party-notices article + article {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+.ve-ip-third-party-notices h3 { margin-bottom: .4rem; }
+.ve-ip-third-party-notices article > p { margin: .35rem 0; }
+.ve-ip-third-party-notices pre { max-height: 24rem; border-radius: 14px; background: var(--surface-recessed); }
 .ve-ip-block[hidden] { display: none; }
 @media (max-width: 860px) {
   .ve-ip-nav {
@@ -609,12 +625,22 @@ function navFor(plan: LoadedPlanFolder): string {
   }).join("");
 }
 
+async function renderFontNotices(): Promise<string> {
+  const notices = await readFontNotices();
+  const entries = notices.map((notice) => {
+    const assets = notice.assets.map((asset) => `<li><code>${escapeHtml(asset)}</code></li>`).join("");
+    return `<article><h3>${escapeHtml(notice.package)} ${escapeHtml(notice.version)}</h3><p>Embedded assets:</p><ul>${assets}</ul><pre class="code-block">${escapeHtml(notice.text)}</pre></article>`;
+  }).join("");
+  return `<details class="ve-ip-block ve-ip-card ve-ip-third-party-notices"><summary>Third-party font notices</summary><div class="ve-ip-third-party-notices__body"><p>Copyright notices and SIL Open Font License 1.1 terms for fonts embedded in this portable file.</p>${entries}</div></details>`;
+}
+
 export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false, shell?: string): Promise<string> {
   const template = shell ?? (await readShellTemplate());
   const componentExplorer = plan.manifest.kind === "styleguide";
   const content = [
     renderBlocks(plan.plan.blocks, { staticMode, componentExplorer }),
     plan.canvas ? `<section class="ve-ip-block ve-ip-card" id="canvas"><div class="ve-ip-label">Canvas</div><h2>Canvas</h2>${renderBlocks(plan.canvas.blocks, { staticMode, componentExplorer: false })}</section>` : "",
+    staticMode ? await renderFontNotices() : "",
   ].join("\n");
   const fonts = await fontFaceCss(staticMode);
   return template

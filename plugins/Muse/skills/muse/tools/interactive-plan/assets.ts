@@ -9,6 +9,22 @@ export interface FontAsset {
   sha384: string;
 }
 
+interface FontNoticeManifest {
+  assets: Array<{
+    asset: string;
+    package: string;
+    version: string;
+    notice: string;
+  }>;
+}
+
+export interface FontNotice {
+  package: string;
+  version: string;
+  assets: string[];
+  text: string;
+}
+
 export const FONT_ASSETS: readonly FontAsset[] = Object.freeze([
   {
     filename: "bricolage-grotesque-latin-500-normal.woff2",
@@ -55,6 +71,40 @@ export async function fontFaceCss(staticMode: boolean): Promise<string> {
       : `/assets/${asset.filename}`;
     return `@font-face { font-family: "${asset.family}"; font-style: normal; font-display: swap; font-weight: ${asset.weight}; src: url("${source}") format("woff2"); unicode-range: ${latinUnicodeRange}; }`;
   }))).join("\n");
+}
+
+export async function readFontNotices(): Promise<FontNotice[]> {
+  const manifest = JSON.parse(
+    await readFile(join(sourceAssetDir, "notices", "manifest.json"), "utf8"),
+  ) as FontNoticeManifest;
+  const expectedAssets = new Set(FONT_ASSETS.map((asset) => asset.filename));
+  const noticeGroups = new Map<string, Omit<FontNotice, "text"> & { notice: string }>();
+
+  for (const entry of manifest.assets) {
+    if (!expectedAssets.has(entry.asset)) continue;
+    const key = `${entry.package}\0${entry.version}\0${entry.notice}`;
+    const group = noticeGroups.get(key);
+    if (group) {
+      group.assets.push(entry.asset);
+    } else {
+      noticeGroups.set(key, {
+        package: entry.package,
+        version: entry.version,
+        assets: [entry.asset],
+        notice: entry.notice,
+      });
+    }
+    expectedAssets.delete(entry.asset);
+  }
+
+  if (expectedAssets.size > 0) {
+    throw new Error(`Missing font notice metadata for: ${[...expectedAssets].join(", ")}`);
+  }
+
+  return Promise.all([...noticeGroups.values()].map(async ({ notice, ...metadata }) => ({
+    ...metadata,
+    text: await readFile(join(sourceAssetDir, notice), "utf8"),
+  })));
 }
 
 export async function copyFontAssets(distDir: string): Promise<void> {

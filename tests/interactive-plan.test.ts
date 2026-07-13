@@ -83,6 +83,14 @@ function expectNoForbiddenRuntimeReferences(html: string): void {
   expect(html).not.toMatch(/\breact-dom\b/i);
 }
 
+function escapeExpectedHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 describe("interactive plan MDX loading", () => {
   test("loads every checked-in fixture through schema validation", async () => {
     const fixtureExpectations = [
@@ -221,6 +229,34 @@ describe("interactive plan rendering", () => {
       expectNoForbiddenRuntimeReferences(staticHtml);
     });
   });
+  test("embeds complete font notices in the single-file static export", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const { staticExportPath } = await renderPlanFolder(planDir);
+      const staticHtml = await readFile(staticExportPath, "utf8");
+      const shareScript = await readFile(join(repoRoot, "plugins", "Muse", "skills", "muse", "scripts", "share.sh"), "utf8");
+
+      expect(staticHtml.match(/data:font\/woff2;base64,/g)).toHaveLength(Object.keys(expectedFontAssets).length);
+      expect(staticHtml).not.toContain('url("/assets/');
+      expect(staticHtml).toContain("<details");
+      expect(staticHtml).toContain("Third-party font notices");
+
+      for (const [notice, metadata] of Object.entries(expectedFontNotices)) {
+        const noticeText = await readFile(join(fontAssetRoot, notice), "utf8");
+        expect(staticHtml).toContain(escapeExpectedHtml(noticeText));
+        expect(staticHtml).toContain(metadata.copyright.replaceAll("&", "&amp;"));
+      }
+
+      for (const [asset, metadata] of Object.entries(expectedFontAssets)) {
+        expect(staticHtml).toContain(asset);
+        expect(staticHtml).toContain(metadata.package);
+        expect(staticHtml).toContain(metadata.version);
+      }
+
+      expect(shareScript).toContain('cp "$HTML_FILE" "$DEPLOY_DIR/index.html"');
+      expect(shareScript).not.toMatch(/cp\s+(?:-[^\s]+\s+)*["']?\$HTML_FILE["']?\s+["']?\$DEPLOY_DIR\/assets/);
+    });
+  });
+
   test("renders the style guide as a searchable, copyable component explorer", async () => {
     await withFixture("component-library-showcase", async (planDir) => {
       const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
