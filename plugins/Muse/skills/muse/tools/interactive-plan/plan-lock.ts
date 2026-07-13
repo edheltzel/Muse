@@ -1,7 +1,7 @@
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, readFile, realpath, type FileHandle } from "node:fs/promises";
 import { resolve } from "node:path";
-import { dlopen, FFIType, ptr } from "bun:ffi";
+import { dlopen, FFIType, ptr, read as ffiRead, type Pointer } from "bun:ffi";
 
 const LOCK_NAME = ".muse-review.lock";
 const LOCK_EX = 2;
@@ -43,15 +43,94 @@ interface LockBackend {
 
 let backend: Promise<LockBackend> | undefined;
 
-const FLOCK_SYMBOLS = {
+const FLOCK_SYMBOL = {
   flock: {
     args: [FFIType.i32, FFIType.i32],
     returns: FFIType.i32,
   },
 } as const;
 
-function openFlockLibrary(path: string) {
-  return dlopen(path, FLOCK_SYMBOLS);
+interface NativeFlockLibrary {
+  flock(fd: number, operation: number): number;
+  errno(): number;
+}
+
+type UnixPlatform = "darwin" | "linux";
+type NativeFlockCall = (fd: number, operation: number) => number;
+
+function readErrnoPointer(address: Pointer | null, symbol: string): number {
+  if (address === null) throw new Error(`${symbol} returned a null errno pointer`);
+  return ffiRead.i32(address);
+}
+
+function openFlockLibrary(path: string, platform: UnixPlatform): NativeFlockLibrary {
+  if (platform === "darwin") {
+    const library = dlopen(path, {
+      ...FLOCK_SYMBOL,
+      __error: { args: [], returns: FFIType.ptr },
+    } as const);
+    return {
+      flock: (fd, operation) => library.symbols.flock(fd, operation),
+      errno: () => readErrnoPointer(library.symbols.__error(), "__error"),
+    };
+  }
+  const library = dlopen(path, {
+    ...FLOCK_SYMBOL,
+    __errno_location: { args: [], returns: FFIType.ptr },
+  } as const);
+  return {
+    flock: (fd, operation) => library.symbols.flock(fd, operation),
+    errno: () => readErrnoPointer(library.symbols.__errno_location(), "__errno_location"),
+  };
+}
+
+function flockErrnoCode(errno: number, platform: UnixPlatform): string {
+  const platformCodes: Record<number, string> = platform === "darwin"
+    ? { 5: "EIO", 9: "EBADF", 35: "EWOULDBLOCK", 45: "ENOTSUP", 77: "ENOLCK", 102: "EOPNOTSUPP" }
+    : { 5: "EIO", 9: "EBADF", 11: "EWOULDBLOCK", 37: "ENOLCK", 38: "ENOSYS", 95: "EOPNOTSUPP" };
+  return platformCodes[errno] ?? `ERRNO_${errno}`;
+}
+
+function flockFailure(path: string, operation: "acquire" | "release", errno: number, platform: UnixPlatform): Error {
+  const code = flockErrnoCode(errno, platform);
+  const cause = Object.assign(new Error(`${code}: flock ${operation} failed for ${path}`), {
+    code,
+    errno,
+    syscall: "flock",
+    path,
+  });
+  return new Error(`Could not ${operation} review lock at ${path}: ${code} (${errno})`, { cause });
+}
+
+function tryUnixFlock(
+  flock: NativeFlockCall,
+  getErrno: () => number,
+  fd: number,
+  path: string,
+  platform: UnixPlatform,
+): BackendLock | undefined {
+  if (flock(fd, LOCK_EX | LOCK_NB) !== 0) {
+    const errno = getErrno();
+    if (errno === (platform === "darwin" ? 35 : 11)) return undefined;
+    throw flockFailure(path, "acquire", errno, platform);
+  }
+  return {
+    release() {
+      if (flock(fd, LOCK_UN) !== 0) {
+        throw flockFailure(path, "release", getErrno(), platform);
+      }
+    },
+  };
+}
+
+export function tryUnixFlockForTesting(
+  flock: NativeFlockCall,
+  getErrno: () => number,
+  fd: number,
+  path: string,
+  platform: UnixPlatform,
+): BackendLock | undefined {
+  return tryUnixFlock(flock, getErrno, fd, path, platform);
 }
 
 function windowsWideString(value: string): Uint16Array {
@@ -99,8 +178,10 @@ async function loadLockBackend(): Promise<LockBackend> {
           if (error === ERROR_SHARING_VIOLATION) return undefined;
           throw new Error(`CreateFileW failed for the review lock with Windows error ${error}`);
         }
+
+        let pathname: BigIntStats;
         try {
-          const pathname = await lstat(lockPath, { bigint: true });
+          pathname = await lstat(lockPath, { bigint: true });
           if (!pathname.isFile() || pathname.isSymbolicLink()) {
             throw new Error(`Review lock path must be a regular non-symlink file at ${lockPath}`);
           }
@@ -108,27 +189,56 @@ async function loadLockBackend(): Promise<LockBackend> {
           kernel.symbols.CloseHandle(handle);
           throw error;
         }
+
         const overlapped = new Uint8Array(32);
-        if (
-          kernel.symbols.LockFileEx(
-            handle,
-            LOCKFILE_EXCLUSIVE_FAIL_IMMEDIATELY,
-            0,
-            0xffffffff,
-            0xffffffff,
-            ptr(overlapped),
-          ) === 0
-        ) {
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+          if (
+            kernel.symbols.LockFileEx(
+              handle,
+              LOCKFILE_EXCLUSIVE_FAIL_IMMEDIATELY,
+              0,
+              0xffffffff,
+              0xffffffff,
+              ptr(overlapped),
+            ) !== 0
+          ) {
+            try {
+              const retainedPathname = await lstat(lockPath, { bigint: true });
+              if (
+                !retainedPathname.isFile()
+                || retainedPathname.isSymbolicLink()
+                || retainedPathname.dev !== pathname.dev
+                || retainedPathname.ino !== pathname.ino
+                || retainedPathname.size !== pathname.size
+                || retainedPathname.mtimeNs !== pathname.mtimeNs
+                || retainedPathname.ctimeNs !== pathname.ctimeNs
+              ) {
+                throw new Error(`Review lock path generation changed during Windows acquisition at ${lockPath}`);
+              }
+            } catch (error) {
+              kernel.symbols.CloseHandle(handle);
+              throw error;
+            }
+            return {
+              release() {
+                kernel.symbols.CloseHandle(handle);
+              },
+            };
+          }
+
           const error = kernel.symbols.GetLastError();
-          kernel.symbols.CloseHandle(handle);
-          if (error === ERROR_LOCK_VIOLATION) return undefined;
-          throw new Error(`LockFileEx failed for the review lock with Windows error ${error}`);
-        }
-        return {
-          release() {
+          if (error !== ERROR_LOCK_VIOLATION) {
             kernel.symbols.CloseHandle(handle);
-          },
-        };
+            throw new Error(`LockFileEx failed for the review lock with Windows error ${error}`);
+          }
+          if (attempt + 1 === MAX_ATTEMPTS) {
+            kernel.symbols.CloseHandle(handle);
+            throw new Error(`Timed out waiting for Windows review lock at ${lockPath}`);
+          }
+          await Bun.sleep(10);
+        }
+        kernel.symbols.CloseHandle(handle);
+        throw new Error(`Timed out waiting for Windows review lock at ${lockPath}`);
       },
     };
   }
@@ -136,15 +246,16 @@ async function loadLockBackend(): Promise<LockBackend> {
   if (process.platform !== "darwin" && process.platform !== "linux") {
     throw new Error(`Review locking is unsupported on ${process.platform}`);
   }
-  let libc;
-  if (process.platform === "darwin") {
-    libc = openFlockLibrary("/usr/lib/libSystem.B.dylib");
+  const platform = process.platform;
+  let libc: NativeFlockLibrary | undefined;
+  if (platform === "darwin") {
+    libc = openFlockLibrary("/usr/lib/libSystem.B.dylib", platform);
   } else {
     const muslArch = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch;
     const candidates = ["libc.so.6", "libc.so", `ld-musl-${muslArch}.so.1`, `/lib/ld-musl-${muslArch}.so.1`];
     for (const candidate of candidates) {
       try {
-        libc = openFlockLibrary(candidate);
+        libc = openFlockLibrary(candidate, platform);
         break;
       } catch {
         // Try the next conventional soname before consulting the process map.
@@ -160,26 +271,18 @@ async function loadLockBackend(): Promise<LockBackend> {
       const loaded = maps.match(/\/\S*(?:libc\.so(?:\.\d+)*|ld-musl-[^\s/]+\.so\.1)/g) ?? [];
       const path = loaded.find((entry) => !entry.includes("libcap") && !entry.includes("libcrypto"));
       if (!path) throw new Error("Could not resolve the loaded Linux libc for review locking");
-      libc = openFlockLibrary(path);
+      libc = openFlockLibrary(path, platform);
     }
   }
+  if (!libc) throw new Error("Could not initialize Unix libc review locking");
+  const native = libc;
   return {
     kind: "unix",
     async tryLock(root) {
-      if (libc.symbols.flock(root.handle.fd, LOCK_EX | LOCK_NB) !== 0) return undefined;
-      return {
-        release() {
-          libc.symbols.flock(root.handle.fd, LOCK_UN);
-        },
-      };
+      return tryUnixFlock(native.flock, native.errno, root.handle.fd, root.path, platform);
     },
     async tryLegacyLock(binding) {
-      if (libc.symbols.flock(binding.handle.fd, LOCK_EX | LOCK_NB) !== 0) return undefined;
-      return {
-        release() {
-          libc.symbols.flock(binding.handle.fd, LOCK_UN);
-        },
-      };
+      return tryUnixFlock(native.flock, native.errno, binding.handle.fd, binding.path, platform);
     },
   };
 }
@@ -277,7 +380,38 @@ async function verifyLegacyLock(binding: LegacyLockBinding): Promise<void> {
 
 export interface PlanLock {
   assertOwned(): Promise<void>;
+  assertCanonicalOwned(): Promise<void>;
   release(): Promise<void>;
+}
+
+async function releaseAcquisitionResources(
+  directoryToken: BackendLock,
+  root: PlanRootBinding,
+  legacyToken?: BackendLock,
+  legacyBinding?: LegacyLockBinding,
+): Promise<unknown[]> {
+  const errors: unknown[] = [];
+  try {
+    legacyToken?.release();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await legacyBinding?.handle.close();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    directoryToken.release();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await root.handle.close();
+  } catch (error) {
+    errors.push(error);
+  }
+  return errors;
 }
 
 export async function acquirePlanLock(planDir: string): Promise<PlanLock> {
@@ -314,28 +448,30 @@ export async function acquirePlanLock(planDir: string): Promise<PlanLock> {
       }
 
       let released = false;
-      const assertOwned = async () => {
+      const assertCanonicalOwned = async () => {
         if (released) throw new Error(`Review lock was already released for ${root.path}`);
         await verifyPlanRoot(root);
+      };
+      const assertOwned = async () => {
+        await assertCanonicalOwned();
         if (legacyBinding) await verifyLegacyLock(legacyBinding);
       };
       await assertOwned();
       return {
         assertOwned,
+        assertCanonicalOwned,
         async release() {
           if (released) return;
           released = true;
-          legacyToken?.release();
-          await legacyBinding?.handle.close().catch(() => undefined);
-          directoryToken.release();
-          await root.handle.close().catch(() => undefined);
+          const errors = await releaseAcquisitionResources(directoryToken, root, legacyToken, legacyBinding);
+          if (errors.length) throw new AggregateError(errors, `Review lock release failed for ${root.path}`);
         },
       };
     } catch (error) {
-      legacyToken?.release();
-      await legacyBinding?.handle.close().catch(() => undefined);
-      directoryToken.release();
-      await root.handle.close();
+      const cleanupErrors = await releaseAcquisitionResources(directoryToken, root, legacyToken, legacyBinding);
+      if (cleanupErrors.length) {
+        throw new AggregateError([error, ...cleanupErrors], `Review lock acquisition cleanup failed for ${root.path}`);
+      }
       throw error;
     }
   }

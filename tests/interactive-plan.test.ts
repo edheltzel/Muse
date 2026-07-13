@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 import { decodeMarkdownText, encodeMarkdownText, formatAgentHandoffMarkdown, parseAgentHandoffMarkdown } from "../plugins/Muse/skills/muse/tools/interactive-plan/handoff.ts";
 import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
-import { acquirePlanLock } from "../plugins/Muse/skills/muse/tools/interactive-plan/plan-lock.ts";
+import { acquirePlanLock, tryUnixFlockForTesting } from "../plugins/Muse/skills/muse/tools/interactive-plan/plan-lock.ts";
 import type { AgentHandoff, ReviewState } from "../plugins/Muse/skills/muse/tools/interactive-plan/schema.ts";
 import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 import { servePlan } from "../plugins/Muse/skills/muse/tools/interactive-plan/server.ts";
@@ -1434,6 +1434,211 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
+  test("keeps Windows lock acquisition bounded across both blocking directions and owner exit", async () => {
+    if (process.platform !== "win32") return;
+    await withFixture("minimal-plan", async (planDir) => {
+      const helper = join(repoRoot, "tests", "helpers", "review-lock-owner.ts");
+      // Windows process locks run on the OS clock; this deadline bounds a hung native acquisition.
+      const withinBound = async <T>(promise: Promise<T>, label: string): Promise<T> => Promise.race([
+        promise,
+        Bun.sleep(5_000).then(() => { throw new Error(`Timed out waiting for ${label}`); }),
+      ]);
+
+      const mainHolder = await acquirePlanLock(planDir);
+      const childContender = Bun.spawn([process.execPath, helper, planDir, "--signal-attempt"], {
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const childOutput = childContender.stdout.getReader();
+      expect(new TextDecoder().decode((await withinBound(childOutput.read(), "child attempt")).value)).toContain("attempting");
+      let childReady = false;
+      const childReadyResult = childOutput.read().then((result) => {
+        childReady = true;
+        return result;
+      });
+      // The child exposes no intermediate lock event, so a real interval proves native contention remains blocked.
+      await Bun.sleep(40);
+      expect(childReady).toBe(false);
+      await mainHolder.release();
+      expect(new TextDecoder().decode((await withinBound(childReadyResult, "child acquisition")).value)).toContain("ready");
+      childContender.kill();
+      await withinBound(childContender.exited, "child holder exit");
+
+      const childHolder = Bun.spawn([process.execPath, helper, planDir], {
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(new TextDecoder().decode((await withinBound(childHolder.stdout.getReader().read(), "child holder")).value)).toContain("ready");
+      let mainReady = false;
+      const mainContender = acquirePlanLock(planDir).then((lock) => {
+        mainReady = true;
+        return lock;
+      });
+      // The in-process contender likewise has no observable event before native acquisition completes.
+      await Bun.sleep(40);
+      expect(mainReady).toBe(false);
+      childHolder.kill();
+      await withinBound(childHolder.exited, "owner exit");
+      const acquiredAfterExit = await withinBound(mainContender, "main acquisition after owner exit");
+      await acquiredAfterExit.release();
+
+      const dataPath = join(planDir, "windows-mixed-lock-writes.json");
+      await writeFile(dataPath, "[]\n");
+      const expected = Array.from({ length: 16 }, (_, index) => `windows-write-${index}`);
+      const writers = expected.map((key) => Bun.spawn([
+        process.execPath,
+        helper,
+        planDir,
+        "--write",
+        dataPath,
+        key,
+      ], { cwd: repoRoot, stdout: "pipe", stderr: "pipe" }));
+      const results = await withinBound(Promise.all(writers.map(async (writer) => ({
+        exitCode: await writer.exited,
+        output: await new Response(writer.stdout).text(),
+      }))), "mixed Windows writes");
+      expect(results.map((result) => result.exitCode)).toEqual(expected.map(() => 0));
+      expect(results.every((result) => result.output.includes("acknowledged"))).toBe(true);
+      expect((JSON.parse(await readFile(dataPath, "utf8")) as string[]).sort()).toEqual(expected.sort());
+    });
+  });
+
+  test("rejects Windows pathname generation changes and binds alias contenders canonically", async () => {
+    if (process.platform !== "win32") return;
+    const helper = join(repoRoot, "tests", "helpers", "review-lock-owner.ts");
+    // Windows process locks run on the OS clock; this deadline bounds a hung native acquisition.
+    const withinBound = async <T>(promise: Promise<T>, label: string): Promise<T> => Promise.race([
+      promise,
+      Bun.sleep(5_000).then(() => { throw new Error(`Timed out waiting for ${label}`); }),
+    ]);
+
+    await withFixture("minimal-plan", async (planDir) => {
+      const owner = Bun.spawn([process.execPath, helper, planDir], { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
+      expect(new TextDecoder().decode((await withinBound(owner.stdout.getReader().read(), "Windows owner")).value)).toContain("ready");
+      const contender = Bun.spawn([process.execPath, helper, planDir, "--signal-attempt"], {
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [contenderSignal, contenderCapture] = contender.stdout.tee();
+      expect(new TextDecoder().decode((await withinBound(contenderSignal.getReader().read(), "Windows contender")).value)).toContain("attempting");
+      // Allow the child to enter LockFileEx contention before mutating the retained pathname generation.
+      await Bun.sleep(40);
+      await writeFile(join(planDir, ".muse-review.lock"), "changed while contended\n");
+      owner.kill();
+      await withinBound(owner.exited, "Windows owner exit");
+      expect(await withinBound(contender.exited, "generation-change rejection")).not.toBe(0);
+      expect(await new Response(contenderCapture).text()).not.toContain("ready");
+    });
+
+    await withFixture("minimal-plan", async (originalDir) => {
+      await withFixture("minimal-plan", async (replacementDir) => {
+        const aliasRoot = await mkdtemp(join(tmpdir(), "ve-ip-windows-alias-"));
+        const alias = join(aliasRoot, "plan");
+        const originalData = join(originalDir, "alias-writes.json");
+        const replacementData = join(replacementDir, "alias-writes.json");
+        await Promise.all([writeFile(originalData, "[]\n"), writeFile(replacementData, "[]\n")]);
+        await fs.symlink(originalDir, alias, "junction");
+        try {
+          const holder = Bun.spawn([process.execPath, helper, originalDir], { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
+          expect(new TextDecoder().decode((await withinBound(holder.stdout.getReader().read(), "aliased owner")).value)).toContain("ready");
+          const contender = Bun.spawn([
+            process.execPath,
+            helper,
+            alias,
+            "--signal-write",
+            originalData,
+            "original",
+          ], { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
+          const [contenderSignal, contenderCapture] = contender.stdout.tee();
+          expect(new TextDecoder().decode((await withinBound(contenderSignal.getReader().read(), "aliased contender")).value)).toContain("attempting");
+          // Allow the aliased child to bind its canonical root before the junction is retargeted.
+          await Bun.sleep(40);
+          await rm(alias);
+          await fs.symlink(replacementDir, alias, "junction");
+          holder.kill();
+          await withinBound(holder.exited, "aliased owner exit");
+          expect(await withinBound(contender.exited, "aliased contender completion")).toBe(0);
+          expect(await new Response(contenderCapture).text()).toContain("acknowledged");
+
+          const replacementWriter = Bun.spawn([
+            process.execPath,
+            helper,
+            alias,
+            "--write",
+            replacementData,
+            "replacement",
+          ], { cwd: repoRoot, stdout: "pipe", stderr: "pipe" });
+          expect(await withinBound(replacementWriter.exited, "retargeted alias write")).toBe(0);
+          expect(JSON.parse(await readFile(originalData, "utf8"))).toEqual(["original"]);
+          expect(JSON.parse(await readFile(replacementData, "utf8"))).toEqual(["replacement"]);
+        } finally {
+          await rm(aliasRoot, { recursive: true, force: true });
+        }
+      });
+    });
+  });
+
+  test("classifies injected Unix flock results without timers", () => {
+    for (const [platform, errno] of [["darwin", 35], ["linux", 11]] as const) {
+      let errnoReads = 0;
+      const retry = tryUnixFlockForTesting(
+        () => -1,
+        () => {
+          errnoReads += 1;
+          return errno;
+        },
+        42,
+        `/tmp/${platform}-retry.lock`,
+        platform,
+      );
+      expect(retry).toBeUndefined();
+      expect(errnoReads).toBe(1);
+    }
+
+    const terminalCases = [
+      ["darwin", 9, "EBADF"],
+      ["darwin", 77, "ENOLCK"],
+      ["darwin", 5, "EIO"],
+      ["darwin", 102, "EOPNOTSUPP"],
+      ["linux", 9, "EBADF"],
+      ["linux", 37, "ENOLCK"],
+      ["linux", 5, "EIO"],
+      ["linux", 95, "EOPNOTSUPP"],
+    ] as const;
+    for (const [platform, errno, code] of terminalCases) {
+      try {
+        tryUnixFlockForTesting(() => -1, () => errno, 42, `/tmp/${platform}-terminal.lock`, platform);
+        throw new Error(`Expected ${code} to be terminal`);
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain(code);
+        expect((error as Error & { cause?: { code?: string; errno?: number; syscall?: string } }).cause).toMatchObject({
+          code,
+          errno,
+          syscall: "flock",
+        });
+      }
+    }
+
+    const operations: number[] = [];
+    const acquired = tryUnixFlockForTesting(
+      (_fd, operation) => {
+        operations.push(operation);
+        return operation === 8 ? -1 : 0;
+      },
+      () => 5,
+      42,
+      "/tmp/release.lock",
+      "linux",
+    );
+    expect(acquired).toBeDefined();
+    expect(() => acquired!.release()).toThrow(/EIO/);
+    expect(operations).toEqual([6, 8]);
+  });
+
   test("uses native Windows lock handles and conventional Linux libc candidates", async () => {
     const source = await readFile(
       join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "plan-lock.ts"),
@@ -1455,6 +1660,12 @@ describe("interactive plan review state and handoff", () => {
     expect(source.indexOf('"libc.so.6"')).toBeLessThan(source.indexOf('readFile("/proc/self/maps"'));
     expect(source).toContain("legacyBinding = await openLegacyLock(root)");
     expect(source.indexOf("directoryToken = await locking.tryLock(root)")).toBeLessThan(source.indexOf("locking.tryLegacyLock!(legacyBinding)"));
+    expect(source.indexOf("CreateFileW(")).toBeLessThan(source.indexOf("for (let attempt = 0; attempt < MAX_ATTEMPTS"));
+    expect(source.indexOf("for (let attempt = 0; attempt < MAX_ATTEMPTS")).toBeLessThan(source.indexOf("kernel.symbols.LockFileEx("));
+    expect(source).toContain("retainedPathname.dev !== pathname.dev");
+    expect(source).toContain("__error");
+    expect(source).toContain("__errno_location");
+    expect(source).toContain("ffiRead.i32");
     const parentSource = await readFile(join(repoRoot, "tests", "helpers", "parent-plan-lock.ts"));
     expect(createHash("sha256").update(parentSource).digest("hex")).toBe(
       "5eea7640676468fdd897a8fcb58b02993b566751c81fbaf5670953d135b38bb7",
@@ -2326,6 +2537,167 @@ describe("interactive plan review state and handoff", () => {
         expect((await readReviewState(planDir)).answers.retained).toBe(failedFile);
         for (const file of ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"]) {
           expect(await readlink(join(planDir, file))).toBe(join(".muse-review", "current", file));
+        }
+      });
+    }
+  });
+
+  test("restores exact compatibility generations after post-symlink lstat faults and retries", async () => {
+    for (const failedFile of ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        const files = ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"] as const;
+        const paths = Object.fromEntries(files.map((file) => [file, join(planDir, file)])) as Record<(typeof files)[number], string>;
+        const originalBytes = {
+          "plan-state.json": Buffer.from(`${JSON.stringify({
+            status: "in_review",
+            answers: { retained: failedFile },
+            checklist: {},
+            unresolvedCommentIds: [],
+          }, null, 2)}\n`),
+          "comments.json": Buffer.from("[]\n"),
+          "agent-handoff.json": Buffer.from("operator-owned\n"),
+        };
+        await Promise.all(Object.entries(originalBytes).map(([file, bytes]) => writeFile(paths[file as keyof typeof paths], bytes)));
+        const originalStats = Object.fromEntries(
+          await Promise.all(Object.keys(originalBytes).map(async (file) => [file, await lstat(paths[file as keyof typeof paths], { bigint: true })])),
+        );
+        const originalLstat = fs.lstat;
+        let injected = false;
+        spyOn(fs, "lstat").mockImplementation((async (path: PathLike, options?: object) => {
+          const pathname = String(path);
+          if (!injected && pathname === paths[failedFile]) {
+            const stats = await originalLstat(path, options as never);
+            if (stats.isSymbolicLink()) {
+              injected = true;
+              throw new Error(`post-symlink lstat fault at ${failedFile}`);
+            }
+          }
+          return originalLstat(path, options as never);
+        }) as typeof fs.lstat);
+
+        await expect(readReviewState(planDir)).rejects.toThrow(/rollback|post-symlink lstat fault/i);
+        for (const [file, bytes] of Object.entries(originalBytes)) {
+          const path = paths[file as keyof typeof paths];
+          expect(await readFile(path)).toEqual(bytes);
+          const restored = await lstat(path, { bigint: true });
+          const original = originalStats[file]!;
+          expect([restored.dev, restored.ino]).toEqual([original.dev, original.ino]);
+        }
+        expect(await Bun.file(paths["agent-handoff.md"]).exists()).toBe(false);
+        await expect(lstat(join(planDir, ".muse-review", "current"))).rejects.toThrow();
+        await expect(lstat(join(planDir, ".muse-review", "initialized"))).rejects.toThrow();
+        expect((await readdir(planDir)).some((entry) => entry.endsWith(".legacy"))).toBe(false);
+
+        mock.restore();
+        expect((await readReviewState(planDir)).answers.retained).toBe(failedFile);
+        for (const file of files) {
+          expect(await readlink(paths[file])).toBe(join(".muse-review", "current", file));
+        }
+      });
+    }
+  });
+
+  test("fences state, comment, revision, resolution, and approval after callback ownership loss", async () => {
+    if (process.platform === "win32") return;
+    const scenarios: Array<{
+      name: "state" | "comment" | "revision" | "resolution" | "approval";
+      trigger: "pointer" | "cleanup";
+      setup(planDir: string): Promise<void>;
+      mutate(planDir: string): Promise<unknown>;
+    }> = [
+      {
+        name: "state",
+        trigger: "pointer",
+        setup: async (planDir) => { await readReviewState(planDir); },
+        mutate: (planDir) => updateReviewState(planDir, { answers: { fenced: "must-not-commit" } }),
+      },
+      {
+        name: "comment",
+        trigger: "pointer",
+        setup: async (planDir) => { await readReviewState(planDir); },
+        mutate: (planDir) => addComment(planDir, { id: "c-fenced", blockId: "summary", body: "must not commit" }),
+      },
+      {
+        name: "revision",
+        trigger: "pointer",
+        setup: async (planDir) => { await approvePlan(planDir, "prior-reviewer"); },
+        mutate: (planDir) => updateReviewState(planDir, { status: "needs_revision" }),
+      },
+      {
+        name: "resolution",
+        trigger: "pointer",
+        setup: async (planDir) => {
+          await addComment(planDir, { id: "c-resolution-fence", blockId: "summary", body: "remain open" });
+        },
+        mutate: (planDir) => resolveComment(planDir, "c-resolution-fence"),
+      },
+      {
+        name: "approval",
+        trigger: "cleanup",
+        setup: async (planDir) => { await readReviewState(planDir); },
+        mutate: (planDir) => approvePlan(planDir, "attempted-reviewer"),
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      mock.restore();
+      await withFixture("minimal-plan", async (planDir) => {
+        await scenario.setup(planDir);
+        const store = join(planDir, ".muse-review");
+        const pointer = join(store, "current");
+        const lockPath = join(planDir, ".muse-review.lock");
+        const priorTarget = await readlink(pointer);
+        const priorBundle = join(store, priorTarget);
+        const priorFiles = (await readdir(priorBundle)).sort();
+        const priorBytes = await Promise.all(priorFiles.map((file) => readFile(join(priorBundle, file))));
+        const originalRename = fs.rename;
+        const originalRm = fs.rm;
+        let ownershipChanged = false;
+        const replaceLockGeneration = async () => {
+          ownershipChanged = true;
+          await originalRm(lockPath);
+          await writeFile(lockPath, `${scenario.name} replacement\n`);
+        };
+
+        spyOn(fs, "rename").mockImplementation(async (from, to) => {
+          const result = await originalRename(from, to);
+          if (!ownershipChanged && scenario.trigger === "pointer" && String(to) === pointer && String(from).endsWith(".pointer")) {
+            await replaceLockGeneration();
+          }
+          return result;
+        });
+        spyOn(fs, "rm").mockImplementation(async (path, options) => {
+          const result = await originalRm(path, options);
+          if (!ownershipChanged && scenario.trigger === "cleanup" && String(path).includes(`${join(store, "bundles")}/.cleanup-`)) {
+            await replaceLockGeneration();
+          }
+          return result;
+        });
+
+        await expect(scenario.mutate(planDir)).rejects.toThrow(/generation changed|lost ownership/i);
+        expect(ownershipChanged).toBe(true);
+        mock.restore();
+
+        if (scenario.name === "approval") {
+          await expect(lstat(pointer)).rejects.toThrow();
+        } else {
+          expect(await readlink(pointer)).toBe(priorTarget);
+          expect((await readdir(priorBundle)).sort()).toEqual(priorFiles);
+          expect(await Promise.all(priorFiles.map((file) => readFile(join(priorBundle, file))))).toEqual(priorBytes);
+        }
+        const state = await readReviewState(planDir);
+        const comments = await readComments(planDir);
+        if (scenario.name === "state") expect(state.answers.fenced).toBeUndefined();
+        if (scenario.name === "comment") expect(comments.some((comment) => comment.id === "c-fenced")).toBe(false);
+        if (scenario.name === "revision") expect(state).toMatchObject({ status: "approved", reviewer: "prior-reviewer" });
+        if (scenario.name === "resolution") {
+          expect(comments.find((comment) => comment.id === "c-resolution-fence")?.status).toBe("open");
+        }
+        if (scenario.name === "approval") {
+          expect(state.status).not.toBe("approved");
+          expect(state.reviewer).not.toBe("attempted-reviewer");
+          await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow();
+          await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow();
         }
       });
     }
