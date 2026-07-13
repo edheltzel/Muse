@@ -2,6 +2,7 @@ import { acquirePlanLock } from "../../plugins/Muse/skills/muse/tools/interactiv
 
 const planDir = process.argv[2];
 if (!planDir) throw new Error("plan directory is required");
+if (process.argv[3] === "--signal-attempt") console.log("attempting");
 const lock = await acquirePlanLock(planDir);
 console.log("ready");
 try {

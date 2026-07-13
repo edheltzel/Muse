@@ -56,6 +56,17 @@ export class ReviewOperationError extends Error {
   }
 }
 
+class SnapshotCommitVerificationError extends Error {
+  constructor(
+    readonly published: BundleReference,
+    readonly restorable: boolean,
+    cause: unknown,
+  ) {
+    super("Published review snapshot failed canonical postcommit verification", { cause });
+    this.name = "SnapshotCommitVerificationError";
+  }
+}
+
 interface AuthorityFile {
   path: string;
   exists: boolean;
@@ -281,13 +292,14 @@ async function resolveBundleReferenceFromLink(planDir: string, linkPath: string)
   const store = await resolveStoreDirectory(planDir, false);
   const bundles = await resolveBundlesDirectory(planDir, false);
   const target = await readlink(linkPath);
-  const match = target.match(/^bundles\/([0-9a-f-]+)$/);
+  const canonicalTarget = target.replaceAll("\\", "/");
+  const match = canonicalTarget.match(/^bundles\/([0-9a-f-]+)$/);
   if (!match || !UUID_PATTERN.test(match[1])) {
     throw new Error(`Invalid current review bundle target '${target}'`);
   }
   const path = join(bundles, match[1]);
   const directory = await lstat(path, { bigint: true });
-  if (!directory.isDirectory() || directory.isSymbolicLink() || resolve(store, target) !== resolve(path)) {
+  if (!directory.isDirectory() || directory.isSymbolicLink() || resolve(store, canonicalTarget) !== resolve(path)) {
     throw new Error(`Current review bundle is not a regular directory at ${path}`);
   }
   return { id: match[1], path, directory };
@@ -379,6 +391,25 @@ function parseComments(source: string | undefined): CommentThread[] {
     ids.add(comment.id);
   }
   return comments as CommentThread[];
+}
+
+function hasCommentBlock(plan: LoadedPlanFolder, blockId: string): boolean {
+  return [...plan.plan.blocks, ...(plan.canvas?.blocks ?? [])].some((block) => block.id === blockId);
+}
+
+function assertPersistedCommentAuthority(plan: LoadedPlanFolder, comments: CommentThread[]): void {
+  const orphan = comments.find((comment) => !hasCommentBlock(plan, comment.blockId));
+  if (orphan) throw new Error(`Persisted comment '${orphan.id}' references unknown blockId '${orphan.blockId}'`);
+}
+
+async function readAuthorizedSnapshot(
+  root: string,
+  authority: PlanAuthority,
+  expectedDirectory?: BigIntStats,
+): Promise<ReviewSnapshot> {
+  const snapshot = await readSnapshotFrom(root, expectedDirectory);
+  assertPersistedCommentAuthority(authority.plan, snapshot.comments);
+  return snapshot;
 }
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -497,6 +528,7 @@ async function normalizeSnapshot(
   snapshot: ReviewSnapshot,
   authority: PlanAuthority,
 ): Promise<ReviewSnapshot> {
+  assertPersistedCommentAuthority(authority.plan, snapshot.comments);
   const plan = authority.plan;
   const unresolvedCommentIds = snapshot.comments
     .filter((comment) => comment.status === "open")
@@ -539,11 +571,25 @@ function snapshotContent(snapshot: ReviewSnapshot, file: BundleFile): string | u
   return snapshot.handoffMarkdown;
 }
 
+async function quarantineCommittedPointer(
+  storeBinding: DirectoryBinding,
+  currentPath: string,
+  expected: BigIntStats,
+  assertOwned: AssertLockOwned,
+): Promise<void> {
+  await verifyDirectoryBinding(storeBinding);
+  const actual = await lstat(currentPath, { bigint: true });
+  if (actual.dev !== expected.dev || actual.ino !== expected.ino) return;
+  await assertOwned();
+  await rename(currentPath, `${currentPath}.${randomUUID()}.invalid`);
+}
+
 async function publishSnapshot(
   planDir: string,
   snapshot: ReviewSnapshot,
   assertOwned: AssertLockOwned,
   beforeCommit?: () => Promise<void>,
+  retainCommittedForRollback = false,
 ): Promise<BundleReference> {
   const store = await resolveStoreDirectory(planDir, true);
   const bundles = await resolveBundlesDirectory(planDir, true);
@@ -609,7 +655,7 @@ async function publishSnapshot(
     directory = await lstat(bundle, { bigint: true });
     await verifyDirectoryBinding(storeBinding);
     await assertOwned();
-    await symlink(join("bundles", identity), pointer);
+    await symlink(`bundles/${identity}`, pointer);
     await beforeCommit?.();
     await verifyDirectoryBinding(storeBinding);
   } catch (error) {
@@ -618,11 +664,41 @@ async function publishSnapshot(
     throw error;
   }
 
-  if (!directory) throw new Error("Published review bundle generation was not captured");
-  await closeBindings();
+  if (!directory) {
+    await closeBindings();
+    throw new Error("Published review bundle generation was not captured");
+  }
+  const published = { id: identity, path: bundle, directory };
+  const candidate = await resolveBundleReferenceFromLink(planDir, pointer);
+  if (candidate.id !== published.id || !sameGeneration(candidate.directory, published.directory)) {
+    await cleanup();
+    await closeBindings();
+    throw new Error("Prepared current pointer does not resolve the published review generation");
+  }
+  const pointerGeneration = await lstat(pointer, { bigint: true });
+  await Promise.allSettled([stagingBinding?.handle.close(), bundlesBinding.handle.close()]);
   await assertOwned();
   await rename(pointer, join(store, CURRENT_LINK));
-  return { id: identity, path: bundle, directory };
+  let canonicalStore = false;
+  let resolvedCurrent = false;
+  try {
+    await verifyDirectoryBinding(storeBinding);
+    canonicalStore = true;
+    const current = await resolveCurrentBundle(planDir);
+    resolvedCurrent = true;
+    if (current.id !== published.id || !sameGeneration(current.directory, published.directory)) {
+      throw new Error("Canonical current pointer does not resolve the published review generation");
+    }
+  } catch (error) {
+    const restorable = canonicalStore && retainCommittedForRollback && !resolvedCurrent;
+    if (canonicalStore && !restorable) {
+      await quarantineCommittedPointer(storeBinding, join(store, CURRENT_LINK), pointerGeneration, assertOwned);
+    }
+    throw new SnapshotCommitVerificationError(published, restorable, error);
+  } finally {
+    await storeBinding.handle.close().catch(() => undefined);
+  }
+  return published;
 }
 
 async function restorePriorPublication(
@@ -635,25 +711,40 @@ async function restorePriorPublication(
   const store = await resolveStoreDirectory(planDir, false);
   const storeBinding = await openDirectoryBinding(store);
   const pointer = join(store, `current.${randomUUID()}.rollback`);
+  let pointerGeneration: BigIntStats | undefined;
+  let committed = false;
   try {
     const current = await resolveCurrentBundle(planDir);
     if (current.id !== published.id || !sameGeneration(current.directory, published.directory)) {
       throw new Error("Published approval generation changed before rollback");
     }
-    await verifyDirectoryBinding(storeBinding);
-    await assertOwned();
-    await symlink(join("bundles", prior.id), pointer);
+    await symlink(`bundles/${prior.id}`, pointer);
     await verifyDirectoryBinding(priorBinding);
     await verifyDirectoryBinding(storeBinding);
+    pointerGeneration = await lstat(pointer, { bigint: true });
+    await assertOwned();
+    await rename(pointer, join(store, CURRENT_LINK));
+    committed = true;
+    await verifyDirectoryBinding(storeBinding);
+    const restored = await resolveCurrentBundle(planDir);
+    if (restored.id !== prior.id || !sameGeneration(restored.directory, prior.directory)) {
+      throw new Error("Canonical current pointer does not resolve the restored prior generation");
+    }
   } catch (error) {
-    await rm(pointer, { force: true }).catch(() => undefined);
+    if (committed && pointerGeneration) {
+      await quarantineCommittedPointer(storeBinding, join(store, CURRENT_LINK), pointerGeneration, assertOwned);
+    } else {
+      try {
+        await verifyDirectoryBinding(storeBinding);
+        await rm(pointer, { force: true });
+      } catch {
+        // A rebound canonical store is never modified during rollback cleanup.
+      }
+    }
     await Promise.allSettled([priorBinding.handle.close(), storeBinding.handle.close()]);
     throw error;
   }
-
   await Promise.allSettled([priorBinding.handle.close(), storeBinding.handle.close()]);
-  await assertOwned();
-  await rename(pointer, join(store, CURRENT_LINK));
 }
 
 async function publishInvalidation(
@@ -1090,16 +1181,33 @@ async function withPlanLock<T>(
   const lock = await acquirePlanLock(planDir);
   let authority: PlanAuthority | undefined;
   try {
+    await lock.assertOwned();
     const currentBeforeInitialization = await resolveCurrentBundleIfPresent(planDir);
     authority = await capturePlanAuthority(planDir);
-    if (options.preflight) {
-      const snapshot = currentBeforeInitialization
-        ? await readSnapshotFrom(currentBeforeInitialization.path, currentBeforeInitialization.directory)
-        : legacyReviewSnapshot(await captureCompatibilityPaths(planDir));
-      await options.preflight(snapshot, authority);
+    let preflightComplete = false;
+    if (currentBeforeInitialization) {
+      const snapshot = await readAuthorizedSnapshot(
+        currentBeforeInitialization.path,
+        authority,
+        currentBeforeInitialization.directory,
+      );
+      await options.preflight?.(snapshot, authority);
+      preflightComplete = true;
+    } else {
+      const legacyPaths = await captureCompatibilityPaths(planDir);
+      if (!legacyPaths.some((entry) => entry.kind === "symlink")) {
+        const snapshot = legacyReviewSnapshot(legacyPaths);
+        assertPersistedCommentAuthority(authority.plan, snapshot.comments);
+        await options.preflight?.(snapshot, authority);
+        preflightComplete = true;
+      }
     }
     await lock.assertOwned();
     const current = await ensureStore(planDir, currentBeforeInitialization, authority, lock.assertOwned, options.normalize);
+    if (!preflightComplete && options.preflight) {
+      const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
+      await options.preflight(snapshot, authority);
+    }
     if (options.cleanup !== false) await cleanupAbandonedPublications(planDir, current, lock.assertOwned);
     return await action(current, authority, lock.assertOwned);
   } finally {
@@ -1109,15 +1217,18 @@ async function withPlanLock<T>(
 }
 
 async function readCurrentSnapshot(planDir: string): Promise<ReviewSnapshot> {
-  return withPlanLock(planDir, async (current, authority) => {
-    const snapshot = await readSnapshotFrom(current.path, current.directory);
+  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+    const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     if (
       snapshot.state.status === "approved"
       && snapshot.state.approvalDigest !== computeApprovalDigest(authority, snapshot.state, snapshot.comments)
     ) {
       throw new Error("Approved review identity changed while it was being read");
     }
-    if (snapshot.state.status === "approved") await verifyPlanAuthority(planDir, authority);
+    if (snapshot.state.status === "approved") {
+      await assertOwned();
+      await verifyPlanAuthority(planDir, authority);
+    }
     return snapshot;
   });
 }
@@ -1134,10 +1245,11 @@ export async function readPublishedArtifact(planDir: string, file: "agent-handof
   const lock = await acquirePlanLock(planDir);
   let authority: PlanAuthority | undefined;
   try {
+    await lock.assertOwned();
     const current = await resolveCurrentBundleIfPresent(planDir);
     if (!current) throw new ReviewOperationError("not_found", "No coherent approved handoff is published");
     authority = await capturePlanAuthority(planDir);
-    const snapshot = await readSnapshotFrom(current.path, current.directory);
+    const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     if (
       snapshot.state.status !== "approved"
       || snapshot.handoffJson === undefined
@@ -1146,6 +1258,7 @@ export async function readPublishedArtifact(planDir: string, file: "agent-handof
     ) {
       throw new ReviewOperationError("not_found", "No coherent approved handoff is published");
     }
+    await lock.assertOwned();
     await verifyPlanAuthority(planDir, authority);
     return file === "agent-handoff.json" ? snapshot.handoffJson : snapshot.handoffMarkdown;
   } finally {
@@ -1174,8 +1287,8 @@ export async function updateReviewState(planDir: string, value: unknown): Promis
   const patchErrors = validateReviewStatePatch(value);
   if (patchErrors.length) throw new Error(patchErrors.join("\n"));
   const patch = value as Partial<ReviewState>;
-  return withPlanLock(planDir, async (current, _authority, assertOwned) => {
-    const snapshot = await readSnapshotFrom(current.path, current.directory);
+  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+    const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     let state = mergeReviewState(snapshot.state, patch, snapshot.comments);
     let handoffJson = snapshot.handoffJson;
     let handoffMarkdown = snapshot.handoffMarkdown;
@@ -1201,12 +1314,14 @@ export async function addComment(
   if (input.anchor !== undefined && (typeof input.anchor !== "string" || input.anchor.trim().length === 0)) {
     throw new Error("Comment anchor must be nonblank when present");
   }
-  return withPlanLock(planDir, async (current, authority, assertOwned) => {
-    const knownBlocks = [...authority.plan.plan.blocks, ...(authority.plan.canvas?.blocks ?? [])];
-    if (!knownBlocks.some((block) => block.id === input.blockId)) {
-      throw new Error(`Unknown comment blockId '${input.blockId}'`);
+  const requireKnownBlock = (authority: PlanAuthority) => {
+    if (!hasCommentBlock(authority.plan, input.blockId)) {
+      throw new ReviewOperationError("unprocessable", `Unknown comment blockId '${input.blockId}'`);
     }
-    const snapshot = await readSnapshotFrom(current.path, current.directory);
+  };
+  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+    requireKnownBlock(authority);
+    const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     const id = input.id ?? `c-${randomUUID()}`;
     if (id.trim().length === 0) throw new Error("Comment id must be nonblank");
     const existing = snapshot.comments.find((comment) => comment.id === id);
@@ -1240,7 +1355,7 @@ export async function addComment(
     }
     await publishSnapshot(planDir, { ...snapshot, state, comments, handoffJson, handoffMarkdown }, assertOwned);
     return comment;
-  });
+  }, { preflight: (_snapshot, authority) => requireKnownBlock(authority) });
 }
 
 export async function resolveComment(planDir: string, id: string): Promise<CommentThread[]> {
@@ -1250,8 +1365,8 @@ export async function resolveComment(planDir: string, id: string): Promise<Comme
       throw new ReviewOperationError("not_found", `Unknown or ambiguous comment id '${id}'`);
     }
   };
-  return withPlanLock(planDir, async (current, _authority, assertOwned) => {
-    const snapshot = await readSnapshotFrom(current.path, current.directory);
+  return withPlanLock(planDir, async (current, authority, assertOwned) => {
+    const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     requireComment(snapshot);
     if (snapshot.comments.find((comment) => comment.id === id)!.status === "resolved") return snapshot.comments;
     const comments = snapshot.comments.map((comment) => comment.id === id
@@ -1278,7 +1393,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
   if (reviewer.trim().length === 0) throw new Error("Approval reviewer must be nonblank");
   return withPlanLock(planDir, async (current, authority, assertOwned) => {
     const plan = authority.plan;
-    const snapshot = await readSnapshotFrom(current.path, current.directory);
+    const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     assertApprovalReady(plan, snapshot);
 
     const approvedAt = new Date().toISOString();
@@ -1310,6 +1425,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
     }
 
     const verifyIdentity = async () => {
+      await assertOwned();
       await verifyPlanAuthority(planDir, authority);
       if (state.approvalDigest !== computeApprovalDigest(authority, state, snapshot.comments)) {
         throw new Error("Plan source or review state changed during approval");
@@ -1323,9 +1439,17 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
         comments: snapshot.comments,
         handoffJson,
         handoffMarkdown,
-      }, assertOwned, verifyIdentity);
+      }, assertOwned, verifyIdentity, true);
     } catch (error) {
-      await priorBinding.handle.close();
+      if (error instanceof SnapshotCommitVerificationError && error.restorable) {
+        try {
+          await restorePriorPublication(planDir, current, priorBinding, error.published, assertOwned);
+        } catch (rollbackError) {
+          throw new AggregateError([error, rollbackError], "Approval publication verification failed and prior authority could not be restored");
+        }
+      } else {
+        await priorBinding.handle.close().catch(() => undefined);
+      }
       throw error;
     }
     try {
@@ -1338,7 +1462,7 @@ export async function approvePlan(planDir: string, reviewer = "local-reviewer") 
       }
       throw error;
     }
-    await priorBinding.handle.close();
+    await priorBinding.handle.close().catch(() => undefined);
     try {
       await cleanupAbandonedPublications(planDir, published, assertOwned);
     } catch (error) {

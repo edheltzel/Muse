@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import type { PathLike } from "node:fs";
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -714,6 +714,17 @@ describe("interactive plan review state and handoff", () => {
     }
   });
 
+  test("reads canonical current targets represented with Windows separators", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const current = join(planDir, ".muse-review", "current");
+      const target = await readlink(current);
+      await replaceSymlink(current, target.replace("/", "\\"));
+
+      expect((await readReviewState(planDir)).status).toBe("approved");
+    });
+  });
+
   test("rejects symlinked bundle members before reading them", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await approvePlan(planDir, "tester");
@@ -884,6 +895,74 @@ describe("interactive plan review state and handoff", () => {
     }
   });
 
+  test("rejects orphaned legacy comments before cold initialization", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const statePath = join(planDir, "plan-state.json");
+      const commentsPath = join(planDir, "comments.json");
+      const stateBytes = `${JSON.stringify({
+        status: "in_review",
+        answers: {},
+        checklist: {},
+        unresolvedCommentIds: ["c-orphan"],
+      }, null, 2)}\n`;
+      const commentBytes = `${JSON.stringify([{
+        id: "c-orphan",
+        blockId: "removed-block",
+        body: "Orphan blocker",
+        status: "open",
+        createdAt: "2026-07-01T12:00:00.000Z",
+      }], null, 2)}\n`;
+      await writeFile(statePath, stateBytes);
+      await writeFile(commentsPath, commentBytes);
+
+      await expect(readReviewState(planDir)).rejects.toThrow(/persisted comment.*unknown blockId/i);
+
+      expect(await Bun.file(join(planDir, ".muse-review")).exists()).toBe(false);
+      expect(await readFile(statePath, "utf8")).toBe(stateBytes);
+      expect(await readFile(commentsPath, "utf8")).toBe(commentBytes);
+    });
+  });
+
+  test("rejects orphaned comments in the current generation without publication", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await readReviewState(planDir);
+      const pointer = join(planDir, ".muse-review", "current");
+      const target = await readlink(pointer);
+      const commentsPath = join(planDir, ".muse-review", target, "comments.json");
+      const commentBytes = `${JSON.stringify([{
+        id: "c-current-orphan",
+        blockId: "removed-block",
+        body: "Current orphan blocker",
+        status: "open",
+        createdAt: "2026-07-01T12:00:00.000Z",
+      }], null, 2)}\n`;
+      await writeFile(commentsPath, commentBytes);
+
+      await expect(readComments(planDir)).rejects.toThrow(/persisted comment.*unknown blockId/i);
+
+      expect(await readlink(pointer)).toBe(target);
+      expect(await readFile(commentsPath, "utf8")).toBe(commentBytes);
+    });
+  });
+
+  test("returns 422 for a cold unknown comment block without creating review state", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const server = await servePlan(planDir, 0);
+      try {
+        const response = await post(server, "/api/comments", {
+          id: "c-cold-unknown",
+          blockId: "removed-block",
+          body: "Must fail before initialization",
+        });
+        expect(response.status).toBe(422);
+        expect(await response.text()).toMatch(/unknown comment blockId/i);
+        expect(await Bun.file(join(planDir, ".muse-review")).exists()).toBe(false);
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
+
   test("validates canonical handoff plan identity and nested runtime fields", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const handoff = await approvePlan(planDir, "tester");
@@ -1003,102 +1082,51 @@ describe("interactive plan review state and handoff", () => {
     }
   });
 
-  test("serializes OS-backed locks without renaming or deleting a successor pathname", async () => {
+  test("locks the canonical plan directory despite legacy lock-file replacement", async () => {
     await withFixture("minimal-plan", async (planDir) => {
-      const lockPath = join(planDir, ".muse-review.lock");
-      const originalRename = fs.rename;
-      const originalRm = fs.rm;
-      const destructiveLockOperations: string[] = [];
-      const originalOpen = fs.open;
-      let openCount = 0;
-      let expectedAttempt = 2;
-      let attemptGate = Promise.withResolvers<void>();
-      spyOn(fs, "open").mockImplementation((async (path: PathLike, flags: string | number, mode?: number) => {
-        const handle = await originalOpen(path, flags, mode);
-        if (String(path).endsWith("/.muse-review.lock") && ++openCount >= expectedAttempt) attemptGate.resolve();
-        return handle;
-      }) as typeof fs.open);
-      spyOn(fs, "rename").mockImplementation(async (from, to) => {
-        if (String(from) === lockPath || String(to) === lockPath) destructiveLockOperations.push("rename");
-        return originalRename(from, to);
-      });
-      spyOn(fs, "rm").mockImplementation(async (path, options) => {
-        if (String(path) === lockPath) destructiveLockOperations.push("remove");
-        return originalRm(path, options);
-      });
-
+      const legacyLockPath = join(planDir, ".muse-review.lock");
+      await writeFile(legacyLockPath, "legacy lock\n");
       const first = await acquirePlanLock(planDir);
-      let secondAcquired = false;
-      const secondPending = acquirePlanLock(planDir).then((lock) => {
-        secondAcquired = true;
-        return lock;
-      });
-      await attemptGate.promise;
-      expect(secondAcquired).toBe(false);
+      await rm(legacyLockPath);
+      await writeFile(legacyLockPath, "replacement lock\n");
+      const contender = Bun.spawn([
+        process.execPath,
+        join(repoRoot, "tests", "helpers", "review-lock-owner.ts"),
+        planDir,
+        "--signal-attempt",
+      ], { cwd: repoRoot, stdout: "pipe" });
+      const output = contender.stdout.getReader();
+      const attempted = await output.read();
+      expect(new TextDecoder().decode(attempted.value)).toContain("attempting");
+
       await first.release();
-      const second = await secondPending;
-      await first.release();
-
-      let thirdAcquired = false;
-      expectedAttempt = openCount + 1;
-      attemptGate = Promise.withResolvers<void>();
-      const thirdPending = acquirePlanLock(planDir).then((lock) => {
-        thirdAcquired = true;
-        return lock;
-      });
-      await attemptGate.promise;
-      expect(thirdAcquired).toBe(false);
-      await second.release();
-      const third = await thirdPending;
-      await third.release();
-
-      expect((await lstat(lockPath)).isFile()).toBe(true);
-      expect(destructiveLockOperations).toEqual([]);
-    });
-  });
-  test("fences publication when the held lock pathname is rebound", async () => {
-    await withFixture("minimal-plan", async (planDir) => {
-      await readReviewState(planDir);
-      const lockPath = join(planDir, ".muse-review.lock");
-      const originalSymlink = fs.symlink;
-      let raced = false;
-      spyOn(fs, "symlink").mockImplementation(async (target, path, type) => {
-        if (!raced && String(path).includes(".muse-review/current.") && String(path).endsWith(".pointer")) {
-          raced = true;
-          await rm(lockPath);
-          await writeFile(lockPath, "replacement lock\n");
-          await updateReviewState(planDir, { answers: { winner: "replacement-lock holder" } });
-        }
-        return originalSymlink(target, path, type);
-      });
-
-      await expect(updateReviewState(planDir, { answers: { winner: "rebound holder" } })).rejects.toThrow(/lock path generation changed/i);
-
-      mock.restore();
-      expect((await readReviewState(planDir)).answers.winner).toBe("replacement-lock holder");
+      const acquired = await output.read();
+      expect(new TextDecoder().decode(acquired.value)).toContain("ready");
+      contender.kill();
+      await contender.exited;
+      expect(await readFile(legacyLockPath, "utf8")).toBe("replacement lock\n");
     });
   });
 
-
-  test("rejects a symlinked lock path without touching its target", async () => {
+  test("fences a lock holder when the canonical plan-root generation is rebound", async () => {
     await withFixture("minimal-plan", async (planDir) => {
-      const externalDir = await mkdtemp(join(tmpdir(), "ve-ip-external-lock-"));
-      const external = join(externalDir, "owner");
-      const lockPath = join(planDir, ".muse-review.lock");
+      const displacedRoot = `${planDir}.displaced`;
+      const displaced = await acquirePlanLock(planDir);
+      await rename(planDir, displacedRoot);
+      await mkdir(planDir);
       try {
-        await writeFile(external, "operator-owned\n");
-        await fs.symlink(external, lockPath);
-
-        await expect(acquirePlanLock(planDir)).rejects.toThrow();
-        expect(await readFile(external, "utf8")).toBe("operator-owned\n");
-        expect(await readlink(lockPath)).toBe(external);
+        await expect(displaced.assertOwned()).rejects.toThrow(/plan root generation changed/i);
+        const successor = await acquirePlanLock(planDir);
+        await successor.release();
       } finally {
-        await rm(externalDir, { recursive: true, force: true });
+        await displaced.release();
+        await rm(planDir, { recursive: true, force: true });
+        await rename(displacedRoot, planDir);
       }
     });
   });
 
-  test("recovers the OS lock when its owning process exits", async () => {
+  test("recovers the directory lock when its owning process exits", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const owner = Bun.spawn([process.execPath, join(repoRoot, "tests", "helpers", "review-lock-owner.ts"), planDir], {
         cwd: repoRoot,
@@ -1111,8 +1139,28 @@ describe("interactive plan review state and handoff", () => {
 
       const successor = await acquirePlanLock(planDir);
       await successor.release();
-      expect((await lstat(join(planDir, ".muse-review.lock"))).isFile()).toBe(true);
     });
+  });
+
+  test("uses native Windows lock handles and conventional Linux libc candidates", async () => {
+    const source = await readFile(
+      join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "plan-lock.ts"),
+      "utf8",
+    );
+    expect(source).toContain("CreateFileW");
+    expect(source).toContain("LockFileEx");
+    expect(source).toContain("CloseHandle");
+    expect(source).toContain("args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.u64]");
+    expect(source).toContain("returns: FFIType.u64");
+    expect(source).toContain("const GENERIC_READ_WRITE = 0xc0000000");
+    expect(source).toContain("const FILE_SHARE_READ_WRITE = 0x00000003");
+    expect(source).toContain("const OPEN_ALWAYS = 4");
+    expect(source).toContain("const LOCKFILE_EXCLUSIVE_FAIL_IMMEDIATELY = 0x00000003");
+    expect(source).toContain("const FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000");
+    expect(source).not.toContain("FILE_SHARE_DELETE");
+    expect(source).not.toContain("_get_osfhandle");
+    expect(source).not.toContain("msvcrt.dll");
+    expect(source.indexOf('"libc.so.6"')).toBeLessThan(source.indexOf('readFile("/proc/self/maps"'));
   });
 
 
@@ -1177,31 +1225,66 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
-  test("does not perform fallible bundle work after replacing the current pointer", async () => {
+  test("restores prior authority when committed bundle verification fails", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       await approvePlan(planDir, "first-reviewer");
       const store = join(planDir, ".muse-review");
       const pointer = join(store, "current");
+      const priorTarget = await readlink(pointer);
       const originalRename = fs.rename;
       const originalLstat = fs.lstat;
       let publishedBundle: string | undefined;
+      let failed = false;
       spyOn(fs, "rename").mockImplementation(async (from, to) => {
         const result = await originalRename(from, to);
         if (String(to) === pointer) publishedBundle = join(store, await readlink(pointer));
         return result;
       });
-      spyOn(fs, "lstat").mockImplementation(async (path, options) => {
-        if (publishedBundle !== undefined && String(path) === publishedBundle) {
+      spyOn(fs, "lstat").mockImplementation((async (path: PathLike, options?: object) => {
+        if (!failed && publishedBundle !== undefined && String(path) === publishedBundle) {
+          failed = true;
           throw new Error("post-pointer bundle stat");
         }
         return originalLstat(path, options as never);
-      });
+      }) as typeof fs.lstat);
 
-      const handoff = await approvePlan(planDir, "second-reviewer");
+      await expect(approvePlan(planDir, "second-reviewer")).rejects.toThrow(/postcommit verification/i);
 
       mock.restore();
-      expect(handoff.status).toBe("approved");
-      expect((await readReviewState(planDir)).reviewer).toBe("second-reviewer");
+      expect(await readlink(pointer)).toBe(priorTarget);
+      expect((await readReviewState(planDir)).reviewer).toBe("first-reviewer");
+    });
+  });
+
+  test("fails approval without touching a replacement canonical store", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "first-reviewer");
+      const store = join(planDir, ".muse-review");
+      const displacedStore = join(planDir, ".muse-review.displaced");
+      const pointer = join(store, "current");
+      const sentinel = join(store, "operator-sentinel.txt");
+      const originalRename = fs.rename;
+      let replaced = false;
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        const result = await originalRename(from, to);
+        if (!replaced && String(to) === pointer) {
+          replaced = true;
+          await originalRename(store, displacedStore);
+          await mkdir(store);
+          await writeFile(sentinel, "operator replacement\n");
+        }
+        return result;
+      });
+
+      try {
+        await expect(approvePlan(planDir, "second-reviewer")).rejects.toThrow(/postcommit verification/i);
+        expect(await readFile(sentinel, "utf8")).toBe("operator replacement\n");
+        expect(await Bun.file(pointer).exists()).toBe(false);
+      } finally {
+        mock.restore();
+        await rm(store, { recursive: true, force: true });
+        await rename(displacedStore, store);
+      }
     });
   });
 
@@ -1736,6 +1819,41 @@ describe("interactive plan review state and handoff", () => {
         expect(await readlink(pointer)).not.toBe(priorTarget);
       });
     }
+  });
+
+  test("fails closed when the prior bundle is rebound at rollback commit", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "first");
+      const store = join(planDir, ".muse-review");
+      const pointer = join(store, "current");
+      const priorBundle = join(store, await readlink(pointer));
+      const planPath = join(planDir, "plan.mdx");
+      const attackerSentinel = join(priorBundle, "attacker.txt");
+      const originalRename = fs.rename;
+      let publicationCommitted = false;
+      let rollbackRaced = false;
+      spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        if (publicationCommitted && !rollbackRaced && String(to) === pointer && String(from).endsWith(".rollback")) {
+          rollbackRaced = true;
+          await rm(priorBundle, { recursive: true });
+          await mkdir(priorBundle);
+          await writeFile(attackerSentinel, "attacker successor\n");
+        }
+        const result = await originalRename(from, to);
+        if (!publicationCommitted && String(to) === pointer) {
+          publicationCommitted = true;
+          await writeFile(planPath, `${await readFile(planPath, "utf8")}\nPostcommit mutation.\n`);
+        }
+        return result;
+      });
+
+      await expect(approvePlan(planDir, "second")).rejects.toThrow(/prior authority could not be restored/i);
+
+      mock.restore();
+      expect(rollbackRaced).toBe(true);
+      await expect(lstat(pointer)).rejects.toThrow();
+      expect(await readFile(attackerSentinel, "utf8")).toBe("attacker successor\n");
+    });
   });
 
   test("quarantines invalid approved authority until needs-revision recovery commits", async () => {
