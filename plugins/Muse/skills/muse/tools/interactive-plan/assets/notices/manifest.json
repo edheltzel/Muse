@@ -1,0 +1,28 @@
+{
+  "assets": [
+    {
+      "asset": "bricolage-grotesque-latin-500-normal.woff2",
+      "package": "@fontsource/bricolage-grotesque",
+      "version": "5.2.10",
+      "notice": "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt"
+    },
+    {
+      "asset": "bricolage-grotesque-latin-600-normal.woff2",
+      "package": "@fontsource/bricolage-grotesque",
+      "version": "5.2.10",
+      "notice": "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt"
+    },
+    {
+      "asset": "bricolage-grotesque-latin-700-normal.woff2",
+      "package": "@fontsource/bricolage-grotesque",
+      "version": "5.2.10",
+      "notice": "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt"
+    },
+    {
+      "asset": "fragment-mono-latin-400-normal.woff2",
+      "package": "@fontsource/fragment-mono",
+      "version": "5.2.8",
+      "notice": "notices/fontsource-fragment-mono-5.2.8-LICENSE.txt"
+    }
+  ]
+}

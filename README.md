@@ -26,8 +26,8 @@ This repository includes a complete component-library fixture that acts like a s
 
 ```bash
 vp install
-vp run visual-plan:render tests/fixtures/interactive-plans/component-library-showcase
-vp run visual-plan:serve tests/fixtures/interactive-plans/component-library-showcase 7375
+vp run component-explorer:render
+vp run component-explorer:serve
 ```
 
 Then open:
@@ -36,7 +36,7 @@ Then open:
 http://localhost:7375/
 ```
 
-The demo includes every current MDX component family, a realistic launch-readiness use case, light/dark theme toggle, Mermaid diagram rendering, review questions, checklist state, and an approval gate.
+The explorer includes every current MDX component, search and family filters, copyable MDX source, a realistic launch-readiness use case, light/dark themes, Mermaid rendering, review questions, checklist state, and an approval gate.
 
 ## Quick examples
 
@@ -245,23 +245,27 @@ The browser page supports:
 - light/dark theme toggle,
 - static export for sharing without the local bridge.
 
+The review bridge binds to loopback and exposes a trusted originless local API for CLI clients. Originless mutations are intentional, but they must use `Content-Type: application/json`. Browser mutations that send `Origin` must match the bridge's exact loopback origin; foreign origins and opaque `Origin: null` requests are rejected. This is not a strict same-origin policy because trusted originless local clients remain supported by design.
+
+Review mutations and approval publication are atomic against concurrent live Muse processes: an OS-backed file lock serializes writers, and one pointer replacement publishes a complete state/handoff generation. This is a live-process atomicity guarantee, not crash durability. Muse does not `fsync` files or directories, so power loss or an OS crash may still lose the latest filesystem writes; the next operation revalidates the surviving generation before using it.
+
 ## Component library fixture
 
-Use the checked-in style-guide fixture when you want to see the whole component system at once:
+Use the checked-in component explorer when you want to inspect the whole component system, filter by purpose, and copy a working MDX example:
 
 ```bash
-vp run visual-plan:render tests/fixtures/interactive-plans/component-library-showcase
-vp run visual-plan:serve tests/fixtures/interactive-plans/component-library-showcase 7375
+vp run component-explorer:render
+vp run component-explorer:serve
 ```
 
 It covers:
 
-- overview components: `PlanSummary`, `StatusDashboard`, `Callout`,
-- planning components: `DecisionMatrix`, `ImplementationTimeline`, `RiskRegister`,
-- evidence components: `FileMap`, `FileTree`, `AnnotatedCode`, `DiffTabs`,
+- overview components: `PlanSummary`, `StatusDashboard`,
+- planning and diagram components: `DecisionMatrix`, `ArchitectureDiagram`, `ImplementationTimeline`, `RiskRegister`,
+- evidence components: `FileMap`, `FileTree`, `AnnotatedCode`, `DiffTabs`, `Tabs`,
 - contract components: `ApiSurface`, `DataModel`, `Table`,
 - product components: `Wireframe`, `BeforeAfter`, `StateGallery`,
-- review controls: `QuestionForm`, `Checklist`, `ApprovalGate`, `CommentAnchor`.
+- review controls: `Callout`, `QuestionForm`, `Checklist`, `ApprovalGate`, `CommentAnchor`.
 
 ## Development stack
 
