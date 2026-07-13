@@ -4,12 +4,12 @@ kind: styleguide
 slug: component-library-showcase
 ---
 
-<PlanSummary id="summary" status="Live style guide" title="Component library and real-world review surface">
-A polished component inventory for the Muse interactive plan system, shown through a realistic launch-readiness review for a local-first AI feature.
+<PlanSummary id="summary" status="Live style guide" title="Review Scenario">
+A realistic launch-readiness review demonstrates how the catalog components work together for a local-first AI feature.
 </PlanSummary>
 
 <StatusDashboard id="status" title="Launch readiness dashboard">
-Review coverage | 18/18 | All component families visible
+Review coverage | Complete | Canonical denominator: MDX_COMPONENT_NAMES (all renderer-owned components)
 Open questions | 3 | Persisted through the local bridge
 Risk posture | Medium | One rollout dependency remains
 Approval state | Draft | Ready for reviewer interaction
@@ -92,14 +92,19 @@ file: shell.html
 + Mermaid runtime script
 </DiffTabs>
 
-<Tabs id="tabs" title="Delivery evidence">
-Interactive
-Arrow keys move and activate tabs; Home and End jump to the boundaries.
+<Tabs id="tabs" title="Reference tabs">
+Usage
+Use tabs when several short reference views belong to one component.
+---
+Props
+Keep labels concise and panels focused on one decision.
+---
+Accessibility
+Arrow keys move and activate tabs; Home and End jump to the boundaries. The active tab exposes aria-selected and its matching panel remains visible.
 ---
 Static export
 Every labeled panel remains visible in authored order without tab controls.
 </Tabs>
-
 <ApiSurface id="api" title="Local bridge API">
 Endpoint | Method | Purpose
 /api/state | POST | Persist answers, checklist values, and revision status
@@ -145,7 +150,7 @@ The component library shows every MDX component, a full launch-review story, ren
 </div>
 </StateGallery>
 
-<Table id="component-table" title="Component inventory">
+<Table id="component-table" title="QA / reference inventory">
 Component | Family | Live example
 PlanSummary | Overview | Hero summary at page top
 StatusDashboard | Overview | Launch readiness KPIs

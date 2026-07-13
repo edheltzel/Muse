@@ -348,6 +348,7 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
           "tabs-panel-1",
           "tabs-tab-0",
           "tabs-tab-1",
+          "tabs-title",
         ]);
       });
     } catch (error) {

@@ -1,10 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { copyFontAssets, fontFaceCss, MERMAID_SHA384, MERMAID_URL, readFontNotices } from "./assets";
 import { interactivePlanClientScript, staticPlanClientScript } from "./client";
 import { escapeHtml, renderBlocks } from "./components";
 import { loadPlanFolder, type LoadedPlanFolder } from "./mdx-loader";
 import { validateRenderedHtmlIds } from "./schema";
-import { getRendererOwnedIdsByRole } from "./shared";
+import { getRendererOwnedIdsByRole, MDX_COMPONENT_META, MDX_COMPONENT_NAMES } from "./shared";
 
 const defaultShell = `<!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -12,9 +13,7 @@ const defaultShell = `<!DOCTYPE html>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>{{TITLE}}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700&family=Fragment+Mono&display=swap" rel="stylesheet">
+<style>{{FONTS}}</style>
 <style>{{STYLE}}</style>
 </head>
 <body data-review-status="draft" data-review-authority="{{REVIEW_AUTHORITY}}">
@@ -22,10 +21,11 @@ const defaultShell = `<!DOCTYPE html>
   <div class="ve-ip-chrome" aria-label="Display settings"><span>Theme</span><button type="button" class="ve-ip-theme-toggle" data-theme-toggle aria-pressed="false"><span data-theme-toggle-label>Light</span></button></div>
   <main class="ve-ip-main">
     <header class="ve-ip-page-header"><p class="ve-ip-kicker">Muse interactive {{KIND}}</p><h1>{{TITLE}}</h1><p>{{SUBTITLE}}</p></header>
+    {{EXPLORER}}
     {{REVIEW_SYNC}}
     {{CONTENT}}
   </main>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="{{MERMAID_URL}}" integrity="sha384-{{MERMAID_SRI}}" crossorigin="anonymous"></script>
 <script type="module">{{CLIENT}}</script>
 </body>
 </html>`;
@@ -103,6 +103,8 @@ code, pre, .ve-ip-label, .ve-ip-kicker, .ve-ip-nav, .code-file__header { font-fa
   flex-direction: column;
   gap: .45rem;
   z-index: 5;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .ve-ip-nav strong {
   color: var(--accent);
@@ -189,6 +191,78 @@ code, pre, .ve-ip-label, .ve-ip-kicker, .ve-ip-nav, .code-file__header { font-fa
   margin: 0;
   color: var(--text-dim);
   font-size: clamp(1.05rem, 2vw, 1.3rem);
+}
+.ve-ip-explorer {
+  margin-bottom: 1.2rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  padding: 1.2rem;
+  background: var(--surface);
+}
+.ve-ip-explorer-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, .55fr);
+  gap: 1.5rem;
+  align-items: end;
+}
+.ve-ip-explorer .ve-ip-label { padding: 0; }
+.ve-ip-explorer h2 {
+  margin: .25rem 0 .4rem;
+  font-size: 2rem;
+  letter-spacing: -.025em;
+  text-wrap: balance;
+}
+.ve-ip-explorer-intro p:last-child {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--text-dim);
+}
+.ve-ip-search {
+  display: grid;
+  gap: .35rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: .78rem;
+}
+.ve-ip-search input {
+  width: 100%;
+  min-height: 2.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: .65rem .8rem;
+  color: var(--text);
+  background: var(--surface-elevated);
+}
+.ve-ip-search input:focus-visible,
+.ve-ip-filter-row button:focus-visible,
+.ve-ip-source button:focus-visible {
+  outline: 3px solid color-mix(in oklch, var(--accent-teal) 45%, transparent);
+  outline-offset: 2px;
+}
+.ve-ip-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-top: 1rem;
+}
+.ve-ip-filter-row button,
+.ve-ip-source button {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: .38rem .7rem;
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
+}
+.ve-ip-filter-row button[aria-pressed="true"] {
+  color: var(--surface);
+  background: var(--text);
+}
+.ve-ip-results {
+  margin: .85rem 0 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: .78rem;
 }
 .ve-ip-block {
   margin: 0 0 1.2rem;
@@ -525,6 +599,60 @@ tr:last-child td { border-bottom: 0; }
   background: var(--text);
   color: var(--surface);
 }
+.ve-ip-component-meta {
+  display: grid;
+  grid-template-columns: minmax(7rem, .25fr) 1fr;
+  gap: 1rem;
+  align-items: baseline;
+  border-top: 1px solid var(--border);
+  padding: .85rem 1.15rem;
+  color: var(--text-dim);
+}
+.ve-ip-component-meta span {
+  color: var(--accent-teal);
+  font-family: var(--font-mono);
+  font-size: .76rem;
+}
+.ve-ip-component-meta p { margin: 0; }
+.ve-ip-source { border-top: 1px solid var(--border); }
+.ve-ip-source summary {
+  padding: .8rem 1.15rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: .78rem;
+}
+.ve-ip-source-toolbar {
+  display: flex;
+  justify-content: end;
+  padding: 0 1.15rem .65rem;
+}
+.ve-ip-source pre {
+  margin: 0;
+  border-radius: 0;
+  max-height: 24rem;
+}
+.ve-ip-source button[data-copy-state="copied"] {
+  color: var(--surface);
+  background: var(--accent-sage);
+}
+.ve-ip-third-party-notices > summary {
+  padding: 1rem 1.15rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+.ve-ip-third-party-notices[open] > summary { border-bottom: 1px solid var(--border); }
+.ve-ip-third-party-notices__body { padding: 1rem 1.15rem 1.15rem; }
+.ve-ip-third-party-notices article + article {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+.ve-ip-third-party-notices h3 { margin-bottom: .4rem; }
+.ve-ip-third-party-notices article > p { margin: .35rem 0; }
+.ve-ip-third-party-notices pre { max-height: 24rem; border-radius: 14px; background: var(--surface-recessed); }
+.ve-ip-block[hidden] { display: none; }
 @media (max-width: 860px) {
   .ve-ip-nav {
     position: sticky;
@@ -534,13 +662,22 @@ tr:last-child td { border-bottom: 0; }
     margin: .75rem;
     flex-direction: row;
     overflow-x: auto;
+    overflow-y: hidden;
   }
+  .ve-ip-nav a { flex: 0 0 auto; white-space: nowrap; }
   .ve-ip-main {
     width: min(100% - 1.5rem, 74rem);
     padding: 1rem 0 4rem;
   }
-  .ve-ip-chrome { top: auto; bottom: 1rem; }
+  .ve-ip-chrome {
+    position: static;
+    display: flex;
+    width: max-content;
+    margin: .75rem .75rem 0 auto;
+  }
   .ve-ip-page-header { min-height: 24rem; }
+  .ve-ip-explorer-intro { grid-template-columns: 1fr; }
+  .ve-ip-component-meta { grid-template-columns: 1fr; gap: .25rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -556,33 +693,66 @@ async function readShellTemplate(): Promise<string> {
   }
 }
 
+function componentExplorerFor(plan: LoadedPlanFolder): string {
+  if (plan.manifest.kind !== "styleguide") return "";
+  const categories = Array.from(new Set(MDX_COMPONENT_NAMES.map((name) => MDX_COMPONENT_META[name].category)));
+  const filters = [
+    `<button type="button" data-component-filter="" aria-pressed="true">All</button>`,
+    ...categories.map((category) => `<button type="button" data-component-filter="${escapeHtml(category)}" aria-pressed="false">${escapeHtml(category)}</button>`),
+  ].join("");
+  const exampleCount = plan.plan.blocks.length;
+  const uniqueCount = new Set(plan.plan.blocks.map((block) => block.type)).size;
+  const countLabel = `${exampleCount} ${exampleCount === 1 ? "example" : "examples"} · ${uniqueCount} unique of canonical ${MDX_COMPONENT_NAMES.length}`;
+  return `<section class="ve-ip-explorer" data-component-explorer data-component-example-count="${exampleCount}" data-component-count="${uniqueCount}" data-component-canonical-count="${MDX_COMPONENT_NAMES.length}" aria-labelledby="component-explorer-title"><div class="ve-ip-explorer-intro"><div><p class="ve-ip-label">Component reference</p><h2 id="component-explorer-title">Catalog</h2><p>Browse ${countLabel}. Search by component name or purpose, filter by family, inspect the rendered result, then copy the exact MDX source.</p></div><label class="ve-ip-search"><span>Search components</span><input type="search" data-component-search placeholder="Try “diagram”, “risk”, or “review”" autocomplete="off" /></label></div><div class="ve-ip-filter-row" role="group" aria-label="Component families">${filters}</div><p class="ve-ip-results" data-component-results aria-live="polite">${countLabel}</p></section>`;
+}
+
 function navFor(plan: LoadedPlanFolder): string {
-  return plan.plan.blocks.map((block) => `<a href="#${escapeHtml(block.id)}">${escapeHtml(block.props.title ?? block.type)}</a>`).join("");
+  return plan.plan.blocks.map((block) => {
+    const label = plan.manifest.kind === "styleguide" ? block.type : block.props.title ?? block.type;
+    return `<a href="#${escapeHtml(block.id)}">${escapeHtml(label)}</a>`;
+  }).join("");
+}
+
+async function renderFontNotices(): Promise<string> {
+  const notices = await readFontNotices();
+  const entries = notices.map((notice) => {
+    const assets = notice.assets.map((asset) => `<li><code>${escapeHtml(asset)}</code></li>`).join("");
+    return `<article><h3>${escapeHtml(notice.package)} ${escapeHtml(notice.version)}</h3><p>Embedded assets:</p><ul>${assets}</ul><pre class="code-block">${escapeHtml(notice.text)}</pre></article>`;
+  }).join("");
+  return `<details class="ve-ip-block ve-ip-card ve-ip-third-party-notices"><summary>Third-party font notices</summary><div class="ve-ip-third-party-notices__body"><p>Copyright notices and SIL Open Font License 1.1 terms for fonts embedded in this portable file.</p>${entries}</div></details>`;
 }
 
 export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false, shell?: string): Promise<string> {
   const template = shell ?? (await readShellTemplate());
+  const componentExplorer = plan.manifest.kind === "styleguide";
   const content = [
-    renderBlocks(plan.plan.blocks, { staticMode }),
-    plan.canvas ? `<section class="ve-ip-block ve-ip-card" id="canvas"><div class="ve-ip-label">Canvas</div><h2>Canvas</h2>${renderBlocks(plan.canvas.blocks, { staticMode })}</section>` : "",
+    renderBlocks(plan.plan.blocks, { staticMode, componentExplorer }),
+    plan.canvas ? `<section class="ve-ip-block ve-ip-card" id="canvas"><div class="ve-ip-label">Canvas</div><h2>Canvas</h2>${renderBlocks(plan.canvas.blocks, { staticMode, componentExplorer: false })}</section>` : "",
+    staticMode ? await renderFontNotices() : "",
   ].join("\n");
+  const fonts = await fontFaceCss(staticMode);
   const reviewSync = staticMode
     ? ""
     : `<section class="ve-ip-review-sync" data-review-sync aria-live="polite"><strong data-review-sync-title>Loading saved review…</strong><span data-review-sync-detail>Review controls unlock after server state and comments load.</span><button type="button" data-review-retry hidden>Retry</button></section>`;
   const html = template
     .replaceAll("{{TITLE}}", escapeHtml(plan.manifest.title))
     .replaceAll("{{KIND}}", escapeHtml(plan.manifest.kind))
-    .replaceAll("{{SUBTITLE}}", staticMode ? "Static export. Interactive persistence requires the local review bridge." : "Local interactive review surface.")
+    .replaceAll("{{SUBTITLE}}", componentExplorer ? "A human-facing reference for every renderer-owned MDX component." : staticMode ? "Static export. Interactive persistence requires the local review bridge." : "Local interactive review surface.")
     .replaceAll("{{REVIEW_AUTHORITY}}", staticMode ? "static" : "loading")
+    .replaceAll("{{EXPLORER}}", componentExplorerFor(plan))
     .replaceAll("{{REVIEW_SYNC}}", reviewSync)
     .replaceAll("{{NAV}}", navFor(plan))
     .replaceAll("{{CONTENT}}", content)
+    .replaceAll("{{FONTS}}", fonts)
     .replaceAll("{{STYLE}}", style)
+    .replaceAll("{{MERMAID_URL}}", MERMAID_URL)
+    .replaceAll("{{MERMAID_SRI}}", MERMAID_SHA384)
     .replaceAll("{{CLIENT}}", staticMode ? staticPlanClientScript : interactivePlanClientScript);
   const blocks = [...plan.plan.blocks, ...(plan.canvas?.blocks ?? [])];
   const expectedIds = blocks.map(({ id }) => id);
   if (plan.canvas) expectedIds.push("canvas");
   for (const block of blocks) {
+    expectedIds.push(...getRendererOwnedIdsByRole(block, "title"));
     expectedIds.push(...getRendererOwnedIdsByRole(block, "instructions"));
     if (staticMode) continue;
     expectedIds.push(...getRendererOwnedIdsByRole(block, "tabs"), ...getRendererOwnedIdsByRole(block, "panels"));
@@ -596,6 +766,7 @@ export async function renderPlanFolder(rootDir: string): Promise<{ indexPath: st
   const plan = await loadPlanFolder(rootDir);
   const distDir = join(rootDir, plan.manifest.dist);
   await mkdir(distDir, { recursive: true });
+  await copyFontAssets(distDir);
   const indexPath = join(distDir, "index.html");
   const staticExportPath = join(distDir, "static-export.html");
   const shell = await readShellTemplate();

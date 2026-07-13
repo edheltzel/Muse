@@ -1,8 +1,9 @@
 import { type MdxBlock } from "./schema";
-import { getRendererOwnedIdsByRole, type MdxComponentName, splitLines, splitPipeFields, splitTabPanels } from "./shared";
+import { getRendererOwnedIdsByRole, MDX_COMPONENT_META, type MdxComponentName, splitLines, splitPipeFields, splitTabPanels } from "./shared";
 
 export interface RenderContext {
   staticMode: boolean;
+  componentExplorer?: boolean;
 }
 
 type Renderer = (block: MdxBlock, context: RenderContext) => string;
@@ -30,7 +31,29 @@ function title(block: MdxBlock): string {
 }
 
 function card(block: MdxBlock, className: string, body?: string): string {
-  return `<section class="ve-ip-block ${className}" id="${escapeHtml(block.id)}" data-block-id="${escapeHtml(block.id)}" data-block-type="${escapeHtml(block.type)}"><div class="ve-ip-label">${escapeHtml(block.type)}</div><h2>${title(block)}</h2><div class="ve-ip-body">${body ?? `<p>${markdownish(block.body)}</p>`}</div></section>`;
+  const titleId = escapeHtml(getRendererOwnedIdsByRole(block, "title")[0]);
+  return `<section class="ve-ip-block ${className}" id="${escapeHtml(block.id)}" data-block-id="${escapeHtml(block.id)}" data-block-type="${escapeHtml(block.type)}" aria-labelledby="${titleId}"><div class="ve-ip-label">${escapeHtml(block.type)}</div><h2 id="${titleId}">${title(block)}</h2><div class="ve-ip-body">${body ?? `<p>${markdownish(block.body)}</p>`}</div></section>`;
+}
+
+function mdxSourceFor(block: MdxBlock): string {
+  const attrs = Object.entries(block.props).map(([key, value]) => {
+    if (typeof value === "boolean") return value ? key : `${key}={false}`;
+    if (typeof value === "number") return `${key}={${value}}`;
+    return `${key}=${JSON.stringify(value)}`;
+  }).join(" ");
+  const opening = `<${block.type}${attrs ? ` ${attrs}` : ""}`;
+  return block.body ? `${opening}>\n${block.body}\n</${block.type}>` : `${opening} />`;
+}
+
+function decorateExplorerBlock(block: MdxBlock, html: string): string {
+  const componentName = block.type as MdxComponentName;
+  const meta = MDX_COMPONENT_META[componentName];
+  const source = mdxSourceFor(block);
+  const searchText = `${componentName} ${meta.category} ${meta.summary}`;
+  const details = `<div class="ve-ip-component-meta"><span>${escapeHtml(meta.category)}</span><p>${escapeHtml(meta.summary)}</p></div><details class="ve-ip-source"><summary>MDX source</summary><div class="ve-ip-source-toolbar"><button type="button" data-copy-mdx>Copy MDX</button></div><pre><code data-mdx-source>${escapeHtml(source)}</code></pre></details>`;
+  const section = html.replace("<section ", `<section data-component-category="${escapeHtml(meta.category)}" data-component-search-text="${escapeHtml(searchText)}" `);
+  const closingIndex = section.lastIndexOf("</section>");
+  return closingIndex === -1 ? section : `${section.slice(0, closingIndex)}${details}${section.slice(closingIndex)}`;
 }
 
 function renderPlanSummary(block: MdxBlock): string {
@@ -199,9 +222,11 @@ const renderers: Readonly<Record<string, Renderer | undefined>> = {
   ApprovalGate: renderApprovalGate,
   QuestionForm: renderQuestionForm,
   Checklist: renderChecklist,
-  CommentAnchor: (block, context) => context.staticMode
-    ? `<button type="button" id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}" disabled>Add comment</button>`
-    : `<span class="ve-ip-comment-control"><button type="button" id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}" ${reviewControlAttributes(context, `comment:${block.id}`)}>Add comment</button>${persistenceFeedback(`comment:${block.id}`)}</span>`,
+  CommentAnchor: (block, context) => context.componentExplorer
+    ? card(block, "ve-ip-card", `<p class="ve-ip-muted">Invisible in generated plans; visible here so humans can inspect and copy its MDX contract.</p><span class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}"></span>`)
+    : context.staticMode
+      ? `<button type="button" id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}" disabled>Add comment</button>`
+      : `<span class="ve-ip-comment-control"><button type="button" id="${escapeHtml(block.id)}" class="ve-ip-comment-anchor" data-comment-anchor="${escapeHtml(block.id)}" ${reviewControlAttributes(context, `comment:${block.id}`)}>Add comment</button>${persistenceFeedback(`comment:${block.id}`)}</span>`,
   Callout: (block) => card(block, `ve-ip-callout ve-ip-callout--${escapeHtml(block.props.tone ?? "note")}`),
   Tabs: renderDiffTabs,
   Table: renderTableLike,
@@ -210,7 +235,8 @@ const renderers: Readonly<Record<string, Renderer | undefined>> = {
 export function renderBlock(block: MdxBlock, context: RenderContext): string {
   const renderer = renderers[block.type];
   if (!renderer) throw new Error(`No renderer registered for ${block.type}`);
-  return renderer(block, context);
+  const html = renderer(block, context);
+  return context.componentExplorer ? decorateExplorerBlock(block, html) : html;
 }
 
 export function renderBlocks(blocks: MdxBlock[], context: RenderContext): string {

@@ -16,7 +16,7 @@ import type { AgentHandoff, ReviewState } from "../plugins/Muse/skills/muse/tool
 import { validateRenderedHtmlIds } from "../plugins/Muse/skills/muse/tools/interactive-plan/schema.ts";
 import { renderPlanFolder, renderPlanHtml } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
 import { servePlan } from "../plugins/Muse/skills/muse/tools/interactive-plan/server.ts";
-import { RAW_BODY_MDX_COMPONENTS } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
+import { MDX_COMPONENT_META, MDX_COMPONENT_NAMES, RAW_BODY_MDX_COMPONENTS } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
 import {
   addComment,
   approvePlan,
@@ -33,6 +33,48 @@ afterEach(() => {
   mock.restore();
 });
 
+const fontAssetRoot = join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "assets");
+const expectedFontAssets = {
+  "bricolage-grotesque-latin-500-normal.woff2": {
+    sha256: "b62688707e0820a9cf2a98e9b0349fbb348fd17f76b70a05b53e7a668e3f406f",
+    sha384: "qn7O2kwYDNO8BB07VtIMUe0lUqq3WYJ/okIrACPResGQn0vViFROEt3SGde7RySe",
+    package: "@fontsource/bricolage-grotesque",
+    version: "5.2.10",
+    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
+  },
+  "bricolage-grotesque-latin-600-normal.woff2": {
+    sha256: "b34fc8c1ef0ac8798455ac2979eae4b4f90f0d327e3584d1032fa77a8a9a66ca",
+    sha384: "Ilh1L/tmtUzFnpC1cwkNgBNnW+urzfbLETMexxhppi4RurOQbreAwtqAuodE8gcS",
+    package: "@fontsource/bricolage-grotesque",
+    version: "5.2.10",
+    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
+  },
+  "bricolage-grotesque-latin-700-normal.woff2": {
+    sha256: "4c373ce3c1cca41c864eb3e27c059a59fc6310547ab9c9b6cd780d387ba24206",
+    sha384: "I1AMB8Mhv2nNTsttl0xrwLBvxe4XMocWs9FDGXH6AqBsgZTPNWagTukzMpe7LPST",
+    package: "@fontsource/bricolage-grotesque",
+    version: "5.2.10",
+    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
+  },
+  "fragment-mono-latin-400-normal.woff2": {
+    sha256: "44c4e39bff5e76652a24a872cbebabccbcfb20f62c4633b27c1f2745cba86b56",
+    sha384: "5pPJBXVgEAccmDzYsxRokikcIMqnLiJSV7qWM3TpHdoPoqSh8vUGD1DWsnEZB0BL",
+    package: "@fontsource/fragment-mono",
+    version: "5.2.8",
+    notice: "notices/fontsource-fragment-mono-5.2.8-LICENSE.txt",
+  },
+} as const;
+
+const expectedFontNotices = {
+  "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt": {
+    sha256: "923f4ddf0fd39f9b7794ab0df7332f3d95dc43e8ad7ec2289d6d9e8491177f51",
+    copyright: "Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage)",
+  },
+  "notices/fontsource-fragment-mono-5.2.8-LICENSE.txt": {
+    sha256: "d5e728d99896c101da6fe5bdffcdc8cf2618523643b99bd4e9190075f0a0c22e",
+    copyright: "Copyright 2022 The Fragment-Mono Project Authors (https://github.com/weiweihuanghuang/fragment-mono) FragmentMono-Italic.ttf: Copyright 2022 The Fragment-Mono Project Authors (https://github.com/weiweihuanghuang/fragment-mono)",
+  },
+} as const;
 
 async function copyFixture(name: string): Promise<string> {
   const planDir = await mkdtemp(join(tmpdir(), `ve-ip-${name}-`));
@@ -169,17 +211,17 @@ const emittedIdCollisionCases = [
   {
     component: "ArchitectureDiagram",
     body: "flowchart LR\nA --> B",
-    emittedIds: ["diagram-instructions", "ve-mermaid-diagram"],
+    emittedIds: ["diagram-title", "diagram-instructions", "ve-mermaid-diagram"],
   },
   {
     component: "DiffTabs",
     body: "file: first.ts\n+ first\n---\nfile: second.ts\n+ second",
-    emittedIds: ["diagram-tab-0", "diagram-tab-1", "diagram-panel-0", "diagram-panel-1"],
+    emittedIds: ["diagram-title", "diagram-tab-0", "diagram-tab-1", "diagram-panel-0", "diagram-panel-1"],
   },
   {
     component: "Tabs",
     body: "First\n---\nSecond",
-    emittedIds: ["diagram-tab-0", "diagram-tab-1", "diagram-panel-0", "diagram-panel-1"],
+    emittedIds: ["diagram-title", "diagram-tab-0", "diagram-tab-1", "diagram-panel-0", "diagram-panel-1"],
   },
 ].flatMap(({ component, body, emittedIds }) => {
   const generated = `<${component} id="diagram">${body}</${component}>`;
@@ -194,6 +236,13 @@ const emittedIdCollisionCases = [
   });
 });
 
+function escapeExpectedHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
 describe("interactive plan MDX loading", () => {
   test("loads every checked-in fixture through schema validation", async () => {
     const fixtureExpectations = [
@@ -891,6 +940,42 @@ describe("interactive plan rendering", () => {
       expect(indexPath.endsWith(join("dist", "index.html"))).toBe(true);
       expect(staticExportPath.endsWith(join("dist", "static-export.html"))).toBe(true);
 
+      const vendoredFontFiles = (await readdir(fontAssetRoot)).filter((filename) => filename.endsWith(".woff2")).sort();
+      expect(vendoredFontFiles).toEqual(Object.keys(expectedFontAssets).sort());
+
+      const expectedNoticeManifest = {
+        assets: Object.entries(expectedFontAssets).map(([asset, metadata]) => ({
+          asset,
+          package: metadata.package,
+          version: metadata.version,
+          notice: metadata.notice,
+        })),
+      };
+      const sourceNoticeManifest = JSON.parse(await readFile(join(fontAssetRoot, "notices", "manifest.json"), "utf8"));
+      const distributedNoticeManifest = JSON.parse(await readFile(join(planDir, "dist", "assets", "notices", "manifest.json"), "utf8"));
+      expect(sourceNoticeManifest).toEqual(expectedNoticeManifest);
+      expect(distributedNoticeManifest).toEqual(expectedNoticeManifest);
+
+      for (const [filename, expectedMetadata] of Object.entries(expectedFontAssets)) {
+        const assetPath = join(planDir, "dist", "assets", filename);
+        const bytes = await readFile(assetPath);
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(expectedMetadata.sha256);
+        expect(createHash("sha384").update(bytes).digest("base64")).toBe(expectedMetadata.sha384);
+        expect(indexHtml).toContain(`url("/assets/${filename}")`);
+
+        const noticeMetadata = expectedFontNotices[expectedMetadata.notice];
+        const sourceNotice = await readFile(join(fontAssetRoot, expectedMetadata.notice), "utf8");
+        const distributedNotice = await readFile(join(planDir, "dist", "assets", expectedMetadata.notice), "utf8");
+        expect(distributedNotice).toBe(sourceNotice);
+        expect(createHash("sha256").update(sourceNotice).digest("hex")).toBe(noticeMetadata.sha256);
+        expect(sourceNotice).toContain(noticeMetadata.copyright);
+      }
+      expect(indexHtml).not.toContain("fonts.googleapis.com");
+      expect(indexHtml).not.toContain("fonts.gstatic.com");
+      expect(indexHtml).toContain('integrity="sha384-T/0lMUdJpd2S1ZHtRiofG3htU3xPCrFVeAQ1UUE2TJwlEJSV5NUwn30kP28n238E"');
+      expect(staticHtml).toContain("data:font/woff2;base64,");
+      expect(staticHtml).not.toContain('url("/assets/');
+
       expect(indexHtml).toContain("Minimal Interactive Plan");
       expect(indexHtml).toContain("Muse interactive plan");
       expect(indexHtml).toContain("data-block-type=\"PlanSummary\"");
@@ -1518,6 +1603,106 @@ describe("generic table and Mermaid accessibility", () => {
       expect(source?.textContent?.trim()).toBe("flowchart LR\nA --> B");
     } finally {
       await browser.close();
+    }
+  });
+  test("embeds complete font notices in the single-file static export", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const { staticExportPath } = await renderPlanFolder(planDir);
+      const staticHtml = await readFile(staticExportPath, "utf8");
+      const shareScript = await readFile(join(repoRoot, "plugins", "Muse", "skills", "muse", "scripts", "share.sh"), "utf8");
+
+      expect(staticHtml.match(/data:font\/woff2;base64,/g)).toHaveLength(Object.keys(expectedFontAssets).length);
+      expect(staticHtml).not.toContain('url("/assets/');
+      expect(staticHtml).toContain("<details");
+      expect(staticHtml).toContain("Third-party font notices");
+
+      for (const [notice, metadata] of Object.entries(expectedFontNotices)) {
+        const noticeText = await readFile(join(fontAssetRoot, notice), "utf8");
+        expect(staticHtml).toContain(escapeExpectedHtml(noticeText));
+        expect(staticHtml).toContain(metadata.copyright.replaceAll("&", "&amp;"));
+      }
+
+      for (const [asset, metadata] of Object.entries(expectedFontAssets)) {
+        expect(staticHtml).toContain(asset);
+        expect(staticHtml).toContain(metadata.package);
+        expect(staticHtml).toContain(metadata.version);
+      }
+
+      expect(shareScript).toContain('cp "$HTML_FILE" "$DEPLOY_DIR/index.html"');
+      expect(shareScript).not.toMatch(/cp\s+(?:-[^\s]+\s+)*["']?\$HTML_FILE["']?\s+["']?\$DEPLOY_DIR\/assets/);
+    });
+  });
+
+  test("renders the style guide as a searchable, copyable component explorer", async () => {
+    await withFixture("component-library-showcase", async (planDir) => {
+      const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
+      const indexHtml = await readFile(indexPath, "utf8");
+      const staticHtml = await readFile(staticExportPath, "utf8");
+
+      expect(indexHtml).toContain("data-component-explorer");
+      expect(indexHtml).toContain("data-component-search");
+      expect(indexHtml).toContain("data-component-filter");
+      expect(indexHtml).toContain("data-component-results");
+      expect(indexHtml).toContain("data-copy-mdx");
+      expect(indexHtml).toContain("class=\"ve-ip-source\"");
+      expect(indexHtml).toContain("navigator.clipboard");
+      expect(staticHtml).toContain("data-component-explorer");
+      const canonicalTypes = [...MDX_COMPONENT_NAMES].sort();
+      const renderedTypes = Array.from(
+        indexHtml.matchAll(/<section[^>]*data-component-category="[^"]+"[^>]*data-block-type="([^"]+)"/g),
+        (match) => match[1],
+      ).sort();
+      const declaredCount = Number(indexHtml.match(/data-component-count="(\d+)"/)?.[1]);
+
+      expect(renderedTypes).toEqual(canonicalTypes);
+      expect(new Set(renderedTypes).size).toBe(MDX_COMPONENT_NAMES.length);
+      expect(declaredCount).toBe(MDX_COMPONENT_NAMES.length);
+      expect(indexHtml).toContain(`${MDX_COMPONENT_NAMES.length} examples · ${MDX_COMPONENT_NAMES.length} unique of canonical ${MDX_COMPONENT_NAMES.length}`);
+      expect(indexHtml).toContain(`data-component-search-text="PlanSummary ${MDX_COMPONENT_META.PlanSummary.category} ${MDX_COMPONENT_META.PlanSummary.summary}"`);
+      expect(indexHtml).toContain("Canonical denominator: MDX_COMPONENT_NAMES");
+
+      for (const html of [indexHtml, staticHtml]) {
+        expect(html).toContain(`<h2 id="component-explorer-title">Catalog</h2>`);
+        expect(html).toContain(`aria-labelledby="summary-title"`);
+        expect(html).toContain(`<h2 id="summary-title">Review Scenario</h2>`);
+        expect(html).toContain(`aria-labelledby="component-table-title"`);
+        expect(html).toContain(`<h2 id="component-table-title">QA / reference inventory</h2>`);
+        expect(html).not.toMatch(/<strong>\d+\s*\/\s*\d+<\/strong><span>Review coverage/);
+      }
+    });
+  });
+  test("reports rendered and canonical inventory counts for partial and duplicate style guides", async () => {
+    const cases = [
+      {
+        name: "partial",
+        blocks: `<PlanSummary id="summary" title="Summary">\nPartial catalog.\n</PlanSummary>`,
+        examples: 1,
+        unique: 1,
+      },
+      {
+        name: "duplicate",
+        blocks: `<PlanSummary id="summary-a" title="First summary">\nFirst example.\n</PlanSummary>\n\n<PlanSummary id="summary-b" title="Second summary">\nSecond example.\n</PlanSummary>`,
+        examples: 2,
+        unique: 1,
+      },
+    ];
+
+    for (const inventory of cases) {
+      await withFixture("component-library-showcase", async (planDir) => {
+        await writeFile(join(planDir, "plan.mdx"), `---\ntitle: ${inventory.name} component library\nkind: styleguide\nslug: ${inventory.name}-component-library\n---\n\n${inventory.blocks}\n`);
+        const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
+        const htmlOutputs = [
+          await readFile(indexPath, "utf8"),
+          await readFile(staticExportPath, "utf8"),
+        ];
+
+        for (const html of htmlOutputs) {
+          expect(html).toContain(`data-component-example-count="${inventory.examples}"`);
+          expect(html).toContain(`data-component-count="${inventory.unique}"`);
+          expect(html).toContain(`data-component-canonical-count="${MDX_COMPONENT_NAMES.length}"`);
+          expect(html).toContain(`${inventory.examples} ${inventory.examples === 1 ? "example" : "examples"} · ${inventory.unique} unique of canonical ${MDX_COMPONENT_NAMES.length}`);
+        }
+      });
     }
   });
 });

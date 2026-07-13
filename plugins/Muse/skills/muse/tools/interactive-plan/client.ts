@@ -27,6 +27,71 @@ const baseClientScript = `
     renderMermaid();
   });
 
+  const explorer = document.querySelector("[data-component-explorer]");
+  if (explorer) {
+    const search = explorer.querySelector("[data-component-search]");
+    const filters = Array.from(explorer.querySelectorAll("[data-component-filter]"));
+    const results = explorer.querySelector("[data-component-results]");
+    const blocks = Array.from(document.querySelectorAll(".ve-ip-block[data-component-category]"));
+    const canonicalCount = Number(explorer.getAttribute("data-component-canonical-count")) || 0;
+    let activeCategory = "";
+
+    const applyComponentFilters = () => {
+      const query = search?.value.trim().toLowerCase() || "";
+      let visibleCount = 0;
+      const visibleTypes = new Set();
+      blocks.forEach((block) => {
+        const category = block.getAttribute("data-component-category") || "";
+        const searchableText = (block.getAttribute("data-component-search-text") || "").toLowerCase();
+        const visible = (!activeCategory || category === activeCategory) && (!query || searchableText.includes(query));
+        block.hidden = !visible;
+        const navLink = Array.from(document.querySelectorAll(".ve-ip-nav a")).find((link) => link.getAttribute("href") === "#" + block.id);
+        if (navLink) navLink.hidden = !visible;
+        if (visible) {
+          visibleCount += 1;
+          visibleTypes.add(block.getAttribute("data-block-type") || "");
+        }
+      });
+      if (results) results.textContent = visibleCount + (visibleCount === 1 ? " example" : " examples") + " · " + visibleTypes.size + " unique of canonical " + canonicalCount;
+    };
+
+    search?.addEventListener("input", applyComponentFilters);
+    filters.forEach((button) => {
+      button.addEventListener("click", () => {
+        activeCategory = button.getAttribute("data-component-filter") || "";
+        filters.forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
+        applyComponentFilters();
+      });
+    });
+    document.addEventListener("keydown", (event) => {
+      const target = event.target;
+      if (event.key !== "/" || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable) return;
+      event.preventDefault();
+      search?.focus();
+    });
+    applyComponentFilters();
+  }
+
+  document.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const copyButton = target.closest("[data-copy-mdx]");
+    if (!copyButton) return;
+    const source = copyButton.closest(".ve-ip-source")?.querySelector("[data-mdx-source]")?.textContent || "";
+    if (!source) return;
+    try {
+      await navigator.clipboard.writeText(source);
+      copyButton.textContent = "Copied";
+      copyButton.setAttribute("data-copy-state", "copied");
+      window.setTimeout(() => {
+        copyButton.textContent = "Copy MDX";
+        copyButton.removeAttribute("data-copy-state");
+      }, 1600);
+    } catch {
+      copyButton.textContent = "Copy failed";
+    }
+  });
+
   const mermaidTheme = (theme) => {
     const dark = theme === "dark";
     const palette = dark
