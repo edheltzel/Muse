@@ -48,11 +48,12 @@
   "scripts": {
     "test": "bun test",
     "build": "vp build --config vite.config.ts",
-    "check": "vp run test && vp run visual-plan:build",
+    "check": "vp run test && vp run component-explorer:test-browser && vp run visual-plan:build",
     "visual-plan:render": "bun plugins/Muse/skills/muse/tools/interactive-plan/render.ts",
     "visual-plan:serve": "bun plugins/Muse/skills/muse/tools/interactive-plan/server.ts",
     "component-explorer:render": "bun plugins/Muse/skills/muse/tools/interactive-plan/render.ts tests/fixtures/interactive-plans/component-library-showcase",
     "component-explorer:serve": "bun plugins/Muse/skills/muse/tools/interactive-plan/server.ts tests/fixtures/interactive-plans/component-library-showcase 7375",
+    "component-explorer:test-browser": "bun tests/component-explorer.browser.ts",
     "visual-plan:build": "vp build --config vite.config.ts"
   },
   "devDependencies": {
