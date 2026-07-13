@@ -94,7 +94,10 @@ const baseClientScript = `
           wrap.setAttribute("data-render-state", "rendered");
         } catch (error) {
           if (version !== mermaidRenderVersion) return;
-          canvas.innerHTML = '<pre class="mermaid-error">' + String(error?.message || error) + "</pre>";
+          const message = document.createElement("pre");
+          message.className = "mermaid-error";
+          message.textContent = String(error?.message || error);
+          canvas.replaceChildren(message);
           wrap.setAttribute("data-render-state", "error");
         }
       }

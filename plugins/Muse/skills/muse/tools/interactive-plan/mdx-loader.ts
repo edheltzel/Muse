@@ -102,7 +102,7 @@ export async function loadPlanFolder(rootDir: string): Promise<LoadedPlanFolder>
     dist: manifestFromFile.dist ?? "dist",
     localOnly: true,
   };
-  const errors = [...validateBlocks(plan.blocks), ...(canvas ? validateBlocks(canvas.blocks) : [])];
+  const errors = validateBlocks([...plan.blocks, ...(canvas?.blocks ?? [])], canvas ? ["canvas"] : []);
   if (errors.length) throw new Error(`Invalid plan source:\n${errors.join("\n")}`);
   return { rootDir, manifest, plan, canvas };
 }

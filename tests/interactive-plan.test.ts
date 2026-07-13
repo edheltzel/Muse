@@ -108,6 +108,20 @@ describe("interactive plan MDX loading", () => {
       await rm(planDir, { recursive: true, force: true });
     }
   });
+
+  test("rejects duplicate ids across plan and canvas before rendering", async () => {
+    let message = "";
+    try {
+      await loadPlanFolder(join(fixturesRoot, "invalid-cross-source-duplicates"));
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("Invalid plan source");
+    expect(message).toContain("Duplicate MDX component id 'shared-block'");
+    expect(message).toContain("Duplicate MDX component id 'shared-diagram'");
+    expect(message).toContain("Duplicate MDX component id 'canvas'");
+  });
 });
 
 describe("interactive plan rendering", () => {
@@ -269,6 +283,46 @@ describe("generic table and Mermaid accessibility", () => {
       input.dispatchEvent(editableArrow);
       expect(editableArrow.defaultPrevented).toBe(false);
       expect(canvas.style.transform).toBe("translate(-40px, -40px) scale(1)");
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("Mermaid errors preserve authored source without creating live markup", async () => {
+    const browser = new Browser();
+    const page = browser.newPage();
+    const malformedSource = "flowchart LR\nA --> <img data-authored-error>";
+    try {
+      page.content = renderBlock({
+        id: "malformed-runtime-diagram",
+        type: "ArchitectureDiagram",
+        props: { title: "Malformed runtime diagram" },
+        body: malformedSource,
+      }, { staticMode: false });
+      Object.assign(page.mainFrame.window, {
+        Array,
+        Math,
+        String,
+        WeakMap,
+        mermaid: {
+          initialize() {},
+          render(_id: string, source: string) {
+            throw new Error(`Parse error near ${source}`);
+          },
+        },
+      });
+      page.evaluate(staticPlanClientScript);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const window = page.mainFrame.window;
+      const wrap = window.document.querySelector<HTMLElement>(".mermaid-wrap");
+      const source = window.document.querySelector<HTMLElement>(".mermaid-source");
+      const error = window.document.querySelector<HTMLElement>(".mermaid-error");
+      expect(wrap?.getAttribute("data-render-state")).toBe("error");
+      expect(source?.textContent?.trim()).toBe(malformedSource);
+      expect(error?.textContent).toBe(`Parse error near ${malformedSource}`);
+      expect(window.document.querySelector("[data-authored-error]")).toBeNull();
     } finally {
       await browser.close();
     }

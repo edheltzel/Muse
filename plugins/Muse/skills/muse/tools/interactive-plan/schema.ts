@@ -84,9 +84,9 @@ export function validateReviewState(value: unknown): string[] {
   return errors;
 }
 
-export function validateBlocks(blocks: MdxBlock[]): string[] {
+export function validateBlocks(blocks: MdxBlock[], reservedIds: readonly string[] = []): string[] {
   const errors: string[] = [];
-  const seen = new Set<string>();
+  const seen = new Set(reservedIds);
   for (const block of blocks) {
     if (!KNOWN_MDX_COMPONENTS[block.type]) {
       errors.push(`Unknown MDX component '${block.type}'${block.id ? ` at block '${block.id}'` : ""}`);
