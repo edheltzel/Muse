@@ -32,6 +32,10 @@ interface ReviewSnapshot {
   handoffMarkdown?: string;
 }
 
+interface CurrentReviewSnapshot extends ReviewSnapshot {
+  generation: string;
+}
+
 interface BundleReference {
   id: string;
   path: string;
@@ -1528,7 +1532,7 @@ async function withPlanLock<T>(
   }
 }
 
-async function readCurrentSnapshot(planDir: string): Promise<ReviewSnapshot> {
+export async function readReviewSnapshot(planDir: string): Promise<CurrentReviewSnapshot> {
   return withPlanLock(planDir, async (current, authority, assertOwned, canonicalPlanDir) => {
     const snapshot = await readAuthorizedSnapshot(current.path, authority, current.directory);
     if (
@@ -1541,16 +1545,16 @@ async function readCurrentSnapshot(planDir: string): Promise<ReviewSnapshot> {
       await assertOwned();
       await verifyPlanAuthority(canonicalPlanDir, authority);
     }
-    return snapshot;
+    return { ...snapshot, generation: current.id };
   });
 }
 
 export async function readReviewState(planDir: string): Promise<ReviewState> {
-  return (await readCurrentSnapshot(planDir)).state;
+  return (await readReviewSnapshot(planDir)).state;
 }
 
 export async function readComments(planDir: string): Promise<CommentThread[]> {
-  return (await readCurrentSnapshot(planDir)).comments;
+  return (await readReviewSnapshot(planDir)).comments;
 }
 
 export async function readPublishedArtifact(planDir: string, file: "agent-handoff.json" | "agent-handoff.md"): Promise<string> {

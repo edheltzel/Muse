@@ -489,6 +489,67 @@ describe("interactive plan review state and handoff", () => {
     });
   });
 
+  test("rejects stale ready state when a required answer changed without changing comments", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await setReadinessPolicy(planDir);
+      await updateReviewState(planDir, {
+        answers: { runtime: "Bun" },
+        checklist: { schema: true },
+      });
+      const staleState = await readReviewState(planDir);
+      const staleGeneration = (await readlink(join(planDir, ".muse-review", "current"))).split("/").at(-1)!;
+      await updateReviewState(planDir, { answers: { runtime: "" } });
+      const server = await servePlan(planDir, 0);
+      let window: Window | undefined;
+      try {
+        if (server.port === undefined) throw new Error("Test server did not bind a port");
+        const baseUrl = `http://localhost:${server.port}/`;
+        const html = await (await fetch(baseUrl)).text();
+        let stateReads = 0;
+        const secondStateRead = Promise.withResolvers<void>();
+        const coherentStateReleased = Promise.withResolvers<void>();
+        const clientFetch: ClientFetch = async (url, init) => {
+          const requestUrl = new URL(url, baseUrl);
+          if (requestUrl.pathname === "/plan-state.json") {
+            stateReads += 1;
+            if (stateReads === 1) {
+              return Response.json(staleState, {
+                headers: { "x-muse-review-generation": staleGeneration },
+              });
+            }
+            if (stateReads === 2) {
+              secondStateRead.resolve();
+              await coherentStateReleased.promise;
+            }
+          }
+          return fetch(requestUrl, init);
+        };
+
+        const tracker = trackClientFetch(baseUrl, clientFetch);
+        window = installReviewClient(html, baseUrl, tracker.fetch);
+        await settleClientRequests(tracker, 2);
+        expect(window.document.body.dataset.reviewAuthority).toBe("loading");
+        expect(window.document.querySelector("[data-approve-plan]")?.hasAttribute("disabled")).toBe(true);
+
+        await secondStateRead.promise;
+        coherentStateReleased.resolve();
+        await settleClientRequests(tracker, 4);
+        expect(window.document.body.dataset.reviewAuthority).toBe("ready");
+
+        const readiness = window.document.querySelector("[data-approval-readiness]");
+        expect(readiness?.textContent).toBe("Not ready: 1 required value missing.");
+        expect(readiness?.getAttribute("data-ready")).toBe("false");
+        expect(window.document.querySelector("[data-approve-plan]")?.hasAttribute("disabled")).toBe(true);
+        const approvalResponse = await post(server, "/api/approve", { reviewer: "stale-answer-contract" });
+        expect(approvalResponse.status).toBe(422);
+        expect(await approvalResponse.text()).toMatch(/required question 'runtime' must be answered/i);
+      } finally {
+        window?.close();
+        server.stop(true);
+      }
+    });
+  });
+
   test("updates the review sync banner after every canonical mutation", async () => {
     await withFixture("component-library-showcase", async (planDir) => {
       await updateReviewState(planDir, {

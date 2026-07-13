@@ -1,7 +1,7 @@
 import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { renderPlanFolder } from "./render";
-import { addComment, approvePlan, readComments, readPublishedArtifact, readReviewState, resolveComment, ReviewOperationError, updateReviewState } from "./state-store";
+import { addComment, approvePlan, readPublishedArtifact, readReviewSnapshot, resolveComment, ReviewOperationError, updateReviewState } from "./state-store";
 import { validateReviewStatePatch } from "./schema";
 
 async function json(request: Request): Promise<unknown> {
@@ -87,10 +87,12 @@ export async function servePlan(planDir: string, port = 7374) {
           return new Response(await readFile(join(planDir, "dist", "index.html"), "utf8"), { headers: { "content-type": "text/html; charset=utf-8" } });
         }
         if (url.pathname === "/plan-state.json") {
-          return Response.json(await readReviewState(planDir));
+          const snapshot = await readReviewSnapshot(planDir);
+          return Response.json(snapshot.state, { headers: { "x-muse-review-generation": snapshot.generation } });
         }
         if (url.pathname === "/comments.json") {
-          return Response.json(await readComments(planDir));
+          const snapshot = await readReviewSnapshot(planDir);
+          return Response.json(snapshot.comments, { headers: { "x-muse-review-generation": snapshot.generation } });
         }
         if (url.pathname === "/agent-handoff.json") {
           return new Response(await readPublishedArtifact(planDir, "agent-handoff.json"), { headers: { "content-type": "application/json; charset=utf-8" } });

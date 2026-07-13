@@ -160,7 +160,10 @@ export const interactivePlanReviewScript = `
   const getJson = async (url) => {
     const response = await fetch(url);
     if (!response.ok) throw new Error(await response.text());
-    return response.json();
+    return {
+      value: await response.json(),
+      generation: response.headers.get("x-muse-review-generation"),
+    };
   };
   const postJson = async (url, body, idempotencyKey) => {
     const headers = { "Content-Type": "application/json" };
@@ -362,14 +365,8 @@ export const interactivePlanReviewScript = `
         getJson("/plan-state.json"),
         getJson("/comments.json"),
       ]);
-      const openCommentIds = new Set(
-        comments.filter((comment) => comment.status === "open").map((comment) => comment.id),
-      );
-      if (
-        openCommentIds.size === state.unresolvedCommentIds.length
-        && state.unresolvedCommentIds.every((id) => openCommentIds.has(id))
-      ) {
-        return { state, comments };
+      if (state.generation && state.generation === comments.generation) {
+        return { state: state.value, comments: comments.value };
       }
     }
     throw new Error("Review state and comments changed while loading. Retry.");
