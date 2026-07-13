@@ -155,7 +155,7 @@ const baseClientScript = `
 
 export const staticPlanClientScript = baseClientScript;
 
-export const interactivePlanClientScript = baseClientScript + `
+export const interactivePlanReviewScript = `
 (() => {
   const getJson = async (url) => {
     const response = await fetch(url);
@@ -318,6 +318,11 @@ export const interactivePlanClientScript = baseClientScript + `
     container.append(list);
   };
 
+  const formatSyncDetail = (state) => {
+    const blockers = state.unresolvedCommentIds.length;
+    return formatStatus(state.status) + " · " + blockers + " unresolved blocking comment" + (blockers === 1 ? "" : "s");
+  };
+
   const applyServerTruth = (state, comments, handoff) => {
     const commentsChanged = comments !== committedComments;
     committedState = state;
@@ -344,17 +349,30 @@ export const interactivePlanClientScript = baseClientScript + `
       const value = approvedAt.querySelector("strong");
       if (value) value.textContent = formatDate(state.approvedAt);
     }
+    const syncDetail = document.querySelector("[data-review-sync-detail]");
+    if (syncDetail) syncDetail.textContent = formatSyncDetail(state);
     if (commentsChanged) renderComments(comments);
     showApprovalReceipt(state, handoff);
     syncControlAvailability();
   };
 
   const fetchServerTruth = async () => {
-    const [state, comments] = await Promise.all([
-      getJson("/plan-state.json"),
-      getJson("/comments.json"),
-    ]);
-    return { state, comments };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const [state, comments] = await Promise.all([
+        getJson("/plan-state.json"),
+        getJson("/comments.json"),
+      ]);
+      const openCommentIds = new Set(
+        comments.filter((comment) => comment.status === "open").map((comment) => comment.id),
+      );
+      if (
+        openCommentIds.size === state.unresolvedCommentIds.length
+        && state.unresolvedCommentIds.every((id) => openCommentIds.has(id))
+      ) {
+        return { state, comments };
+      }
+    }
+    throw new Error("Review state and comments changed while loading. Retry.");
   };
 
   const updateSyncNotice = (state, title, detail, retry) => {
@@ -382,11 +400,10 @@ export const interactivePlanClientScript = baseClientScript + `
         document.querySelectorAll("[data-persistence-key]").forEach((feedback) => {
           renderFeedback(feedback.dataset.persistenceKey, feedback);
         });
-        const blockers = truth.state.unresolvedCommentIds.length;
         updateSyncNotice(
           "ready",
           "Review synced",
-          formatStatus(truth.state.status) + " · " + blockers + " unresolved blocking comment" + (blockers === 1 ? "" : "s"),
+          formatSyncDetail(truth.state),
           false,
         );
       } catch (error) {
@@ -556,3 +573,5 @@ export const interactivePlanClientScript = baseClientScript + `
 
   hydrateReviewState();
 })();`;
+
+export const interactivePlanClientScript = baseClientScript + interactivePlanReviewScript;
