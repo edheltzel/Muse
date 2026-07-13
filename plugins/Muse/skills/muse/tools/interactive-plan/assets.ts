@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface FontAsset {
@@ -60,7 +60,10 @@ export async function fontFaceCss(staticMode: boolean): Promise<string> {
 export async function copyFontAssets(distDir: string): Promise<void> {
   const outputDir = join(distDir, "assets");
   await mkdir(outputDir, { recursive: true });
-  await Promise.all(FONT_ASSETS.map((asset) => copyFile(join(sourceAssetDir, asset.filename), join(outputDir, asset.filename))));
+  await Promise.all([
+    ...FONT_ASSETS.map((asset) => copyFile(join(sourceAssetDir, asset.filename), join(outputDir, asset.filename))),
+    cp(join(sourceAssetDir, "notices"), join(outputDir, "notices"), { recursive: true }),
+  ]);
 }
 
 export function isFontAsset(filename: string): boolean {

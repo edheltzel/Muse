@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,22 +18,46 @@ import {
 
 const repoRoot = join(import.meta.dir, "..");
 const fixturesRoot = join(repoRoot, "tests", "fixtures", "interactive-plans");
+const fontAssetRoot = join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "assets");
 const expectedFontAssets = {
   "bricolage-grotesque-latin-500-normal.woff2": {
     sha256: "b62688707e0820a9cf2a98e9b0349fbb348fd17f76b70a05b53e7a668e3f406f",
     sha384: "qn7O2kwYDNO8BB07VtIMUe0lUqq3WYJ/okIrACPResGQn0vViFROEt3SGde7RySe",
+    package: "@fontsource/bricolage-grotesque",
+    version: "5.2.10",
+    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
   },
   "bricolage-grotesque-latin-600-normal.woff2": {
     sha256: "b34fc8c1ef0ac8798455ac2979eae4b4f90f0d327e3584d1032fa77a8a9a66ca",
     sha384: "Ilh1L/tmtUzFnpC1cwkNgBNnW+urzfbLETMexxhppi4RurOQbreAwtqAuodE8gcS",
+    package: "@fontsource/bricolage-grotesque",
+    version: "5.2.10",
+    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
   },
   "bricolage-grotesque-latin-700-normal.woff2": {
     sha256: "4c373ce3c1cca41c864eb3e27c059a59fc6310547ab9c9b6cd780d387ba24206",
     sha384: "I1AMB8Mhv2nNTsttl0xrwLBvxe4XMocWs9FDGXH6AqBsgZTPNWagTukzMpe7LPST",
+    package: "@fontsource/bricolage-grotesque",
+    version: "5.2.10",
+    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
   },
   "fragment-mono-latin-400-normal.woff2": {
     sha256: "44c4e39bff5e76652a24a872cbebabccbcfb20f62c4633b27c1f2745cba86b56",
     sha384: "5pPJBXVgEAccmDzYsxRokikcIMqnLiJSV7qWM3TpHdoPoqSh8vUGD1DWsnEZB0BL",
+    package: "@fontsource/fragment-mono",
+    version: "5.2.8",
+    notice: "notices/fontsource-fragment-mono-5.2.8-LICENSE.txt",
+  },
+} as const;
+
+const expectedFontNotices = {
+  "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt": {
+    sha256: "923f4ddf0fd39f9b7794ab0df7332f3d95dc43e8ad7ec2289d6d9e8491177f51",
+    copyright: "Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage)",
+  },
+  "notices/fontsource-fragment-mono-5.2.8-LICENSE.txt": {
+    sha256: "d5e728d99896c101da6fe5bdffcdc8cf2618523643b99bd4e9190075f0a0c22e",
+    copyright: "Copyright 2022 The Fragment-Mono Project Authors (https://github.com/weiweihuanghuang/fragment-mono) FragmentMono-Italic.ttf: Copyright 2022 The Fragment-Mono Project Authors (https://github.com/weiweihuanghuang/fragment-mono)",
   },
 } as const;
 
@@ -138,12 +162,35 @@ describe("interactive plan rendering", () => {
       expect(indexPath.endsWith(join("dist", "index.html"))).toBe(true);
       expect(staticExportPath.endsWith(join("dist", "static-export.html"))).toBe(true);
 
-      for (const [filename, expectedHashes] of Object.entries(expectedFontAssets)) {
+      const vendoredFontFiles = (await readdir(fontAssetRoot)).filter((filename) => filename.endsWith(".woff2")).sort();
+      expect(vendoredFontFiles).toEqual(Object.keys(expectedFontAssets).sort());
+
+      const expectedNoticeManifest = {
+        assets: Object.entries(expectedFontAssets).map(([asset, metadata]) => ({
+          asset,
+          package: metadata.package,
+          version: metadata.version,
+          notice: metadata.notice,
+        })),
+      };
+      const sourceNoticeManifest = JSON.parse(await readFile(join(fontAssetRoot, "notices", "manifest.json"), "utf8"));
+      const distributedNoticeManifest = JSON.parse(await readFile(join(planDir, "dist", "assets", "notices", "manifest.json"), "utf8"));
+      expect(sourceNoticeManifest).toEqual(expectedNoticeManifest);
+      expect(distributedNoticeManifest).toEqual(expectedNoticeManifest);
+
+      for (const [filename, expectedMetadata] of Object.entries(expectedFontAssets)) {
         const assetPath = join(planDir, "dist", "assets", filename);
         const bytes = await readFile(assetPath);
-        expect(createHash("sha256").update(bytes).digest("hex")).toBe(expectedHashes.sha256);
-        expect(createHash("sha384").update(bytes).digest("base64")).toBe(expectedHashes.sha384);
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(expectedMetadata.sha256);
+        expect(createHash("sha384").update(bytes).digest("base64")).toBe(expectedMetadata.sha384);
         expect(indexHtml).toContain(`url("/assets/${filename}")`);
+
+        const noticeMetadata = expectedFontNotices[expectedMetadata.notice];
+        const sourceNotice = await readFile(join(fontAssetRoot, expectedMetadata.notice), "utf8");
+        const distributedNotice = await readFile(join(planDir, "dist", "assets", expectedMetadata.notice), "utf8");
+        expect(distributedNotice).toBe(sourceNotice);
+        expect(createHash("sha256").update(sourceNotice).digest("hex")).toBe(noticeMetadata.sha256);
+        expect(sourceNotice).toContain(noticeMetadata.copyright);
       }
       expect(indexHtml).not.toContain("fonts.googleapis.com");
       expect(indexHtml).not.toContain("fonts.gstatic.com");
