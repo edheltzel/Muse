@@ -945,6 +945,348 @@ describe("interactive plan review state and handoff", () => {
       }
     });
   });
+  test("rejects symlinked claim parents without reading, writing, or deleting external claims", async () => {
+    for (const operation of ["new-claim", "stale-eviction", "release"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        const external = await mkdtemp(join(tmpdir(), "ve-ip-external-claims-"));
+        const claimsDir = join(planDir, ".muse-review-locks");
+        const lockPath = join(planDir, ".muse-review.lock");
+        const externalClaim = join(external, `${canonicalId}.json`);
+        try {
+          if (operation === "release") {
+            const lock = await acquirePlanLock(planDir);
+            await rm(claimsDir, { recursive: true });
+            await writeFile(join(external, `${lock.nonce}.json`), "external-owner\n");
+            await fs.symlink(external, claimsDir);
+            await lock.release();
+            expect(await readFile(join(external, `${lock.nonce}.json`), "utf8")).toBe("external-owner\n");
+            expect(await readlink(lockPath)).toContain(lock.nonce);
+            return;
+          }
+
+          await writeFile(externalClaim, operation === "stale-eviction"
+            ? `${JSON.stringify({ nonce: canonicalId, pid: 2_147_483_647, createdAt: 0 })}\n`
+            : "external-owner\n");
+          await fs.utimes(externalClaim, new Date(0), new Date(0));
+          await fs.symlink(external, claimsDir);
+          if (operation === "stale-eviction") {
+            await fs.symlink(join(".muse-review-locks", `${canonicalId}.json`), lockPath);
+          }
+
+          await expect(acquirePlanLock(planDir)).rejects.toThrow(/plan-local non-symlink directory/i);
+          expect(await readFile(externalClaim, "utf8")).toContain(operation === "stale-eviction" ? canonicalId : "external-owner");
+          if (operation === "stale-eviction") {
+            expect(await readlink(lockPath)).toBe(join(".muse-review-locks", `${canonicalId}.json`));
+          }
+        } finally {
+          await rm(external, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  test("recovers an abandoned stale guard owned by a killed process without debris", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const helper = join(repoRoot, "tests", "helpers", "review-guard-owner.ts");
+      const owner = Bun.spawn([process.execPath, helper, planDir], { stdout: "pipe", stderr: "pipe" });
+      const reader = owner.stdout.getReader();
+      const ready = await reader.read();
+      expect(new TextDecoder().decode(ready.value)).toContain("ready");
+      owner.kill();
+      await owner.exited;
+
+      const successor = await acquirePlanLock(planDir);
+      await successor.release();
+      await expect(lstat(join(planDir, ".muse-review.lock.guard"))).rejects.toThrow();
+      await expect(lstat(join(planDir, ".muse-review.lock"))).rejects.toThrow();
+    });
+  });
+
+  test("invalid approval leaves the authoritative pointer and state bytes unchanged", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "first");
+      const pointer = join(planDir, ".muse-review", "current");
+      const committedTarget = await readlink(pointer);
+      const committedStatePath = join(planDir, ".muse-review", committedTarget, "plan-state.json");
+      const committedState = await readFile(committedStatePath);
+      await setReadinessPolicy(planDir);
+
+      await expect(approvePlan(planDir, "blocked")).rejects.toThrow(/runtime|schema/i);
+      expect(await readlink(pointer)).toBe(committedTarget);
+      expect(await readFile(committedStatePath)).toEqual(committedState);
+    });
+  });
+
+  test("fails closed on a canonical dangling current target without cleaning bundles", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const store = join(planDir, ".muse-review");
+      const current = join(store, "current");
+      const bundlesBefore = await readdir(join(store, "bundles"));
+      const dangling = join("bundles", canonicalId);
+      await replaceSymlink(current, dangling);
+
+      await expect(readReviewState(planDir)).rejects.toThrow();
+      expect(await readlink(current)).toBe(dangling);
+      expect(await readdir(join(store, "bundles"))).toEqual(bundlesBefore);
+    });
+  });
+
+  test("binds approval to exact plan, canvas, manifest, readiness, and complete state values", async () => {
+    const mutations: Array<{
+      setup?: (planDir: string) => Promise<void>;
+      mutate: (planDir: string) => Promise<void>;
+    }> = [
+      {
+        mutate: async (planDir) => {
+          await fs.appendFile(join(planDir, "plan.mdx"), "\n<Callout id=\"unprojected\" title=\"Unprojected\">Changed.</Callout>\n");
+        },
+      },
+      {
+        mutate: async (planDir) => {
+          const path = join(planDir, "plan.mdx");
+          await writeFile(path, (await readFile(path, "utf8")).replace("title: Minimal Interactive Plan", "title: Changed Frontmatter"));
+        },
+      },
+      {
+        mutate: async (planDir) => {
+          const path = join(planDir, "plan.mdx");
+          await writeFile(path, (await readFile(path, "utf8")).replace('status="Draft"', 'status="Changed"'));
+        },
+      },
+      { mutate: async (planDir) => writeFile(join(planDir, "canvas.mdx"), "<Callout id=\"canvas\">Created</Callout>\n") },
+      {
+        setup: async (planDir) => writeFile(join(planDir, "canvas.mdx"), "<Callout id=\"canvas\">Original</Callout>\n"),
+        mutate: async (planDir) => writeFile(join(planDir, "canvas.mdx"), "<Callout id=\"canvas\">Edited</Callout>\n"),
+      },
+      {
+        setup: async (planDir) => writeFile(join(planDir, "canvas.mdx"), "<Callout id=\"canvas\">Original</Callout>\n"),
+        mutate: async (planDir) => rm(join(planDir, "canvas.mdx")),
+      },
+      {
+        setup: async (planDir) => {
+          await setReadinessPolicy(planDir);
+          await updateReviewState(planDir, { answers: { runtime: "Bun" }, checklist: { schema: true } });
+        },
+        mutate: async (planDir) => {
+          const path = join(planDir, "plan.mdx");
+          await writeFile(path, (await readFile(path, "utf8"))
+            .replace("freeform | required", "freeform | advisory")
+            .replace("Schema validates | required", "Schema validates | advisory"));
+        },
+      },
+      {
+        mutate: async (planDir) => {
+          const bundle = await currentBundlePath(planDir);
+          const statePath = join(bundle, "plan-state.json");
+          const state = JSON.parse(await readFile(statePath, "utf8")) as ReviewState;
+          state.checklist.render = true;
+          await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+        },
+      },
+    ];
+
+    for (const mutation of mutations) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await mutation.setup?.(planDir);
+        await approvePlan(planDir, "tester");
+        await mutation.mutate(planDir);
+        expect((await readReviewState(planDir)).status).toBe("needs_revision");
+        await expect(readPublishedArtifact(planDir, "agent-handoff.json")).rejects.toThrow();
+        await expect(readPublishedArtifact(planDir, "agent-handoff.md")).rejects.toThrow();
+      });
+    }
+  });
+
+  test("revalidates approval identity through every approved read API", async () => {
+    const readers = [
+      async (planDir: string) => readReviewState(planDir),
+      async (planDir: string) => readComments(planDir),
+      async (planDir: string) => readPublishedArtifact(planDir, "agent-handoff.json"),
+      async (planDir: string) => readPublishedArtifact(planDir, "agent-handoff.md"),
+    ];
+    for (const readApproved of readers) {
+      await withFixture("minimal-plan", async (planDir) => {
+        await approvePlan(planDir, "tester");
+        await fs.appendFile(join(planDir, "plan.mdx"), "\nUnprojected source mutation.\n");
+        await readApproved(planDir).catch(() => undefined);
+        expect((await readReviewState(planDir)).status).toBe("needs_revision");
+      });
+    }
+  });
+
+  test("detects source mutation during approval and immediately before approved reads", async () => {
+    for (const phase of ["approval", "read"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        if (phase === "read") await approvePlan(planDir, "tester");
+        else await readReviewState(planDir);
+        const pointer = join(planDir, ".muse-review", "current");
+        const committedTarget = await readlink(pointer);
+        const planPath = join(planDir, "plan.mdx");
+        const originalReadFile = fs.readFile;
+        const originalWriteFile = fs.writeFile;
+        let planReads = 0;
+        spyOn(fs, "readFile").mockImplementation((async (path: PathLike, options?: unknown) => {
+          const result = await originalReadFile(path, options as never);
+          if (String(path) === planPath && ++planReads === 2) {
+            await originalWriteFile(planPath, `${String(result)}\nRaced source mutation.\n`);
+          }
+          return result;
+        }) as typeof fs.readFile);
+
+        if (phase === "approval") {
+          await expect(approvePlan(planDir, "raced")).rejects.toThrow(/changed during approval/i);
+          expect(await readlink(pointer)).toBe(committedTarget);
+        } else {
+          await expect(readReviewState(planDir)).rejects.toThrow(/identity changed/i);
+        }
+        mock.restore();
+      });
+    }
+  });
+
+  test("validates final generated state and handoff before replacing current", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await readReviewState(planDir);
+      const pointer = join(planDir, ".muse-review", "current");
+      const committedTarget = await readlink(pointer);
+      await writeFile(join(planDir, "visual-explainer.json"), JSON.stringify({ slug: "" }));
+
+      await expect(approvePlan(planDir, "tester")).rejects.toThrow(/planSlug.*nonblank/i);
+      expect(await readlink(pointer)).toBe(committedTarget);
+    });
+  });
+
+  test("rejects bundle member replacement while reading from no-follow handles", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      await approvePlan(planDir, "tester");
+      const bundle = await currentBundlePath(planDir);
+      const statePath = join(bundle, "plan-state.json");
+      const originalOpen = fs.open;
+      let swapped = false;
+      spyOn(fs, "open").mockImplementation((async (path, flags, mode) => {
+        if (!swapped && String(path).endsWith("comments.json")) {
+          swapped = true;
+          const replacement = join(bundle, "replacement-state.json");
+          await writeFile(replacement, await readFile(statePath));
+          await fs.rename(replacement, statePath);
+        }
+        return originalOpen(path, flags, mode);
+      }) as typeof fs.open);
+
+      await expect(readReviewState(planDir)).rejects.toThrow(/changed while it was being read/i);
+    });
+  });
+
+  test("strictly validates approval request bodies and preserves current", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const server = await servePlan(planDir, 0);
+      try {
+        await readReviewState(planDir);
+        const pointer = join(planDir, ".muse-review", "current");
+        const committedTarget = await readlink(pointer);
+        const invalidBodies = [
+          { reviewer: "" },
+          { reviewer: " " },
+          { reviewer: 42 },
+          { reviewer: "valid", extra: true },
+          { unknown: true },
+        ];
+        for (const body of invalidBodies) {
+          const response = await post(server, "/api/approve", body);
+          expect(response.status).toBe(400);
+          expect(await response.text()).toMatch(/exactly|nonblank/i);
+          expect(await readlink(pointer)).toBe(committedTarget);
+        }
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
+
+  test("restores mixed compatibility originals after faults at every replacement position", async () => {
+    for (const failedFile of ["plan-state.json", "comments.json", "agent-handoff.json", "agent-handoff.md"] as const) {
+      await withFixture("minimal-plan", async (planDir) => {
+        const statePath = join(planDir, "plan-state.json");
+        const commentsPath = join(planDir, "comments.json");
+        const jsonPath = join(planDir, "agent-handoff.json");
+        const markdownPath = join(planDir, "agent-handoff.md");
+        const targetPath = join(planDir, "operator-handoff.json");
+        const originalState = Buffer.from(`${JSON.stringify({
+          status: "in_review",
+          answers: {},
+          checklist: {},
+          unresolvedCommentIds: [],
+        }, null, 2)}\n`);
+        await writeFile(statePath, originalState);
+        await writeFile(commentsPath, "[]\n");
+        await writeFile(targetPath, "operator-owned\n");
+        await fs.symlink("operator-handoff.json", jsonPath);
+        const originalRename = fs.rename;
+        spyOn(fs, "rename").mockImplementation(async (from, to) => {
+          if (String(to) === join(planDir, failedFile)) throw new Error(`fault at ${failedFile}`);
+          return originalRename(from, to);
+        });
+
+        await expect(readReviewState(planDir)).rejects.toThrow(`fault at ${failedFile}`);
+        expect(await readFile(statePath)).toEqual(originalState);
+        expect(await readFile(commentsPath, "utf8")).toBe("[]\n");
+        expect(await readlink(jsonPath)).toBe("operator-handoff.json");
+        expect(await Bun.file(markdownPath).exists()).toBe(false);
+        mock.restore();
+      });
+    }
+  });
+  test("serializes burst state updates so every accepted patch reaches authoritative state", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const server = await servePlan(planDir, 0);
+      try {
+        const updates = Array.from({ length: 20 }, (_, index) => [`burst-${index}`, `value-${index}`] as const);
+        const responses = await Promise.all(
+          updates.map(([key, value]) => post(server, "/api/state", { answers: { [key]: value } })),
+        );
+        expect(responses.every((response) => response.ok)).toBe(true);
+        const acceptedStates = await Promise.all(responses.map((response) => response.json() as Promise<ReviewState>));
+        for (let index = 0; index < updates.length; index += 1) {
+          const [key, value] = updates[index];
+          expect(acceptedStates[index].answers[key]).toBe(value);
+        }
+        const authoritative = await readReviewState(planDir);
+        expect(authoritative.answers).toEqual(Object.fromEntries(updates));
+        expect(await temporaryPublicationEntries(planDir)).toEqual([]);
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
+
+  test("publishes approved to needs-revision as one metadata and artifact revocation", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const server = await servePlan(planDir, 0);
+      try {
+        await approvePlan(planDir, "reviewer");
+        const pointer = join(planDir, ".muse-review", "current");
+        const approvedTarget = await readlink(pointer);
+        const response = await post(server, "/api/state", { status: "needs_revision" });
+        expect(response.ok).toBe(true);
+        const revised = await response.json() as ReviewState;
+        expect(revised).toEqual({
+          status: "needs_revision",
+          answers: {},
+          checklist: {},
+          unresolvedCommentIds: [],
+        });
+        expect(await readlink(pointer)).not.toBe(approvedTarget);
+        expect(await readReviewState(planDir)).toEqual(revised);
+        for (const artifact of ["agent-handoff.json", "agent-handoff.md"]) {
+          const artifactResponse = await fetch(`http://localhost:${server.port}/${artifact}`);
+          expect(artifactResponse.ok).toBe(false);
+        }
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
 });
 
 describe("interactive command documentation contracts", () => {

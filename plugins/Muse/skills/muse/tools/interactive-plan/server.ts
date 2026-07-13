@@ -49,9 +49,14 @@ export async function servePlan(planDir: string, port = 7374) {
         }
         if (url.pathname === "/api/approve" && request.method === "POST") {
           const body = jsonObject(await json(request));
+          const keys = Object.keys(body);
           const reviewer = body.reviewer;
-          if (reviewer !== undefined && typeof reviewer !== "string") {
-            return new Response("reviewer must be a nonblank string", { status: 400 });
+          if (
+            keys.some((key) => key !== "reviewer")
+            || keys.length > 1
+            || (reviewer !== undefined && (typeof reviewer !== "string" || reviewer.trim().length === 0))
+          ) {
+            return new Response("Approval body must be exactly {} or { reviewer: nonblank string }", { status: 400 });
           }
           return Response.json(await approvePlan(planDir, reviewer));
         }

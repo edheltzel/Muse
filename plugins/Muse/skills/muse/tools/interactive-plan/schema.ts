@@ -19,6 +19,7 @@ export interface ReviewState {
   status: ReviewStatus;
   approvedAt?: string;
   reviewer?: string;
+  approvalDigest?: string;
   answers: Record<string, string | string[]>;
   checklist: Record<string, boolean>;
   unresolvedCommentIds: string[];
@@ -43,6 +44,7 @@ export interface AgentHandoff {
   decisions: string[];
   answers: Record<string, string | string[]>;
   implementationEntry: string;
+  approvalDigest: string;
   verification: string[];
   openRisks: string[];
 }
@@ -67,7 +69,7 @@ export const REVIEW_STATUSES = [
   "approved",
 ] as const;
 
-const REVIEW_STATE_KEYS = ["status", "approvedAt", "reviewer", "answers", "checklist", "unresolvedCommentIds"] as const;
+const REVIEW_STATE_KEYS = ["status", "approvedAt", "reviewer", "approvalDigest", "answers", "checklist", "unresolvedCommentIds"] as const;
 
 function isValidIsoTimestamp(value: unknown): value is string {
   if (typeof value !== "string" || value.trim() !== value) return false;
@@ -153,6 +155,7 @@ export function validateAgentHandoff(value: unknown): string[] {
     "implementationEntry",
     "verification",
     "openRisks",
+    "approvalDigest",
   ];
   for (const key of Object.keys(handoff)) {
     if (!allowedKeys.includes(key)) errors.push(`AgentHandoff contains unknown field '${key}'`);
@@ -165,6 +168,9 @@ export function validateAgentHandoff(value: unknown): string[] {
   }
   if (!isValidIsoTimestamp(handoff.approvedAt)) {
     errors.push("AgentHandoff.approvedAt must be a valid nonblank ISO timestamp");
+  }
+  if (typeof handoff.approvalDigest !== "string" || !/^[0-9a-f]{64}$/.test(handoff.approvalDigest)) {
+    errors.push("AgentHandoff.approvalDigest must be a canonical SHA-256 digest");
   }
   for (const key of ["approvedScope", "decisions", "verification", "openRisks"]) {
     const entries = handoff[key];
@@ -229,10 +235,13 @@ export function validateReviewState(value: unknown): string[] {
     if (typeof state.reviewer !== "string" || state.reviewer.trim().length === 0) {
       errors.push("Approved ReviewState.reviewer must be a nonblank string");
     }
+    if (typeof state.approvalDigest !== "string" || !/^[0-9a-f]{64}$/.test(state.approvalDigest)) {
+      errors.push("Approved ReviewState.approvalDigest must be a canonical SHA-256 digest");
+    }
     if (Array.isArray(unresolvedIds) && unresolvedIds.length > 0) {
       errors.push("Approved ReviewState cannot contain unresolved comments");
     }
-  } else if (state.approvedAt !== undefined || state.reviewer !== undefined) {
+  } else if (state.approvedAt !== undefined || state.reviewer !== undefined || state.approvalDigest !== undefined) {
     errors.push("Nonapproved ReviewState cannot retain approval metadata");
   }
   return errors;

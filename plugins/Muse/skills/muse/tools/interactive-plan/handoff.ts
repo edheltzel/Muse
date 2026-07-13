@@ -25,6 +25,7 @@ export function generateAgentHandoff(plan: LoadedPlanFolder, state: ReviewState)
     decisions: blockLines.DecisionMatrix ?? [],
     answers: state.answers,
     implementationEntry: join(plan.rootDir, plan.manifest.entry),
+    approvalDigest: state.approvalDigest!,
     verification: blockLines.Checklist ?? [],
     openRisks: blockLines.RiskRegister ?? [],
   };
