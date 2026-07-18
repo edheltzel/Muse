@@ -1,5 +1,5 @@
 ---
-name: Muse
+name: muse
 description: Generate beautiful, self-contained HTML pages that visually explain systems, code changes, plans, and data. Use when the user asks for a diagram, architecture overview, diff review, plan review, project recap, comparison table, a visual explainer, or any visual explanation of technical concepts — including phrasings like "visualize this", "visualize a plan", "make it visual", "show me this visually", or "explain this visually". Also use proactively when you are about to render a complex ASCII table (4+ rows or 3+ columns) — present it as a styled HTML page instead.
 license: MIT
 compatibility: Requires a browser to view generated HTML files. Optional surf-cli for AI image generation.
@@ -18,17 +18,17 @@ Generate self-contained HTML files for technical diagrams, visualizations, and d
 
 Detailed prompt templates live in `./commands/`. In Pi and OMP, these are slash commands (`/diff-review`). In Claude Code, they are namespaced (`/muse:diff-review`). In Codex, invoke `$Muse` and name the workflow you want; the command files remain reference material rather than separately installed prompts.
 
-| Command                | What it does                                                            |
-| ---------------------- | ----------------------------------------------------------------------- |
-| `generate-web-diagram` | Generate an HTML diagram for any topic                                  |
-| `generate-visual-plan` | Generate an interactive MDX plan with review state and agent handoff    |
-| `generate-visual-recap` | Generate an interactive recap for a branch, commit, PR, or diff         |
-| `generate-slides`      | Generate a magazine-quality slide deck                                  |
-| `diff-review`          | Visual diff review with architecture comparison and code review         |
-| `plan-review`          | Compare a plan against the codebase with risk assessment                |
-| `project-recap`        | Mental model snapshot for context-switching back to a project           |
-| `fact-check`           | Verify accuracy of a document against actual code                       |
-| `share-page`           | Deploy an HTML page to Vercel and get a live URL                        |
+| Command                 | What it does                                                         |
+| ----------------------- | -------------------------------------------------------------------- |
+| `generate-web-diagram`  | Generate an HTML diagram for any topic                               |
+| `generate-visual-plan`  | Generate an interactive MDX plan with review state and agent handoff |
+| `generate-visual-recap` | Generate an interactive recap for a branch, commit, PR, or diff      |
+| `generate-slides`       | Generate a magazine-quality slide deck                               |
+| `diff-review`           | Visual diff review with architecture comparison and code review      |
+| `plan-review`           | Compare a plan against the codebase with risk assessment             |
+| `project-recap`         | Mental model snapshot for context-switching back to a project        |
+| `fact-check`            | Verify accuracy of a document against actual code                    |
+| `share-page`            | Deploy an HTML page to Vercel and get a live URL                     |
 
 ## Workflow
 
@@ -77,7 +77,6 @@ Vary the choice each time. If the last diagram was dark and technical, make the 
 - For data tables, comparisons, audits, feature matrices: read `./templates/data-table.html`
 - For slide deck presentations (when `--slides` flag is present or `/generate-slides` is invoked): read `./templates/slide-deck.html` and `./references/slide-patterns.md`
 - For prose-heavy publishable pages (READMEs, articles, blog posts, essays): read the "Prose Page Elements" section in `./references/css-patterns.md` and "Typography by Content Voice" in `./references/libraries.md`
-
 
 **For interactive plans and recaps**, read `./references/interactive-plans.md`, `./references/mdx-components.md`, `./references/mdx-blocks.md`, and `./references/review-state.md`. These artifacts live under `.agents/visual-plans/<slug>/` or `.agents/visual-recaps/<slug>/`, use `plan.mdx` as the source of truth, render to reviewable HTML, and persist approval state to local JSON plus `agent-handoff.*`.
 **For CSS/layout patterns and SVG connectors**, read `./references/css-patterns.md`.

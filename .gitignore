@@ -1,3 +1,23 @@
 .DS_Store
+.agents/atlas
 *worktrees*
 banks/
+
+# Agent working state & installed third-party skills (research artifacts, not Muse source)
+.agents/skills/
+.agents/visual-plans/
+.agents/visual-recaps/
+.claude/skills/
+.pi/skills/
+skills-lock.json
+
+# Lavish artifact output dir
+.lavish/
+
+# Impeccable working files (per Impeccable's own recommended .gitignore)
+.impeccable/critique/*
+!.impeccable/critique/ignore.md
+.impeccable/live/
+
+# Muse interactive-plan generated review state
+plan-state.json
