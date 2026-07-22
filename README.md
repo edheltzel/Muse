@@ -1,15 +1,15 @@
-![Muse banner](banner.png)
+![muse banner](banner.png)
 
-# Muse
+# muse
 
 > [!NOTE]
-> Big thanks to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) for the original idea and work but [Muse](https://github.com/edheltzel/Muse) been **heavily modified** to fit my personal needs and will continue to change with more features.
+> Big thanks to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) for the original idea and work. [muse](https://github.com/edheltzel/Muse) has been **heavily modified** to fit my personal needs and will continue to change with more features.
 
 **Turn dense agent output into beautiful browser-native pages people can actually understand.**
 
-Muse is an agent skill for diagrams, visual plans, diff reviews, project recaps, slide decks, and approval-aware MDX review pages. It is built for humans first: open the page, scan the structure, interact with the review controls, and hand an agent the resulting machine-readable context when you approve.
+muse is an agent skill for diagrams, visual plans, diff reviews, project recaps, slide decks, and approval-aware MDX review pages. It is built for humans first: open the page, scan the structure, interact with the review controls, and hand an agent the resulting machine-readable context when you approve.
 
-![Muse component library screenshot](docs/assets/component-library-showcase.png)
+![muse component library screenshot](docs/assets/component-library-showcase.png)
 
 ## What it makes
 
@@ -54,7 +54,7 @@ Static diagram commands write portable HTML pages. Interactive plan and recap co
 
 Agents are good at structure but bad at presentation by default. Ask for a diagram and you usually get ASCII boxes. Ask for a comparison and you get a pipe table that wraps in the terminal. Ask for a plan and you get prose that nobody wants to review line by line.
 
-Muse turns that same information into a web page:
+muse turns that same information into a web page:
 
 1. the agent gathers the facts,
 2. the skill picks the right visual treatment,
@@ -64,7 +64,13 @@ Muse turns that same information into a web page:
 
 ## Install
 
-This section gives you one working path for each supported agent surface. After installing, start a fresh agent session so the new skill and command templates are loaded.
+This section gives you one working path for each supported agent surface. After installing, start a fresh agent session and use the same request everywhere:
+
+```text
+Use muse to <task>.
+```
+
+The unavoidable host-native explicit fallbacks and their reasons live in one place: [Invoking muse](plugins/Muse/skills/muse/references/invocation.md).
 
 ### Claude Code
 
@@ -77,17 +83,7 @@ Install from the Claude Code plugin marketplace:
 
 You should see Claude Code report that the `muse` plugin installed successfully.
 
-Claude Code namespaces plugin commands. Use:
-
-```text
-/muse:generate-web-diagram
-/muse:generate-visual-plan
-/muse:generate-visual-recap
-/muse:diff-review
-/muse:plan-review
-```
-
-You can also ask Claude Code to use the `Muse` skill directly when you want diagrams, visual plans, diff reviews, recaps, slide decks, or complex tables rendered as browser pages.
+Start a fresh Claude Code session after installation. Use the shared request above; see the canonical invocation reference for Claude's namespaced fallbacks.
 
 ### Pi
 
@@ -97,16 +93,7 @@ Install the package from GitHub:
 pi install git:github.com/edheltzel/Muse
 ```
 
-You should see Pi install the package and register the skill plus command templates. Start a fresh Pi session, then invoke:
-
-```text
-$Muse
-/generate-web-diagram
-/generate-visual-plan
-/generate-visual-recap
-/diff-review
-/plan-review
-```
+You should see Pi install the package and register the skill plus command templates. Start a fresh Pi session, then use the shared request above.
 
 For local development, install from a checkout instead:
 
@@ -159,14 +146,7 @@ Verify that OMP loaded the plugin surfaces (inside the OMP TUI you can also run 
 omp plugin list
 ```
 
-Then start a fresh OMP session and use:
-
-```text
-$Muse
-/generate-web-diagram
-/generate-visual-plan
-/generate-visual-recap
-```
+Then start a fresh OMP session and use the shared request above.
 
 Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plans and recaps create local MDX review folders with state, comments, approval controls, and agent handoff files.
 
@@ -174,7 +154,7 @@ Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plan
 
 ### Codex and ChatGPT
 
-Muse ships a native Codex plugin manifest. Add the bundled marketplace from Codex CLI:
+muse ships a native Codex plugin manifest. Add the bundled marketplace from Codex CLI:
 
 ```bash
 codex plugin marketplace add edheltzel/Muse
@@ -182,7 +162,7 @@ codex plugin add muse@muse-marketplace
 codex plugin marketplace list
 ```
 
-Codex installs the plugin into its local cache; the same marketplace is also available in the ChatGPT desktop app's plugin directory. Start a new Codex task, then invoke `$Muse` or describe the visual you need. Codex can also activate Muse implicitly from the skill description.
+Codex installs the plugin into its local cache; the same marketplace is also available in the ChatGPT desktop app's plugin directory. Start a new Codex task and use the shared request above. Codex can also activate `muse` implicitly from the skill description.
 
 For a direct Codex CLI user-skill install without the plugin marketplace:
 
@@ -193,7 +173,7 @@ cp -R /tmp/Muse/plugins/Muse/skills/muse ~/.agents/skills/muse
 rm -rf /tmp/Muse
 ```
 
-Codex scans `~/.agents/skills` for user skills and supports `$Muse` or `/skills` for explicit invocation. The older `~/.codex/skills` and `~/.codex/prompts` copy paths are not used.
+Codex scans `~/.agents/skills` for user skills. The older `~/.codex/skills` and `~/.codex/prompts` copy paths are not used; explicit fallback syntax remains centralized in the invocation reference.
 
 ### Cursor and OpenClaw
 
@@ -214,7 +194,7 @@ Codex scans `~/.agents/skills` for user skills and supports `$Muse` or `/skills`
 | `/fact-check`           | A code-grounded accuracy review for a document                             |
 | `/share-page`           | A Vercel production URL for an HTML explainer page                         |
 
-You rarely need the slash commands. On native-skill surfaces (Claude Code, Pi, OMP, and Codex) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and Muse picks the right treatment on its own. The slash commands are just explicit shortcuts on harnesses that support command templates.
+You rarely need the slash commands. On native-skill surfaces (Claude Code, Pi, OMP, and Codex) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and `muse` picks the right treatment on its own. The slash commands are explicit shortcuts on harnesses that support command templates.
 
 The skill also activates proactively when an agent is about to dump a complex table in the terminal: 4+ rows or 3+ columns should become a browser page.
 
@@ -247,7 +227,7 @@ The browser page supports:
 
 The review bridge binds to loopback and exposes a trusted originless local API for CLI clients. Originless mutations are intentional, but they must use `Content-Type: application/json`. Browser mutations that send `Origin` must match the bridge's exact loopback origin; foreign origins and opaque `Origin: null` requests are rejected. This is not a strict same-origin policy because trusted originless local clients remain supported by design.
 
-Review mutations and approval publication are atomic against concurrent live Muse processes: an OS-backed file lock serializes writers, and one pointer replacement publishes a complete state/handoff generation. This is a live-process atomicity guarantee, not crash durability. Muse does not `fsync` files or directories, so power loss or an OS crash may still lose the latest filesystem writes; the next operation revalidates the surviving generation before using it.
+Review mutations and approval publication are atomic against concurrent live `muse` processes: an OS-backed file lock serializes writers, and one pointer replacement publishes a complete state/handoff generation. This is a live-process atomicity guarantee, not crash durability. `muse` does not `fsync` files or directories, so power loss or an OS crash may still lose the latest filesystem writes; the next operation revalidates the surviving generation before using it.
 
 ## Component library fixture
 
@@ -269,7 +249,7 @@ It covers:
 
 ## Development stack
 
-Muse now uses **Vite+ as the project toolchain** with **Bun as the underlying package manager**.
+muse uses **Vite+ as the project toolchain** with **Bun as the underlying package manager**.
 
 - `vp install` installs dependencies through Bun because `packageManager` is pinned to `bun@1.3.14`.
 - `vp build` runs the Vite+ production build.

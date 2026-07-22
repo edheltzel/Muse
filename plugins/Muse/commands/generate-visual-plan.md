@@ -4,7 +4,7 @@ description: Generate an interactive MDX visual implementation plan with local r
 
 # Generate Visual Plan
 
-Create an interactive Muse plan artifact, not a one-off static HTML page.
+Create an interactive `muse` plan artifact, not a one-off static HTML page.
 
 ## Usage
 
@@ -14,7 +14,7 @@ Create an interactive Muse plan artifact, not a one-off static HTML page.
 
 ## Workflow
 
-1. Load the Muse skill.
+1. Load the `muse` skill.
 2. Read these references before authoring:
    - `references/interactive-plans.md`
    - `references/mdx-components.md`
@@ -37,14 +37,20 @@ Create an interactive Muse plan artifact, not a one-off static HTML page.
    - `QuestionForm` for unresolved reviewer choices
    - `Checklist` for verification criteria
    - `ApprovalGate` for local approval and handoff generation
-6. Validate and render locally:
+6. Resolve the installed skill directory before invoking the bundled runtime:
 
-```bash
-bun plugins/Muse/skills/muse/tools/interactive-plan/render.ts .agents/visual-plans/<slug>
-bun plugins/Muse/skills/muse/tools/interactive-plan/server.ts .agents/visual-plans/<slug>
+```text
+MUSE_SKILL_DIR = directory containing the muse SKILL.md you loaded
 ```
 
-7. Open the local review URL and tell the user:
+7. Validate and render locally from that installed skill directory:
+
+```bash
+bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" render .agents/visual-plans/<slug>
+bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" serve .agents/visual-plans/<slug>
+```
+
+8. Open the local review URL and tell the user:
    - source folder
    - review URL
    - static export path

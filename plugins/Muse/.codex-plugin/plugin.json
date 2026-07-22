@@ -12,7 +12,7 @@
   "keywords": ["diagrams", "html", "visualization", "code-review", "plans", "recaps", "slides"],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Muse",
+    "displayName": "muse",
     "shortDescription": "Visual explainers for technical work",
     "longDescription": "Turn systems, code changes, plans, reviews, recaps, slides, and structured data into polished browser-based visual explainers.",
     "developerName": "edheltzel",
@@ -20,8 +20,8 @@
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://github.com/edheltzel/Muse",
     "defaultPrompt": [
-      "Use Muse to visualize this technical system.",
-      "Use Muse to create a visual review of these changes."
+      "Use muse to visualize this technical system.",
+      "Use muse to create a visual review of these changes."
     ],
     "brandColor": "#B85C3C"
   }

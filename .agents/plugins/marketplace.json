@@ -1,7 +1,7 @@
 {
   "name": "muse-marketplace",
   "interface": {
-    "displayName": "Muse"
+    "displayName": "muse"
   },
   "plugins": [
     {

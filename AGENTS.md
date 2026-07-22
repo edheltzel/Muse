@@ -34,7 +34,7 @@ Do not use `npm`, `npx`, `pnpm`, or `yarn` in this repo. Vite+ delegates to Bun 
 
 ## OMP plugin contract
 
-`plugins/Muse/` is also the OMP, Claude Code, and Codex plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/.codex-plugin/plugin.json`, `plugins/Muse/skills/muse/SKILL.md`, and `.claude-plugin/marketplace.json`. The plugin `name` must stay lowercase `muse` (OMP silently drops catalog entries with uppercase names) in `plugins/Muse/plugin.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, and the `plugins[0].name` in `.claude-plugin/marketplace.json`; the directory name `plugins/Muse` is a path, not the plugin name. The name also appears in doc surfaces that must stay in sync: the README Claude Code command examples (`/muse:…`), the SKILL.md command namespaces, and the `commands/share-page.md` plugin cache path.
+`plugins/Muse/` is also the OMP, Claude Code, and Codex plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/.codex-plugin/plugin.json`, `plugins/Muse/skills/muse/SKILL.md`, and `.claude-plugin/marketplace.json`. Machine and display identity must stay lowercase `muse` in every manifest and skill metadata surface; OMP silently drops catalog entries with uppercase machine names. The directory name `plugins/Muse` is a path, not the plugin name. Keep host-native explicit syntax confined to `plugins/Muse/skills/muse/references/invocation.md`; every other user-facing surface uses the cross-host request `Use muse to <task>`.
 
 Use OMP commands for OMP installs:
 
@@ -57,10 +57,11 @@ Do not document OMP installs with `pi install`; Pi and OMP have separate package
 ```text
 plugins/Muse/commands/                         slash-command prompt templates
 plugins/Muse/skills/muse/SKILL.md              primary skill instructions
+plugins/Muse/skills/muse/references/invocation.md canonical cross-host request and native fallback syntax
 plugins/Muse/skills/muse/references/           design and authoring references
 plugins/Muse/skills/muse/templates/            HTML templates
 plugins/Muse/skills/muse/tools/interactive-plan/ renderer, server, state, handoff
-tests/fixtures/interactive-plans/                         reproducible MDX review fixtures
+tests/fixtures/interactive-plans/               reproducible MDX review fixtures
 ```
 
 ## Interactive-plan contracts
@@ -86,6 +87,8 @@ Core source files:
 - `client.ts` owns browser interactions: theme toggle, Mermaid rendering, zoom/pan, tabs, persistence handlers.
 - `render.ts` creates `dist/index.html` and `dist/static-export.html`.
 - `server.ts` serves the local review bridge.
+- `runtime-entry.ts` is the source entry for the installed-plugin runtime.
+- `runtime.mjs` is the committed Bun bundle used from cached plugin copies; `vp run visual-plan:build` must keep it synchronized and self-contained.
 - `state-store.ts` persists local reviewer state.
 - `handoff.ts` generates agent handoff files.
 
@@ -146,6 +149,8 @@ Before yielding after behavior or UI changes:
    vp run visual-plan:build
    ```
 
+   This also rebuilds the committed installed-plugin runtime bundle.
+
 3. For UI-visible changes, render and serve the component-library fixture, then inspect in a browser:
 
    ```bash
@@ -165,4 +170,32 @@ Before yielding after behavior or UI changes:
 
 Human docs live in `README.md`. Keep the README visual and outcome-first.
 
-Agent docs live here. Keep this file operational: commands, contracts, invariants, and verification only.
+Agent docs live here. Keep this file operational: commands, contracts, invariants, and verification only. Host-native invocation syntax lives only in `plugins/Muse/skills/muse/references/invocation.md`.
+
+## DOX framework
+
+DOX makes `AGENTS.md` files binding work contracts for their subtrees. The procedural how-to
+(Read Before Editing, Update After Editing, Hierarchy, Child Doc Shape, Style, Closeout)
+lives in **[docs/dox.md](docs/dox.md)**. Read it before editing any file in this repository.
+
+### Core Contract
+
+- `AGENTS.md` files are binding work contracts for their subtrees.
+- Work products, source materials, instructions, records, assets, and durable docs must stay understandable from the nearest applicable `AGENTS.md` plus every parent `AGENTS.md` above it.
+- No child doc may weaken DOX; the closer doc controls local detail, while parent docs control repository-wide rules.
+- When the user requests a durable behavior change, record it here or in the nearest owning child `AGENTS.md`.
+
+### Child DOX Index
+
+- [`configs/openclaw/AGENTS.md`](configs/openclaw/AGENTS.md) owns OpenClaw's lightweight rules guidance and its use of the canonical `muse` skill and command templates.
+- [`configs/codex/AGENTS.md`](configs/codex/AGENTS.md) owns Codex installation, discovery, invocation, and browser constraints for `muse`.
+- [`configs/pi/AGENTS.md`](configs/pi/AGENTS.md) owns Pi package installation, prompt invocation, legacy-copy compatibility, and optional sharing dependencies.
+
+Add another child contract when a folder becomes a durable boundary with local rules that do not belong in this repository-wide guide.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

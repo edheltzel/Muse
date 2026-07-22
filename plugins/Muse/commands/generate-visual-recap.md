@@ -4,7 +4,7 @@ description: Turn a branch, commit, PR, or git diff into an interactive visual r
 
 # Visual Recap
 
-Create an interactive Muse recap for work that already exists. This is the reverse of `/generate-visual-plan`: it explains what changed instead of planning what should change.
+Create an interactive `muse` recap for work that already exists. This is the reverse of `/generate-visual-plan`: it explains what changed instead of planning what should change.
 
 ## Usage
 
@@ -16,7 +16,7 @@ Default scope: compare the current branch against its merge base with the defaul
 
 ## Workflow
 
-1. Load the Muse skill.
+1. Load the `muse` skill.
 2. Read:
    - `references/interactive-plans.md`
    - `references/mdx-components.md`
@@ -37,7 +37,12 @@ Default scope: compare the current branch against its merge base with the defaul
    - `Wireframe`, `BeforeAfter`, or `StateGallery` for UI impact
    - `RiskRegister` for review concerns
    - `ApprovalGate` or acknowledgement gate
-6. Render and serve locally with the interactive-plan tools.
+6. Resolve `MUSE_SKILL_DIR` as the directory containing the `muse` `SKILL.md` you loaded, then render and serve locally with the installed bundled runtime:
+
+```bash
+bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" render .agents/visual-recaps/<slug>
+bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" serve .agents/visual-recaps/<slug>
+```
 
 ## When to skip
 
