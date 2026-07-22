@@ -8,7 +8,7 @@ metadata:
   version: "0.9.3"
 ---
 
-# Muse
+# muse
 
 Generate self-contained HTML files for technical diagrams, visualizations, and data tables. Generate interactive MDX visual plans/recaps when review state, approval, questions, or agent handoff files matter. Always open visual results in the browser. Never fall back to ASCII art when this skill is loaded.
 
@@ -16,7 +16,7 @@ Generate self-contained HTML files for technical diagrams, visualizations, and d
 
 ## Available Commands
 
-Detailed prompt templates live in `./commands/`. In Pi and OMP, these are slash commands (`/diff-review`). In Claude Code, they are namespaced (`/muse:diff-review`). In Codex, invoke `$Muse` and name the workflow you want; the command files remain reference material rather than separately installed prompts.
+Ask for the capability the same way on every host: `Use muse to <task>`. Native explicit syntax is host-owned and documented only in `./references/invocation.md`. The installed plugin's prompt templates provide these named workflows on hosts that support them; Codex treats the command files as reference material rather than separately installed prompts.
 
 | Command                 | What it does                                                         |
 | ----------------------- | -------------------------------------------------------------------- |

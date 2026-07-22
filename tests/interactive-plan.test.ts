@@ -4920,17 +4920,23 @@ describe("interactive command documentation contracts", () => {
     expect(doc).toMatch(/Do not add React|No React/i);
     expect(doc).toMatch(/React DOM/i);
     expect(doc).toMatch(/@agent-native\/\*/);
+    expect(doc).toContain("MUSE_SKILL_DIR = directory containing the muse SKILL.md you loaded");
+    expect(doc).toContain('bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" render');
+    expect(doc).toContain('bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" serve');
+    expect(doc).not.toContain("bun plugins/Muse/");
   });
 
   test("/generate-visual-recap documents MDX recap artifacts, local rendering, and dependency boundaries", async () => {
     const doc = await readFile(join(repoRoot, "plugins", "Muse", "commands", "generate-visual-recap.md"), "utf8");
 
-    expect(doc).toMatch(/interactive Muse recap/i);
+    expect(doc).toMatch(/interactive [`]?muse[`]? recap/i);
     expect(doc).toMatch(/plan\.mdx/);
     expect(doc).toMatch(/visual-explainer\.json/);
     expect(doc).toMatch(/Render and serve locally|interactive-plan tools|local/i);
     expect(doc).toMatch(/No Agent Native|Do not use Agent Native/i);
     expect(doc).toMatch(/No React|Do not add React/i);
     expect(doc).toMatch(/hosted Plan MCP/i);
+    expect(doc).toContain('bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" render');
+    expect(doc).toContain('bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" serve');
   });
 });
