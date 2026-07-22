@@ -21,3 +21,6 @@ skills-lock.json
 
 # Muse interactive-plan generated review state
 plan-state.json
+
+# CodeGraph's generated local database
+/.codegraph/codegraph.db
