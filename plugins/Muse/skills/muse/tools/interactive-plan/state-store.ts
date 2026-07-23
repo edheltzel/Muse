@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, type BigIntStats } from "node:fs";
+import { constants, realpathSync, type BigIntStats } from "node:fs";
 import { link, lstat, mkdir, open, readdir, readlink, realpath, rename, rm, symlink, writeFile, type FileHandle } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -24,6 +24,140 @@ type BundleFile = (typeof BUNDLE_FILES)[number];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 type AssertLockOwned = () => Promise<void>;
 type RecordPublication = (published: BundleReference) => void;
+
+export const MAX_REVIEW_WAITERS = 64;
+
+export interface ReviewGenerationEvent {
+  planDir: string;
+  generation: string;
+}
+
+export interface ReviewWaitCallbacks {
+  signal?: AbortSignal;
+  onParked?: () => void;
+  onDelivered?: () => void;
+  onCancelled?: () => void;
+}
+
+export class ReviewWaiterLimitError extends Error {
+  constructor() {
+    super(`Review wait limit exceeded; at most ${MAX_REVIEW_WAITERS} waiters are supported`);
+    this.name = "ReviewWaiterLimitError";
+  }
+}
+
+class ReviewWaitAbortedError extends Error {
+  constructor() {
+    super("Review wait aborted");
+    this.name = "ReviewWaitAbortedError";
+  }
+}
+
+type ReviewGenerationListener = (event: ReviewGenerationEvent) => void;
+interface ReviewWaiter {
+  resolve: (generation: string) => void;
+  reject: (error: unknown) => void;
+}
+
+const reviewGenerationListeners = new Map<string, Set<ReviewGenerationListener>>();
+const reviewWaiters = new Map<string, Set<ReviewWaiter>>();
+
+function safeReviewWaitCallback(callback: (() => void) | undefined): void {
+  try {
+    callback?.();
+  } catch {
+    // Presence observers must not be able to fail a committed review mutation.
+  }
+}
+
+function notifyReviewGeneration(planDir: string, generation: string): void {
+  const event = { planDir, generation };
+  for (const listener of reviewGenerationListeners.get(planDir) ?? []) {
+    try {
+      listener(event);
+    } catch {
+      // Review observers are best-effort and never change publication authority.
+    }
+  }
+  const waiters = reviewWaiters.get(planDir);
+  if (!waiters) return;
+  reviewWaiters.delete(planDir);
+  for (const waiter of waiters) waiter.resolve(generation);
+}
+
+export function subscribeReviewChanges(
+  planDir: string,
+  listener: ReviewGenerationListener,
+): () => void {
+  const canonicalPlanDir = realpathSync(planDir);
+  const listeners = reviewGenerationListeners.get(canonicalPlanDir) ?? new Set<ReviewGenerationListener>();
+  listeners.add(listener);
+  reviewGenerationListeners.set(canonicalPlanDir, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) reviewGenerationListeners.delete(canonicalPlanDir);
+  };
+}
+
+export async function waitForReviewGeneration(
+  planDir: string,
+  since: string,
+  callbacks: ReviewWaitCallbacks = {},
+): Promise<CurrentReviewSnapshot> {
+  const canonicalPlanDir = await realpath(planDir);
+  const waiters = reviewWaiters.get(canonicalPlanDir) ?? new Set<ReviewWaiter>();
+  if (waiters.size >= MAX_REVIEW_WAITERS) throw new ReviewWaiterLimitError();
+
+  let parked = false;
+  let delivered = false;
+  let abortListener: (() => void) | undefined;
+  const removeWaiter = (waiter: ReviewWaiter) => {
+    waiters.delete(waiter);
+    if (waiters.size === 0) reviewWaiters.delete(canonicalPlanDir);
+    if (abortListener) callbacks.signal?.removeEventListener("abort", abortListener);
+  };
+  let waiter!: ReviewWaiter;
+  const nextGeneration = new Promise<string>((resolve, reject) => {
+    waiter = { resolve, reject };
+  });
+  abortListener = () => {
+    removeWaiter(waiter);
+    waiter.reject(new ReviewWaitAbortedError());
+    if (parked && !delivered) {
+      delivered = true;
+      safeReviewWaitCallback(callbacks.onCancelled);
+    }
+  };
+  if (callbacks.signal?.aborted) {
+    abortListener();
+    throw new ReviewWaitAbortedError();
+  }
+  callbacks.signal?.addEventListener("abort", abortListener, { once: true });
+  waiters.add(waiter);
+  reviewWaiters.set(canonicalPlanDir, waiters);
+
+  try {
+    const current = await readReviewSnapshot(canonicalPlanDir);
+    if (current.generation !== since) {
+      removeWaiter(waiter);
+      return current;
+    }
+    parked = true;
+    safeReviewWaitCallback(callbacks.onParked);
+    await nextGeneration;
+    removeWaiter(waiter);
+    delivered = true;
+    safeReviewWaitCallback(callbacks.onDelivered);
+    return await readReviewSnapshot(canonicalPlanDir);
+  } catch (error) {
+    removeWaiter(waiter);
+    if (parked && !delivered) {
+      delivered = true;
+      safeReviewWaitCallback(callbacks.onCancelled);
+    }
+    throw error;
+  }
+}
 
 interface ReviewSnapshot {
   state: ReviewState;
@@ -1524,6 +1658,7 @@ async function withPlanLock<T>(
         throw ownershipError;
       }
     }
+    if (published) notifyReviewGeneration(planDir, published.id);
     return result;
   } finally {
     await priorBinding?.handle.close().catch(() => undefined);
