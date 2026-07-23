@@ -28,6 +28,7 @@ import { servePlan } from "../plugins/Muse/skills/muse/tools/interactive-plan/se
 import { MDX_COMPONENT_META, MDX_COMPONENT_NAMES, RAW_BODY_MDX_COMPONENTS } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
 import {
   addComment,
+  MAX_REVIEW_WAITERS,
   approvePlan,
   readComments,
   readPublishedArtifact,
@@ -1767,6 +1768,59 @@ describe("interactive plan review state and handoff", () => {
     });
   }
 
+  async function openEvents(server: { port: number | undefined }): Promise<{
+    response: Response;
+    next: () => Promise<{ event: string; data: Record<string, unknown> }>;
+    close: () => Promise<void>;
+  }> {
+    if (server.port === undefined) throw new Error("Test server did not bind a port");
+    const response = await fetch(`http://localhost:${server.port}/api/events`);
+    if (!response.body) throw new Error("SSE response did not expose a body");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    return {
+      response,
+      async next() {
+        while (true) {
+          const boundary = buffer.indexOf("\n\n");
+          if (boundary !== -1) {
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const event = frame.match(/^event: ([^\n]+)$/m)?.[1];
+            const data = frame.match(/^data: ([^\n]+)$/m)?.[1];
+            if (!event || !data) throw new Error(`Malformed SSE frame: ${frame}`);
+            return { event, data: JSON.parse(data) as Record<string, unknown> };
+          }
+          const chunk = await reader.read();
+          if (chunk.done) throw new Error("SSE stream closed before the expected event");
+          buffer += decoder.decode(chunk.value, { stream: true });
+        }
+      },
+      close: async () => {
+        await reader.cancel();
+      },
+    };
+  }
+
+  async function nextPresence(
+    events: { next: () => Promise<{ event: string; data: Record<string, unknown> }> },
+    presence: string,
+  ): Promise<void> {
+    for (;;) {
+      const event = await events.next();
+      if (event.event === "presence" && event.data.presence === presence) return;
+    }
+  }
+
+  async function reviewGeneration(server: { port: number | undefined }): Promise<string> {
+    if (server.port === undefined) throw new Error("Test server did not bind a port");
+    const response = await fetch(`http://localhost:${server.port}/plan-state.json`);
+    const generation = response.headers.get("x-muse-review-generation");
+    if (!generation) throw new Error("Review state did not expose its generation");
+    return generation;
+  }
+
   async function temporaryPublicationEntries(planDir: string): Promise<string[]> {
     const store = join(planDir, ".muse-review");
     const bundles = await readdir(join(store, "bundles"));
@@ -1785,6 +1839,102 @@ describe("interactive plan review state and handoff", () => {
     await rm(path);
     await fs.symlink(target, path);
   }
+
+  test("wakes one long-poll with the next generation and broadcasts presence", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const server = await servePlan(planDir, 0);
+      const events = await openEvents(server);
+      try {
+        const generation = await reviewGeneration(server);
+        expect((await events.next()).data.presence).toBe("waiting");
+
+        const wait = fetch(`http://localhost:${server.port}/api/wait?since=${generation}`);
+        await nextPresence(events, "listening");
+        const mutation = await post(server, "/api/comments", {
+          id: "c-live-loop",
+          blockId: "summary",
+          body: "Wake the waiting agent.",
+        });
+        expect(mutation.ok).toBe(true);
+        const update = await events.next();
+        expect(update.event).toBe("review-update");
+        expect(typeof update.data.generation).toBe("string");
+        await nextPresence(events, "working");
+
+        const response = await wait;
+        expect(response.ok).toBe(true);
+        const responseText = await response.text();
+        const body = JSON.parse(responseText) as { generation: string; state: Record<string, unknown>; comments: unknown[] };
+        expect(typeof body.generation).toBe("string");
+        expect(body.state.unresolvedCommentIds).toEqual(["c-live-loop"]);
+        expect(body.comments).toEqual([expect.objectContaining({ id: "c-live-loop", status: "open" })]);
+        expect(body.generation).not.toBe(generation);
+
+        const repark = fetch(`http://localhost:${server.port}/api/wait?since=${body.generation}`);
+        await nextPresence(events, "listening");
+        repark.catch(() => undefined);
+      } finally {
+        await events.close();
+        server.stop(true);
+      }
+    });
+  });
+
+  test("wakes every matching waiter and rejects the 65th waiter", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const server = await servePlan(planDir, 0);
+      try {
+        const generation = await reviewGeneration(server);
+        const waitControllers = Array.from({ length: MAX_REVIEW_WAITERS }, () => new AbortController());
+        const waits = waitControllers.map((controller) => fetch(
+          `http://localhost:${server.port}/api/wait?since=${generation}`,
+          { signal: controller.signal },
+        ));
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        const limited = await fetch(`http://localhost:${server.port}/api/wait?since=${generation}`);
+        expect(limited.status).toBe(503);
+
+        const mutation = await post(server, "/api/state", { answers: { live: "fan-out" } });
+        expect(mutation.ok).toBe(true);
+        const responses = await Promise.all(waits);
+        expect(responses.every((response) => response.ok)).toBe(true);
+        expect((await Promise.all(responses.map((response) => response.json()))).every((body) => body.generation !== generation)).toBe(true);
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
+
+  test("returns stale generations immediately and releases parked waits on shutdown", async () => {
+    await withFixture("minimal-plan", async (planDir) => {
+      const server = await servePlan(planDir, 0);
+      try {
+        const stale = await reviewGeneration(server);
+        const mutation = await post(server, "/api/state", { answers: { stale: "advanced" } });
+        expect(mutation.ok).toBe(true);
+        const started = performance.now();
+        const current = await fetch(`http://localhost:${server.port}/api/wait?since=${stale}`);
+        expect(current.ok).toBe(true);
+        expect(performance.now() - started).toBeLessThan(500);
+        const currentBody = await current.json();
+        expect(currentBody.generation).not.toBe(stale);
+
+        const parkedGeneration = currentBody.generation as string;
+        const parked = fetch(`http://localhost:${server.port}/api/wait?since=${parkedGeneration}`);
+        const settledPromise = Promise.race([
+          parked.then((response) => `response:${response.status}`).catch(() => "closed"),
+          new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 500)),
+        ]);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        server.stop(true);
+        const settled = await settledPromise;
+        expect(settled).not.toBe("timeout");
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
 
   test("serves complete hydration truth across approval and revision transitions", async () => {
     await withFixture("minimal-plan", async (planDir) => {

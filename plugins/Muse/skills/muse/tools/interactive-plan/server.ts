@@ -2,8 +2,135 @@ import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { isFontAsset } from "./assets";
 import { renderPlanFolder } from "./render";
-import { addComment, approvePlan, readPublishedArtifact, readReviewSnapshot, resolveComment, ReviewOperationError, updateReviewState } from "./state-store";
+import {
+  addComment,
+  approvePlan,
+  readPublishedArtifact,
+  readReviewSnapshot,
+  resolveComment,
+  ReviewOperationError,
+  ReviewWaiterLimitError,
+  subscribeReviewChanges,
+  updateReviewState,
+  waitForReviewGeneration,
+} from "./state-store";
 import { validateReviewStatePatch } from "./schema";
+
+type Presence = "listening" | "working" | "waiting";
+type ServerEvent = "presence" | "agent-reply" | "review-update";
+type EventPayload = Record<string, unknown>;
+
+interface EventConnection {
+  send: (event: ServerEvent, payload: EventPayload) => void;
+  close: () => void;
+}
+
+interface ReviewSession {
+  presence: Presence;
+  waiterCount: number;
+  connections: Set<EventConnection>;
+}
+
+const reviewSessions = new Map<string, ReviewSession>();
+
+function sessionFor(planDir: string): ReviewSession {
+  const existing = reviewSessions.get(planDir);
+  if (existing) return existing;
+  const created: ReviewSession = { presence: "waiting", waiterCount: 0, connections: new Set() };
+  reviewSessions.set(planDir, created);
+  return created;
+}
+
+function emitServerEvent(planDir: string, event: ServerEvent, payload: EventPayload): void {
+  for (const connection of sessionFor(planDir).connections) connection.send(event, payload);
+}
+
+function setPresence(planDir: string, presence: Presence): void {
+  const session = sessionFor(planDir);
+  if (session.presence === presence) return;
+  session.presence = presence;
+  emitServerEvent(planDir, "presence", { presence });
+}
+
+function agentWaitParked(planDir: string): void {
+  const session = sessionFor(planDir);
+  session.waiterCount += 1;
+  setPresence(planDir, "listening");
+}
+
+function agentWaitDelivered(planDir: string): void {
+  const session = sessionFor(planDir);
+  session.waiterCount = Math.max(0, session.waiterCount - 1);
+  if (session.waiterCount === 0) setPresence(planDir, "working");
+}
+
+function agentWaitCancelled(planDir: string): void {
+  const session = sessionFor(planDir);
+  session.waiterCount = Math.max(0, session.waiterCount - 1);
+  if (session.waiterCount === 0) setPresence(planDir, "waiting");
+}
+
+function sseFrame(event: ServerEvent, payload: EventPayload): Uint8Array {
+  return new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+}
+
+function eventStream(
+  planDir: string,
+  requestSignal: AbortSignal,
+  lifecycleSignal: AbortSignal,
+  registerCleanup: (cleanup: () => void) => void,
+): Response {
+  let cleanup: (() => void) | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      let unsubscribe: (() => void) | undefined;
+      const session = sessionFor(planDir);
+      const connection: EventConnection = {
+        send: (event, payload) => {
+          if (!closed) controller.enqueue(sseFrame(event, payload));
+        },
+        close: () => {
+          if (closed) return;
+          closed = true;
+          unsubscribe?.();
+          requestSignal.removeEventListener("abort", abort);
+          lifecycleSignal.removeEventListener("abort", abort);
+          session.connections.delete(connection);
+          try {
+            controller.close();
+          } catch {
+            // The browser may already have closed the stream.
+          }
+        },
+      };
+      const abort = () => connection.close();
+      cleanup = connection.close;
+      registerCleanup(connection.close);
+      session.connections.add(connection);
+      requestSignal.addEventListener("abort", abort, { once: true });
+      lifecycleSignal.addEventListener("abort", abort, { once: true });
+      connection.send("presence", { presence: session.presence });
+      try {
+        unsubscribe = subscribeReviewChanges(planDir, ({ generation }) => {
+          connection.send("review-update", { generation });
+        });
+      } catch {
+        connection.close();
+      }
+    },
+    cancel() {
+      cleanup?.();
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "cache-control": "no-cache, no-store",
+      "connection": "keep-alive",
+      "content-type": "text/event-stream; charset=utf-8",
+    },
+  });
+}
 
 async function json(request: Request): Promise<unknown> {
   try {
@@ -80,6 +207,8 @@ export async function servePlan(planDir: string, port = 7374, signal?: AbortSign
   planDir = await realpath(planDir);
   await renderPlanFolder(planDir);
   signal?.throwIfAborted();
+  const lifecycleController = new AbortController();
+  const streamCleanups = new Set<() => void>();
   const server = Bun.serve({
     port,
     async fetch(request) {
@@ -112,6 +241,33 @@ export async function servePlan(planDir: string, port = 7374, signal?: AbortSign
         }
         if (url.pathname === "/agent-handoff.md") {
           return new Response(await readPublishedArtifact(planDir, "agent-handoff.md"), { headers: { "content-type": "text/markdown; charset=utf-8" } });
+        }
+        if (url.pathname === "/api/events" && request.method === "GET") {
+          return eventStream(planDir, request.signal, lifecycleController.signal, (cleanup) => streamCleanups.add(cleanup));
+        }
+        if (url.pathname === "/api/wait" && request.method === "GET") {
+          const since = url.searchParams.get("since") ?? "";
+          try {
+            const snapshot = await waitForReviewGeneration(planDir, since, {
+              signal: AbortSignal.any([request.signal, lifecycleController.signal]),
+              onParked: () => agentWaitParked(planDir),
+              onDelivered: () => agentWaitDelivered(planDir),
+              onCancelled: () => agentWaitCancelled(planDir),
+            });
+            return Response.json({
+              generation: snapshot.generation,
+              state: snapshot.state,
+              comments: snapshot.comments,
+            }, { headers: { "x-muse-review-generation": snapshot.generation } });
+          } catch (error) {
+            if (error instanceof ReviewWaiterLimitError) {
+              return new Response(error.message, { status: 503 });
+            }
+            if (request.signal.aborted || lifecycleController.signal.aborted) {
+              return new Response(null, { status: 204 });
+            }
+            throw error;
+          }
         }
         if (url.pathname.startsWith("/api/") && request.method === "POST") {
           requireMutationRequest(request, url, server.port ?? port);
@@ -162,7 +318,19 @@ export async function servePlan(planDir: string, port = 7374, signal?: AbortSign
       }
     },
   });
-  const stopOnAbort = () => server.stop(true);
+  const originalStop = server.stop.bind(server);
+  let stopped = false;
+  const stop = (closeActiveConnections = true) => {
+    if (!stopped) {
+      stopped = true;
+      lifecycleController.abort();
+      for (const cleanup of streamCleanups) cleanup();
+      streamCleanups.clear();
+    }
+    return originalStop(closeActiveConnections);
+  };
+  server.stop = stop;
+  const stopOnAbort = () => stop(true);
   signal?.addEventListener("abort", stopOnAbort, { once: true });
   if (signal?.aborted) {
     stopOnAbort();
