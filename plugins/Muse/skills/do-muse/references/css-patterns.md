@@ -1708,7 +1708,7 @@ Avoid these in reading-first content:
 
 ## Generated Images
 
-For AI-generated illustrations embedded as base64 data URIs via `surf gemini --generate-image`. Use sparingly — hero banners, conceptual illustrations, educational diagrams, decorative accents.
+For AI-generated illustrations embedded as base64 data URIs through impeccable. Use sparingly — hero banners, conceptual illustrations, educational diagrams, decorative accents. If image gen is missing, skip. Do not use surf-cli.
 
 ### Hero Banner
 

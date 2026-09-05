@@ -71,8 +71,8 @@ describe("coding-agent packaging", () => {
       readJson("plugins/Muse/.codex-plugin/plugin.json"),
       readJson(".claude-plugin/marketplace.json"),
       readJson(".agents/plugins/marketplace.json"),
-      readFile(join(repoRoot, "plugins/Muse/skills/muse/SKILL.md"), "utf8"),
-      readFile(join(repoRoot, "plugins/Muse/skills/muse/agents/openai.yaml"), "utf8"),
+      readFile(join(repoRoot, "plugins/Muse/skills/do-muse/SKILL.md"), "utf8"),
+      readFile(join(repoRoot, "plugins/Muse/skills/do-muse/agents/openai.yaml"), "utf8"),
     ]);
 
     expect(pkg.pi.skills).toEqual(["./plugins/Muse"]);
@@ -84,42 +84,43 @@ describe("coding-agent packaging", () => {
       policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
     });
     expect(codex.skills).toBe("./skills/");
-    expect(skill).toMatch(/^name: muse$/m);
-    expect(codexMetadata).toContain('display_name: "muse"');
-    expect(codexMetadata).toContain("Use muse to");
+    expect(skill).toMatch(/^name: do-muse$/m);
+    expect(codexMetadata).toContain('display_name: "do-muse"');
+    expect(codexMetadata).toContain("Use do-muse to");
     expect(codexMetadata).not.toContain("$Muse");
   });
 
   test("centralizes native invocation syntax behind one lowercase cross-host request", async () => {
     const [invocation, readme, skill, openclawGuide, codexGuide, piGuide] = await Promise.all([
-      readFile(join(repoRoot, "plugins/Muse/skills/muse/references/invocation.md"), "utf8"),
+      readFile(join(repoRoot, "plugins/Muse/skills/do-muse/references/invocation.md"), "utf8"),
       readFile(join(repoRoot, "README.md"), "utf8"),
-      readFile(join(repoRoot, "plugins/Muse/skills/muse/SKILL.md"), "utf8"),
+      readFile(join(repoRoot, "plugins/Muse/skills/do-muse/SKILL.md"), "utf8"),
       readFile(join(repoRoot, "configs/openclaw/AGENTS.md"), "utf8"),
       readFile(join(repoRoot, "configs/codex/AGENTS.md"), "utf8"),
       readFile(join(repoRoot, "configs/pi/AGENTS.md"), "utf8"),
     ]);
 
-    expect(invocation).toContain("Use muse to <visualize, review, explain, or plan this work>.");
-    expect(invocation).toContain("/muse:muse <request>");
-    expect(invocation).toContain("/skill:muse <request>");
-    expect(invocation).toContain("$muse <request>");
+    expect(invocation).toContain("Use do-muse to <visualize, review, explain, or plan this work>.");
+    expect(invocation).toContain("/muse:do-muse <request>");
+    expect(invocation).toContain("/skill:do-muse <request>");
+    expect(invocation).toContain("$do-muse <request>");
     expect(invocation).toMatch(/forced by host grammar/i);
 
     for (const surface of [readme, skill, openclawGuide, codexGuide, piGuide]) {
-      expect(surface).toContain("Use muse to");
-      expect(surface).not.toMatch(/\/muse:muse|\/skill:muse|\$muse|\$Muse/);
+      expect(surface).toContain("Use do-muse to");
+      expect(surface).not.toMatch(/\/muse:do-muse|\/skill:do-muse|\$do-muse|\$Muse/);
+      expect(surface).not.toContain("/skill:muse");
     }
   });
 
   test("ships an up-to-date self-contained interactive runtime", async () => {
     const runtimeEntry = join(
       repoRoot,
-      "plugins/Muse/skills/muse/tools/interactive-plan/runtime-entry.ts",
+      "plugins/Muse/skills/do-muse/tools/interactive-plan/runtime-entry.ts",
     );
     const runtimePath = join(
       repoRoot,
-      "plugins/Muse/skills/muse/tools/interactive-plan/runtime.mjs",
+      "plugins/Muse/skills/do-muse/tools/interactive-plan/runtime.mjs",
     );
     const build = await Bun.build({
       entrypoints: [runtimeEntry],
@@ -145,7 +146,7 @@ describe("coding-agent packaging", () => {
         [
           process.execPath,
           "--no-install",
-          join(pluginCopy, "skills", "muse", "tools", "interactive-plan", "runtime.mjs"),
+          join(pluginCopy, "skills", "do-muse", "tools", "interactive-plan", "runtime.mjs"),
           "render",
           planCopy,
         ],
@@ -225,8 +226,43 @@ describe("coding-agent packaging", () => {
     expect(readme).toContain("codex plugin marketplace add edheltzel/Muse");
     expect(readme).toContain("codex plugin add muse@muse-marketplace");
     expect(readme).toContain("~/.agents/skills");
-    expect(codexGuide).toContain("~/.agents/skills/muse");
+    expect(codexGuide).toContain("~/.agents/skills/do-muse");
     expect(readme).not.toContain("mkdir -p ~/.codex/skills ~/.codex/prompts");
     expect(codexGuide).not.toContain("copy the skill to `~/.codex/skills/Muse`");
+  });
+
+  test("ships DESIGN.md as the Muse default and resolves project then home then shipped", async () => {
+    const { resolveDesignMdPath, SHIPPED_DESIGN_MD } = await import(
+      "../plugins/Muse/skills/do-muse/tools/interactive-plan/design.ts"
+    );
+    const design = await readFile(join(repoRoot, "plugins/Muse/DESIGN.md"), "utf8");
+    const skill = await readFile(join(repoRoot, "plugins/Muse/skills/do-muse/SKILL.md"), "utf8");
+
+    expect(design).toContain("name: Muse default");
+    expect(design).toContain("Space Grotesk");
+    expect(design).toContain("Barlow Condensed");
+    expect(design).toContain("Tanker is out");
+    expect(skill).toContain("plugins/Muse/DESIGN.md");
+    expect(skill).toContain("~/.agents/DESIGN.md");
+    expect(skill).toContain("Never auto-create `~/.agents/DESIGN.md`");
+    expect(skill).toContain("If `plannotator` is on PATH");
+    expect(skill).toContain("steer-chat is out of v1");
+    expect(await resolveDesignMdPath({ cwd: repoRoot, home: "/tmp/missing-muse-home" })).toBe(
+      SHIPPED_DESIGN_MD,
+    );
+
+    const fixtureRoot = await mkdtemp(join(tmpdir(), "muse-design-"));
+    try {
+      const project = join(fixtureRoot, "project");
+      const home = join(fixtureRoot, "home");
+      await mkdir(join(home, ".agents"), { recursive: true });
+      await mkdir(project, { recursive: true });
+      await writeFile(join(home, ".agents", "DESIGN.md"), "global\n");
+      expect(await resolveDesignMdPath({ cwd: project, home })).toBe(join(home, ".agents", "DESIGN.md"));
+      await writeFile(join(project, "DESIGN.md"), "project\n");
+      expect(await resolveDesignMdPath({ cwd: project, home })).toBe(join(project, "DESIGN.md"));
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
   });
 });

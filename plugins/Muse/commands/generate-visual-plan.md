@@ -4,7 +4,7 @@ description: Generate an interactive MDX visual implementation plan with local r
 
 # Generate Visual Plan
 
-Create an interactive `muse` plan artifact, not a one-off static HTML page.
+Create an interactive `do-muse` plan artifact, not a one-off static HTML page.
 
 ## Usage
 
@@ -14,8 +14,9 @@ Create an interactive `muse` plan artifact, not a one-off static HTML page.
 
 ## Workflow
 
-1. Load the `muse` skill.
+1. Load the `do-muse` skill.
 2. Read these references before authoring:
+   - resolved `DESIGN.md` (project, then `~/.agents/DESIGN.md`, then `plugins/Muse/DESIGN.md`)
    - `references/interactive-plans.md`
    - `references/mdx-components.md`
    - `references/mdx-blocks.md`
@@ -40,7 +41,7 @@ Create an interactive `muse` plan artifact, not a one-off static HTML page.
 6. Resolve the installed skill directory before invoking the bundled runtime:
 
 ```text
-MUSE_SKILL_DIR = directory containing the muse SKILL.md you loaded
+MUSE_SKILL_DIR = directory containing the do-muse SKILL.md you loaded
 ```
 
 7. Validate and render locally from that installed skill directory:
@@ -50,7 +51,8 @@ bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" render .agents/visual-p
 bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" serve .agents/visual-plans/<slug>
 ```
 
-8. Open the local review URL and tell the user:
+8. If `plannotator` is on PATH, open the review there. Otherwise open the local review URL. Never auto-install Plannotator. Do not write `~/.plannotator/config.json`. steer-chat is out of v1.
+9. Tell the user:
    - source folder
    - review URL
    - static export path

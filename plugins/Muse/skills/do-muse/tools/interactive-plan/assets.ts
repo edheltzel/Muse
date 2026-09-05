@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 export interface FontAsset {
   filename: string;
-  family: "Bricolage Grotesque" | "Fragment Mono";
-  weight: 400 | 500 | 600 | 700;
+  family: "Space Grotesk" | "Barlow Condensed";
+  weight: 400 | 500 | 600;
   sha256: string;
   sha384: string;
 }
@@ -27,32 +27,32 @@ export interface FontNotice {
 
 export const FONT_ASSETS: readonly FontAsset[] = Object.freeze([
   {
-    filename: "bricolage-grotesque-latin-500-normal.woff2",
-    family: "Bricolage Grotesque",
+    filename: "space-grotesk-latin-500-normal.woff2",
+    family: "Space Grotesk",
     weight: 500,
-    sha256: "b62688707e0820a9cf2a98e9b0349fbb348fd17f76b70a05b53e7a668e3f406f",
-    sha384: "qn7O2kwYDNO8BB07VtIMUe0lUqq3WYJ/okIrACPResGQn0vViFROEt3SGde7RySe",
+    sha256: "1b1a8131d9edf975d9decee81e2f2bf504812f7a4f498e5500f28a613e22e64c",
+    sha384: "Bg6xtBETlk4OH8G9p8JpunITXrv/s8tntKNJ32QbeDSgfNktSk6PphJamfR70b6a",
   },
   {
-    filename: "bricolage-grotesque-latin-600-normal.woff2",
-    family: "Bricolage Grotesque",
+    filename: "space-grotesk-latin-600-normal.woff2",
+    family: "Space Grotesk",
     weight: 600,
-    sha256: "b34fc8c1ef0ac8798455ac2979eae4b4f90f0d327e3584d1032fa77a8a9a66ca",
-    sha384: "Ilh1L/tmtUzFnpC1cwkNgBNnW+urzfbLETMexxhppi4RurOQbreAwtqAuodE8gcS",
+    sha256: "685bbbf69fa616df1ef81847c85fc76be097ddfb3468ff2257be54511ab3130f",
+    sha384: "UglM4y3uagIx+6rBW+5RRW5QEstMHpJATYPvjywetDYAySJDZkmPFZMMbhamYkPe",
   },
   {
-    filename: "bricolage-grotesque-latin-700-normal.woff2",
-    family: "Bricolage Grotesque",
-    weight: 700,
-    sha256: "4c373ce3c1cca41c864eb3e27c059a59fc6310547ab9c9b6cd780d387ba24206",
-    sha384: "I1AMB8Mhv2nNTsttl0xrwLBvxe4XMocWs9FDGXH6AqBsgZTPNWagTukzMpe7LPST",
-  },
-  {
-    filename: "fragment-mono-latin-400-normal.woff2",
-    family: "Fragment Mono",
+    filename: "barlow-condensed-latin-400-normal.woff2",
+    family: "Barlow Condensed",
     weight: 400,
-    sha256: "44c4e39bff5e76652a24a872cbebabccbcfb20f62c4633b27c1f2745cba86b56",
-    sha384: "5pPJBXVgEAccmDzYsxRokikcIMqnLiJSV7qWM3TpHdoPoqSh8vUGD1DWsnEZB0BL",
+    sha256: "7fff1bb22e5773f0d1a55d3093068b6dac4539e8bb3ac23fb9f0a729df2c7bb4",
+    sha384: "+sVjctU0J+mE/zRMCCrDKycD/c18b7mXUlPiMz9VprmzTUi1xwRDnAVhwzDI5e4k",
+  },
+  {
+    filename: "barlow-condensed-latin-500-normal.woff2",
+    family: "Barlow Condensed",
+    weight: 500,
+    sha256: "460f141ec8f6c9a1516bfd2bd9fe71656246d7a9d04a0955faf53158d8970c4c",
+    sha384: "iVQMJ2wPzlVYAg3U3zOHcVY+OxYs/X/HaFWAFou8YCkD7CSeOyHm41QKEr4FwtOf",
   },
 ]);
 

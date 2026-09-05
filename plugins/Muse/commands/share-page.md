@@ -41,10 +41,10 @@ Deployments land in your own Vercel account, so no claim step is needed.
 Resolve the script from the installed skill directory, then run it with the HTML file path:
 
 ```bash
-bash ~/.claude/plugins/cache/muse-marketplace/muse/<version>/skills/muse/scripts/share.sh <file>
+bash ~/.claude/plugins/cache/muse-marketplace/muse/<version>/skills/do-muse/scripts/share.sh <file>
 ```
 
-Common alternatives include `~/.codex/skills/Muse/skills/muse/scripts/share.sh`, or `./plugins/Muse/skills/muse/scripts/share.sh` from a repository checkout.
+Common alternatives include `~/.codex/skills/Muse/skills/do-muse/scripts/share.sh`, or `./plugins/Muse/skills/do-muse/scripts/share.sh` from a repository checkout.
 
 ## Output
 

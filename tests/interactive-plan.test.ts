@@ -16,16 +16,16 @@ import {
   type KeyboardEvent as HappyKeyboardEvent,
 } from "happy-dom";
 
-import { renderBlock } from "../plugins/Muse/skills/muse/tools/interactive-plan/components.ts";
-import { interactivePlanInteractionScript, interactivePlanReviewScript, staticPlanClientScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
-import { decodeMarkdownText, encodeMarkdownText, formatAgentHandoffMarkdown, parseAgentHandoffMarkdown } from "../plugins/Muse/skills/muse/tools/interactive-plan/handoff.ts";
-import { loadPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/mdx-loader.ts";
-import { acquirePlanLock, tryUnixFlockForTesting } from "../plugins/Muse/skills/muse/tools/interactive-plan/plan-lock.ts";
-import type { AgentHandoff, ReviewState } from "../plugins/Muse/skills/muse/tools/interactive-plan/schema.ts";
-import { validateRenderedHtmlIds } from "../plugins/Muse/skills/muse/tools/interactive-plan/schema.ts";
-import { renderPlanFolder, renderPlanHtml } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
-import { servePlan } from "../plugins/Muse/skills/muse/tools/interactive-plan/server.ts";
-import { MDX_COMPONENT_META, MDX_COMPONENT_NAMES, RAW_BODY_MDX_COMPONENTS } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
+import { renderBlock } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/components.ts";
+import { interactivePlanInteractionScript, interactivePlanReviewScript, staticPlanClientScript } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/client.ts";
+import { decodeMarkdownText, encodeMarkdownText, formatAgentHandoffMarkdown, parseAgentHandoffMarkdown } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/handoff.ts";
+import { loadPlanFolder } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/mdx-loader.ts";
+import { acquirePlanLock, tryUnixFlockForTesting } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/plan-lock.ts";
+import type { AgentHandoff, ReviewState } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/schema.ts";
+import { validateRenderedHtmlIds } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/schema.ts";
+import { renderPlanFolder, renderPlanHtml } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/render.ts";
+import { servePlan } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/server.ts";
+import { MDX_COMPONENT_META, MDX_COMPONENT_NAMES, RAW_BODY_MDX_COMPONENTS } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/shared.ts";
 import {
   addComment,
   MAX_REVIEW_WAITERS,
@@ -35,7 +35,7 @@ import {
   readReviewState,
   resolveComment,
   updateReviewState,
-} from "../plugins/Muse/skills/muse/tools/interactive-plan/state-store.ts";
+} from "../plugins/Muse/skills/do-muse/tools/interactive-plan/state-store.ts";
 
 const repoRoot = join(import.meta.dir, "..");
 const fixturesRoot = join(repoRoot, "tests", "fixtures", "interactive-plans");
@@ -43,46 +43,46 @@ afterEach(() => {
   mock.restore();
 });
 
-const fontAssetRoot = join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "assets");
+const fontAssetRoot = join(repoRoot, "plugins", "Muse", "skills", "do-muse", "tools", "interactive-plan", "assets");
 const expectedFontAssets = {
-  "bricolage-grotesque-latin-500-normal.woff2": {
-    sha256: "b62688707e0820a9cf2a98e9b0349fbb348fd17f76b70a05b53e7a668e3f406f",
-    sha384: "qn7O2kwYDNO8BB07VtIMUe0lUqq3WYJ/okIrACPResGQn0vViFROEt3SGde7RySe",
-    package: "@fontsource/bricolage-grotesque",
+  "space-grotesk-latin-500-normal.woff2": {
+    sha256: "1b1a8131d9edf975d9decee81e2f2bf504812f7a4f498e5500f28a613e22e64c",
+    sha384: "Bg6xtBETlk4OH8G9p8JpunITXrv/s8tntKNJ32QbeDSgfNktSk6PphJamfR70b6a",
+    package: "@fontsource/space-grotesk",
     version: "5.2.10",
-    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
+    notice: "notices/fontsource-space-grotesk-5.2.10-LICENSE.txt",
   },
-  "bricolage-grotesque-latin-600-normal.woff2": {
-    sha256: "b34fc8c1ef0ac8798455ac2979eae4b4f90f0d327e3584d1032fa77a8a9a66ca",
-    sha384: "Ilh1L/tmtUzFnpC1cwkNgBNnW+urzfbLETMexxhppi4RurOQbreAwtqAuodE8gcS",
-    package: "@fontsource/bricolage-grotesque",
+  "space-grotesk-latin-600-normal.woff2": {
+    sha256: "685bbbf69fa616df1ef81847c85fc76be097ddfb3468ff2257be54511ab3130f",
+    sha384: "UglM4y3uagIx+6rBW+5RRW5QEstMHpJATYPvjywetDYAySJDZkmPFZMMbhamYkPe",
+    package: "@fontsource/space-grotesk",
     version: "5.2.10",
-    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
+    notice: "notices/fontsource-space-grotesk-5.2.10-LICENSE.txt",
   },
-  "bricolage-grotesque-latin-700-normal.woff2": {
-    sha256: "4c373ce3c1cca41c864eb3e27c059a59fc6310547ab9c9b6cd780d387ba24206",
-    sha384: "I1AMB8Mhv2nNTsttl0xrwLBvxe4XMocWs9FDGXH6AqBsgZTPNWagTukzMpe7LPST",
-    package: "@fontsource/bricolage-grotesque",
-    version: "5.2.10",
-    notice: "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt",
-  },
-  "fragment-mono-latin-400-normal.woff2": {
-    sha256: "44c4e39bff5e76652a24a872cbebabccbcfb20f62c4633b27c1f2745cba86b56",
-    sha384: "5pPJBXVgEAccmDzYsxRokikcIMqnLiJSV7qWM3TpHdoPoqSh8vUGD1DWsnEZB0BL",
-    package: "@fontsource/fragment-mono",
+  "barlow-condensed-latin-400-normal.woff2": {
+    sha256: "7fff1bb22e5773f0d1a55d3093068b6dac4539e8bb3ac23fb9f0a729df2c7bb4",
+    sha384: "+sVjctU0J+mE/zRMCCrDKycD/c18b7mXUlPiMz9VprmzTUi1xwRDnAVhwzDI5e4k",
+    package: "@fontsource/barlow-condensed",
     version: "5.2.8",
-    notice: "notices/fontsource-fragment-mono-5.2.8-LICENSE.txt",
+    notice: "notices/fontsource-barlow-condensed-5.2.8-LICENSE.txt",
+  },
+  "barlow-condensed-latin-500-normal.woff2": {
+    sha256: "460f141ec8f6c9a1516bfd2bd9fe71656246d7a9d04a0955faf53158d8970c4c",
+    sha384: "iVQMJ2wPzlVYAg3U3zOHcVY+OxYs/X/HaFWAFou8YCkD7CSeOyHm41QKEr4FwtOf",
+    package: "@fontsource/barlow-condensed",
+    version: "5.2.8",
+    notice: "notices/fontsource-barlow-condensed-5.2.8-LICENSE.txt",
   },
 } as const;
 
 const expectedFontNotices = {
-  "notices/fontsource-bricolage-grotesque-5.2.10-LICENSE.txt": {
-    sha256: "923f4ddf0fd39f9b7794ab0df7332f3d95dc43e8ad7ec2289d6d9e8491177f51",
-    copyright: "Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage)",
+  "notices/fontsource-space-grotesk-5.2.10-LICENSE.txt": {
+    sha256: "18a4de52385f6b988782639d5d0cc1326e5a8c2de9a7f01d7b20d9aedcc60943",
+    copyright: "Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk)",
   },
-  "notices/fontsource-fragment-mono-5.2.8-LICENSE.txt": {
-    sha256: "d5e728d99896c101da6fe5bdffcdc8cf2618523643b99bd4e9190075f0a0c22e",
-    copyright: "Copyright 2022 The Fragment-Mono Project Authors (https://github.com/weiweihuanghuang/fragment-mono) FragmentMono-Italic.ttf: Copyright 2022 The Fragment-Mono Project Authors (https://github.com/weiweihuanghuang/fragment-mono)",
+  "notices/fontsource-barlow-condensed-5.2.8-LICENSE.txt": {
+    sha256: "046ee27d8bddc6b6ee08eee53c96dbf3ec1f6df561644e018507dd8ffcb11d31",
+    copyright: "Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)",
   },
 } as const;
 
@@ -1614,18 +1614,18 @@ describe("generic table and Mermaid accessibility", () => {
 
       zoomIn.click();
       const transform = canvas.style.transform;
-      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#278195");
+      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#0ad6ff");
 
       toggle.click();
       await completeRender();
       expect(window.document.documentElement.dataset.theme).toBe("dark");
-      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#66b9c9");
+      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#04d1f9");
       expect(canvas.style.transform).toBe(transform);
 
       toggle.click();
       await completeRender();
       expect(window.document.documentElement.dataset.theme).toBe("light");
-      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#278195");
+      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#0ad6ff");
       expect(canvas.style.transform).toBe(transform);
 
       toggle.click();
@@ -1635,9 +1635,9 @@ describe("generic table and Mermaid accessibility", () => {
       await Promise.resolve();
       expect(pendingRenders).toHaveLength(0);
       expect(window.document.documentElement.dataset.theme).toBe("light");
-      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#278195");
+      expect(canvas.querySelector("svg")?.getAttribute("data-line-color")).toBe("#0ad6ff");
       expect(canvas.style.transform).toBe(transform);
-      expect(renderedColors).toEqual(["#278195", "#66b9c9", "#278195"]);
+      expect(renderedColors).toEqual(["#0ad6ff", "#04d1f9", "#0ad6ff"]);
       expect(source?.textContent?.trim()).toBe("flowchart LR\nA --> B");
     } finally {
       await browser.close();
@@ -1647,7 +1647,7 @@ describe("generic table and Mermaid accessibility", () => {
     await withFixture("minimal-plan", async (planDir) => {
       const { staticExportPath } = await renderPlanFolder(planDir);
       const staticHtml = await readFile(staticExportPath, "utf8");
-      const shareScript = await readFile(join(repoRoot, "plugins", "Muse", "skills", "muse", "scripts", "share.sh"), "utf8");
+      const shareScript = await readFile(join(repoRoot, "plugins", "Muse", "skills", "do-muse", "scripts", "share.sh"), "utf8");
 
       expect(staticHtml.match(/data:font\/woff2;base64,/g)).toHaveLength(Object.keys(expectedFontAssets).length);
       expect(staticHtml).not.toContain('url("/assets/');
@@ -3676,7 +3676,7 @@ describe("interactive plan review state and handoff", () => {
 
   test("uses native Windows lock handles and conventional Linux libc candidates", async () => {
     const source = await readFile(
-      join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "plan-lock.ts"),
+      join(repoRoot, "plugins", "Muse", "skills", "do-muse", "tools", "interactive-plan", "plan-lock.ts"),
       "utf8",
     );
     expect(source).toContain("CreateFileW");
@@ -5070,7 +5070,7 @@ describe("interactive command documentation contracts", () => {
     expect(doc).toMatch(/Do not add React|No React/i);
     expect(doc).toMatch(/React DOM/i);
     expect(doc).toMatch(/@agent-native\/\*/);
-    expect(doc).toContain("MUSE_SKILL_DIR = directory containing the muse SKILL.md you loaded");
+    expect(doc).toContain("MUSE_SKILL_DIR = directory containing the do-muse SKILL.md you loaded");
     expect(doc).toContain('bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" render');
     expect(doc).toContain('bun "$MUSE_SKILL_DIR/tools/interactive-plan/runtime.mjs" serve');
     expect(doc).not.toContain("bun plugins/Muse/");
@@ -5079,7 +5079,7 @@ describe("interactive command documentation contracts", () => {
   test("/generate-visual-recap documents MDX recap artifacts, local rendering, and dependency boundaries", async () => {
     const doc = await readFile(join(repoRoot, "plugins", "Muse", "commands", "generate-visual-recap.md"), "utf8");
 
-    expect(doc).toMatch(/interactive [`]?muse[`]? recap/i);
+    expect(doc).toMatch(/interactive [`]?do-muse[`]? recap/i);
     expect(doc).toMatch(/plan\.mdx/);
     expect(doc).toMatch(/visual-explainer\.json/);
     expect(doc).toMatch(/Render and serve locally|interactive-plan tools|local/i);

@@ -93,30 +93,47 @@ const baseClientScript = `
   });
 
   const mermaidTheme = (theme) => {
-    const dark = theme === "dark";
-    const palette = dark
-      ? {
-          primary: "#333a46",
-          text: "#f1f3f5",
-          border: "#6f7d8d",
-          line: "#66b9c9",
-          secondary: "#5a4125",
-          tertiary: "#252b34",
-        }
-      : {
-          primary: "#eef2f5",
-          text: "#252b33",
-          border: "#8d99a6",
-          line: "#278195",
-          secondary: "#f3dfbd",
-          tertiary: "#ffffff",
-        };
+    const palettes = {
+      light: {
+        primary: "#f0f3f4",
+        text: "#1e2029",
+        border: "#8a69f7",
+        line: "#0ad6ff",
+        secondary: "#fb5bb6",
+        tertiary: "#e2e6e8",
+      },
+      "light-alt": {
+        primary: "#FDE8E2",
+        text: "#111827",
+        border: "#111827",
+        line: "#111827",
+        secondary: "#FDE8E2",
+        tertiary: "#FFFFFF",
+      },
+      dark: {
+        primary: "#212337",
+        text: "#ebfafa",
+        border: "#37f499",
+        line: "#04d1f9",
+        secondary: "#a48cf2",
+        tertiary: "#323449",
+      },
+      darker: {
+        primary: "#171928",
+        text: "#d8e6e6",
+        border: "#2dcc82",
+        line: "#0396b3",
+        secondary: "#8b75d9",
+        tertiary: "#252738",
+      },
+    };
+    const palette = palettes[theme] || palettes.light;
     return {
       theme: "base",
       securityLevel: "strict",
       startOnLoad: false,
       themeVariables: {
-        fontFamily: "Fragment Mono, ui-monospace, monospace",
+        fontFamily: "Barlow Condensed, ui-sans-serif, system-ui, sans-serif",
         primaryColor: palette.primary,
         primaryTextColor: palette.text,
         primaryBorderColor: palette.border,

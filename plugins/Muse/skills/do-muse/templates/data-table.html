@@ -5,11 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Requirements Audit — Reference Template</title>
 <!--
-  Reference template for the muse skill: data tables.
-  Rose/cranberry palette — distinctly different from terracotta (architecture)
-  and teal (mermaid) templates so agents absorb variety.
+  Layout skeleton for do-muse data tables. Consume tokens from the resolved DESIGN.md.
   Key patterns demonstrated:
-  - Rose/cranberry palette (NOT indigo/violet)
+  - DESIGN.md tokens (not a per-template palette lottery)
   - KPI summary cards above the table (visual hook before the data)
   - Collapsible <details> section (replaces static callout)
   - Depth tiers: elevated KPIs, default table, collapsible for secondary
@@ -23,50 +21,83 @@
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
 <style>
   /* ============ THEME ============ */
   :root {
-    --font-body: 'Instrument Serif', 'Georgia', serif;
-    --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
-    --font-sans: system-ui, -apple-system, sans-serif;
+    --font-headline: "Space Grotesk", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    --font-body: "Barlow Condensed", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
 
-    --bg: #fff5f5;
-    --surface: #ffffff;
-    --surface2: #fef0ee;
-    --surface-elevated: #fff8f7;
-    --border: rgba(0, 0, 0, 0.07);
-    --border-bright: rgba(0, 0, 0, 0.14);
-    --text: #1c1917;
-    --text-dim: #78716c;
-    --accent: #be123c;
-    --accent-dim: rgba(190, 18, 60, 0.06);
-    --green: #16a34a;
-    --green-dim: rgba(22, 163, 74, 0.08);
-    --red: #dc2626;
-    --red-dim: rgba(220, 38, 38, 0.08);
-    --orange: #d97706;
-    --orange-dim: rgba(217, 119, 6, 0.08);
+    --bg: #f0f3f4;
+    --surface: #d5d9db;
+    --surface2: #e2e6e8;
+    --surface-elevated: #e2e6e8;
+    --border: #e2e6e8;
+    --border-bright: #c9cbcd;
+    --text: #1e2029;
+    --text-dim: #5b73dc;
+    --accent: #fb5bb6;
+    --accent-dim: color-mix(in srgb, #fb5bb6 12%, transparent);
+    --primary: #8a69f7;
+    --cyan: #0ad6ff;
+    --green: #38ff9f;
+    --green-dim: color-mix(in srgb, #38ff9f 10%, transparent);
+    --orange: #ffaf4d;
+    --orange-dim: color-mix(in srgb, #ffaf4d 10%, transparent);
+    --ok: #38ff9f;
+    --warn: #ffaf4d;
+    --danger: #fb5b66;
+    --red: #fb5b66;
+    --red-dim: color-mix(in srgb, #fb5b66 10%, transparent);
+    --sage: #38ff9f;
+    --sage-dim: color-mix(in srgb, #38ff9f 10%, transparent);
+    --teal: #0ad6ff;
+    --teal-dim: color-mix(in srgb, #0ad6ff 10%, transparent);
+    --plum: #fb5bb6;
+    --plum-dim: color-mix(in srgb, #fb5bb6 10%, transparent);
+    --code-bg: #e2e6e8;
+    --code-text: #1e2029;
+    --blue: #0ad6ff;
+    --blue-dim: color-mix(in srgb, #0ad6ff 10%, transparent);
+    --font-sans: var(--font-body);
+
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #1a0a0a;
-      --surface: #231414;
-      --surface2: #2e1b1b;
-      --surface-elevated: #351f1f;
-      --border: rgba(255, 255, 255, 0.06);
-      --border-bright: rgba(255, 255, 255, 0.12);
-      --text: #fde2e2;
-      --text-dim: #c9a3a3;
-      --accent: #fb7185;
-      --accent-dim: rgba(251, 113, 133, 0.12);
-      --green: #4ade80;
-      --green-dim: rgba(74, 222, 128, 0.1);
-      --red: #f87171;
-      --red-dim: rgba(248, 113, 113, 0.1);
-      --orange: #fbbf24;
-      --orange-dim: rgba(251, 191, 36, 0.1);
+      --bg: #212337;
+      --surface: #454759;
+      --surface2: #323449;
+      --surface-elevated: #323449;
+      --border: #323449;
+      --border-bright: #5b5c66;
+      --text: #ebfafa;
+      --text-dim: #7081d0;
+      --accent: #f265b5;
+      --accent-dim: color-mix(in srgb, #f265b5 14%, transparent);
+      --primary: #a48cf2;
+      --cyan: #04d1f9;
+      --green: #37f499;
+      --green-dim: color-mix(in srgb, #37f499 12%, transparent);
+      --orange: #f7c67f;
+      --orange-dim: color-mix(in srgb, #f7c67f 12%, transparent);
+      --ok: #37f499;
+      --warn: #f1fc79;
+      --danger: #f16c75;
+      --red: #f16c75;
+      --red-dim: color-mix(in srgb, #f16c75 12%, transparent);
+      --sage: #37f499;
+      --sage-dim: color-mix(in srgb, #37f499 12%, transparent);
+      --teal: #04d1f9;
+      --teal-dim: color-mix(in srgb, #04d1f9 12%, transparent);
+      --plum: #f265b5;
+      --plum-dim: color-mix(in srgb, #f265b5 12%, transparent);
+      --code-bg: #171928;
+      --code-text: #ebfafa;
+      --blue: #04d1f9;
+      --blue-dim: color-mix(in srgb, #04d1f9 12%, transparent);
+
     }
   }
 
@@ -111,9 +142,9 @@
 
   /* ============ HEADER ============ */
   h1 {
-    font-family: var(--font-body);
+    font-family: var(--font-headline);
     font-size: 32px;
-    font-weight: 400;
+    font-weight: 600;
     letter-spacing: -0.3px;
     margin-bottom: 6px;
   }

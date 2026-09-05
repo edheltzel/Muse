@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import puppeteer, { type Browser, type Page } from "puppeteer";
 
-import { renderBlock } from "../plugins/Muse/skills/muse/tools/interactive-plan/components.ts";
-import { interactivePlanInteractionScript } from "../plugins/Muse/skills/muse/tools/interactive-plan/client.ts";
-import { renderPlanFolder } from "../plugins/Muse/skills/muse/tools/interactive-plan/render.ts";
+import { renderBlock } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/components.ts";
+import { interactivePlanInteractionScript } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/client.ts";
+import { renderPlanFolder } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/render.ts";
 
 type TabType = "Tabs" | "DiffTabs";
 

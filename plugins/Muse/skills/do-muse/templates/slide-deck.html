@@ -5,10 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>API Gateway Redesign — Reference Slide Deck</title>
 <!--
-  Reference template for the muse skill: slide decks.
-  Midnight Editorial preset — deep navy, serif display, warm gold accents.
-  Distinctly different from the terracotta (architecture), teal (mermaid),
-  and rose (data-table) templates so agents absorb variety.
+  Layout skeleton for do-muse slide decks. Consume tokens from the resolved DESIGN.md.
+  No baked slide presets — Eldritch Cthulhu dark default with Dusk light.
   Key patterns demonstrated:
   - All 10 slide types in a cohesive narrative
   - SlideEngine JS: keyboard/touch/wheel nav, progress bar, dots, counter, hints
@@ -26,52 +24,85 @@
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
 <style>
-  /* ============ THEME: Midnight Editorial ============ */
+  /* ============ THEME: DESIGN.md Eldritch ============ */
   :root {
-    --font-body: 'Instrument Serif', Georgia, serif;
-    --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
-    --bg: #0f1729;
-    --surface: #162040;
-    --surface2: #1d2b52;
-    --surface-elevated: #243362;
-    --border: rgba(200, 180, 140, 0.08);
-    --border-bright: rgba(200, 180, 140, 0.16);
-    --text: #e8e4d8;
-    --text-dim: #9a9484;
-    --accent: #d4a73a;
-    --accent-dim: rgba(212, 167, 58, 0.1);
-    --code-bg: #0a0f1e;
-    --code-text: #d4d0c4;
-    --green: #4ade80;
-    --green-dim: rgba(74, 222, 128, 0.1);
-    --red: #f87171;
-    --red-dim: rgba(248, 113, 113, 0.1);
-    --blue: #60a5fa;
-    --blue-dim: rgba(96, 165, 250, 0.1);
+    --bg: #212337;
+    --surface: #454759;
+    --surface2: #323449;
+    --surface-elevated: #323449;
+    --border: #323449;
+    --border-bright: #5b5c66;
+    --text: #ebfafa;
+    --text-dim: #7081d0;
+    --accent: #f265b5;
+    --accent-dim: color-mix(in srgb, #f265b5 14%, transparent);
+    --primary: #a48cf2;
+    --cyan: #04d1f9;
+    --green: #37f499;
+    --green-dim: color-mix(in srgb, #37f499 12%, transparent);
+    --orange: #f7c67f;
+    --orange-dim: color-mix(in srgb, #f7c67f 12%, transparent);
+    --ok: #37f499;
+    --warn: #f1fc79;
+    --danger: #f16c75;
+    --red: #f16c75;
+    --red-dim: color-mix(in srgb, #f16c75 12%, transparent);
+    --sage: #37f499;
+    --sage-dim: color-mix(in srgb, #37f499 12%, transparent);
+    --teal: #04d1f9;
+    --teal-dim: color-mix(in srgb, #04d1f9 12%, transparent);
+    --plum: #f265b5;
+    --plum-dim: color-mix(in srgb, #f265b5 12%, transparent);
+    --code-bg: #171928;
+    --code-text: #ebfafa;
+    --blue: #04d1f9;
+    --blue-dim: color-mix(in srgb, #04d1f9 12%, transparent);
+    --font-headline: "Space Grotesk", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    --font-body: "Barlow Condensed", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+
   }
 
   @media (prefers-color-scheme: light) {
     :root {
-      --bg: #faf8f2;
-      --surface: #ffffff;
-      --surface2: #f5f0e6;
-      --surface-elevated: #fffdf5;
-      --border: rgba(30, 30, 50, 0.08);
-      --border-bright: rgba(30, 30, 50, 0.16);
-      --text: #1a1814;
-      --text-dim: #7a7468;
-      --accent: #b8860b;
-      --accent-dim: rgba(184, 134, 11, 0.08);
-      --code-bg: #2a2520;
-      --code-text: #e8e4d8;
-      --green: #16a34a;
-      --green-dim: rgba(22, 163, 74, 0.08);
-      --red: #dc2626;
-      --red-dim: rgba(220, 38, 38, 0.08);
-      --blue: #2563eb;
-      --blue-dim: rgba(37, 99, 235, 0.08);
+      --font-headline: "Space Grotesk", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+      --font-body: "Barlow Condensed", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+
+      --bg: #f0f3f4;
+      --surface: #d5d9db;
+      --surface2: #e2e6e8;
+      --surface-elevated: #e2e6e8;
+      --border: #e2e6e8;
+      --border-bright: #c9cbcd;
+      --text: #1e2029;
+      --text-dim: #5b73dc;
+      --accent: #fb5bb6;
+      --accent-dim: color-mix(in srgb, #fb5bb6 12%, transparent);
+      --primary: #8a69f7;
+      --cyan: #0ad6ff;
+      --green: #38ff9f;
+      --green-dim: color-mix(in srgb, #38ff9f 10%, transparent);
+      --orange: #ffaf4d;
+      --orange-dim: color-mix(in srgb, #ffaf4d 10%, transparent);
+      --ok: #38ff9f;
+      --warn: #ffaf4d;
+      --danger: #fb5b66;
+      --red: #fb5b66;
+      --red-dim: color-mix(in srgb, #fb5b66 10%, transparent);
+      --sage: #38ff9f;
+      --sage-dim: color-mix(in srgb, #38ff9f 10%, transparent);
+      --teal: #0ad6ff;
+      --teal-dim: color-mix(in srgb, #0ad6ff 10%, transparent);
+      --plum: #fb5bb6;
+      --plum-dim: color-mix(in srgb, #fb5bb6 10%, transparent);
+      --code-bg: #e2e6e8;
+      --code-text: #1e2029;
+      --blue: #0ad6ff;
+      --blue-dim: color-mix(in srgb, #0ad6ff 10%, transparent);
+
     }
   }
 
@@ -181,16 +212,18 @@
 
   /* ============ SHARED SLIDE ELEMENTS ============ */
   .slide__display {
+    font-family: var(--font-headline);
     font-size: clamp(48px, 10vw, 120px);
-    font-weight: 400;
+    font-weight: 600;
     letter-spacing: -2px;
     line-height: 0.95;
     text-wrap: balance;
   }
 
   .slide__heading {
+    font-family: var(--font-headline);
     font-size: clamp(28px, 5vw, 48px);
-    font-weight: 400;
+    font-weight: 500;
     letter-spacing: -0.5px;
     line-height: 1.15;
     text-wrap: balance;
@@ -542,7 +575,7 @@
   }
 
   .slide__bg--gradient {
-    background: linear-gradient(135deg, #1a0f3c 0%, #0f1729 40%, #162040 100%);
+    background: linear-gradient(135deg, #171928 0%, #212337 40%, #323449 100%);
   }
 
   .slide__scrim {
@@ -697,7 +730,7 @@ graph LR
   Router --> Static["Static Assets"]
   API --> DB["Database"]
 
-  classDef primary fill:#d4a73a22,stroke:#d4a73a,stroke-width:2px
+  classDef primary fill:#37f49922,stroke:#37f499,stroke-width:2px
   classDef secondary fill:#60a5fa22,stroke:#60a5fa,stroke-width:2px
   classDef storage fill:#4ade8022,stroke:#4ade80,stroke-width:2px
 
@@ -804,21 +837,21 @@ graph LR
     theme: 'base',
     look: 'classic',
     themeVariables: {
-      primaryColor: isDark ? '#1d2b52' : '#fef3e0',
-      primaryBorderColor: isDark ? '#d4a73a' : '#b8860b',
-      primaryTextColor: isDark ? '#e8e4d8' : '#1a1814',
-      secondaryColor: isDark ? '#162040' : '#eff6ff',
-      secondaryBorderColor: isDark ? '#60a5fa' : '#2563eb',
-      secondaryTextColor: isDark ? '#e8e4d8' : '#1a1814',
-      tertiaryColor: isDark ? '#0f2620' : '#f0fdf4',
-      tertiaryBorderColor: isDark ? '#4ade80' : '#16a34a',
-      tertiaryTextColor: isDark ? '#e8e4d8' : '#1a1814',
-      lineColor: isDark ? '#9a9484' : '#7a7468',
+      primaryColor: isDark ? '#212337' : '#f0f3f4',
+      primaryBorderColor: isDark ? '#37f499' : '#8a69f7',
+      primaryTextColor: isDark ? '#ebfafa' : '#1e2029',
+      secondaryColor: isDark ? '#323449' : '#e2e6e8',
+      secondaryBorderColor: isDark ? '#a48cf2' : '#8a69f7',
+      secondaryTextColor: isDark ? '#ebfafa' : '#1e2029',
+      tertiaryColor: isDark ? '#323449' : '#e2e6e8',
+      tertiaryBorderColor: isDark ? '#f265b5' : '#fb5bb6',
+      tertiaryTextColor: isDark ? '#ebfafa' : '#1e2029',
+      lineColor: isDark ? '#04d1f9' : '#0ad6ff',
       fontSize: '18px',
-      fontFamily: 'var(--font-body)',
-      noteBkgColor: isDark ? '#1d2b52' : '#fef3e0',
-      noteTextColor: isDark ? '#e8e4d8' : '#1a1814',
-      noteBorderColor: isDark ? '#d4a73a' : '#b8860b',
+      fontFamily: 'Barlow Condensed, ui-sans-serif, system-ui, sans-serif',
+      noteBkgColor: isDark ? '#323449' : '#e2e6e8',
+      noteTextColor: isDark ? '#ebfafa' : '#1e2029',
+      noteBorderColor: isDark ? '#f265b5' : '#fb5bb6',
     }
   });
 
