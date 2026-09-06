@@ -1,14 +1,14 @@
 ---
-name: muse
+name: do-muse
 description: Generate beautiful, self-contained HTML pages that visually explain systems, code changes, plans, and data. Use when the user asks for a diagram, architecture overview, diff review, plan review, project recap, comparison table, a visual explainer, or any visual explanation of technical concepts — including phrasings like "visualize this", "visualize a plan", "make it visual", "show me this visually", or "explain this visually". Also use proactively when you are about to render a complex ASCII table (4+ rows or 3+ columns) — present it as a styled HTML page instead.
 license: MIT
-compatibility: Requires a browser to view generated HTML files. Optional surf-cli for AI image generation.
+compatibility: Requires a browser to view generated HTML files. Optional impeccable for AI image generation.
 metadata:
   author: edheltzel
-  version: "0.9.3"
+  version: "0.9.4"
 ---
 
-# muse
+# do-muse
 
 Generate self-contained HTML files for technical diagrams, visualizations, and data tables. Generate interactive MDX visual plans/recaps when review state, approval, questions, or agent handoff files matter. Always open visual results in the browser. Never fall back to ASCII art when this skill is loaded.
 
@@ -16,7 +16,7 @@ Generate self-contained HTML files for technical diagrams, visualizations, and d
 
 ## Available Commands
 
-Ask for the capability the same way on every host: `Use muse to <task>`. Native explicit syntax is host-owned and documented only in `./references/invocation.md`. The installed plugin's prompt templates provide these named workflows on hosts that support them; Codex treats the command files as reference material rather than separately installed prompts.
+Ask for the capability the same way on every host: `Use do-muse to <task>`. Native explicit syntax is host-owned and documented only in `./references/invocation.md`. The installed plugin's prompt templates provide these named workflows on hosts that support them; Codex treats the command files as reference material rather than separately installed prompts.
 
 | Command                 | What it does                                                         |
 | ----------------------- | -------------------------------------------------------------------- |
@@ -40,25 +40,25 @@ Before writing HTML, commit to a direction. Don't default to "dark theme with bl
 
 Prose patterns (lead paragraphs, pull quotes, callout boxes) are **accent elements** within visual pages, not a separate mode. Use them to highlight key points or provide breathing room, but the page structure remains visual.
 
-For prose accents, see "Prose Page Elements" in `./references/css-patterns.md`. For everything else, use the standard freeform approach with aesthetic directions below.
+For prose accents, see "Prose Page Elements" in `./references/css-patterns.md`. For everything else, consume the resolved DESIGN.md tokens.
 
 **Who is looking?** A developer understanding a system? A PM seeing the big picture? A team reviewing a proposal? This shapes information density and visual complexity.
 
 **What type of content?** Architecture, flowchart, sequence, data flow, schema/ER, state machine, mind map, class diagram, C4 architecture, data table, timeline, dashboard, or prose-first page. Each has distinct layout needs and rendering approaches (see Diagram Types below).
 
-**What aesthetic?** Pick one and commit. The constrained aesthetics (Blueprint, Editorial, Paper/ink) are safer — they have specific requirements that prevent generic output. The flexible ones (IDE-inspired) require more discipline.
+**Design tokens, not a lottery.** Resolve `DESIGN.md` in this order and use those colors and typefaces. Do not pick a random aesthetic, font pairing, or slide preset.
 
-**Constrained aesthetics (prefer these):**
+1. `DESIGN.md` in the project cwd
+2. `~/.agents/DESIGN.md`
+3. the Muse-shipped default at `plugins/Muse/DESIGN.md` (this plugin)
 
-- Blueprint (technical drawing feel, subtle grid background, deep slate/blue palette, monospace labels, precise borders) — see `websocket-implementation-plan.html` for reference
-- Editorial (serif headlines like Instrument Serif or Crimson Pro, generous whitespace, muted earth tones or deep navy + gold)
-- Paper/ink (warm cream `#faf7f5` background, terracotta/sage accents, informal feel)
-- Monochrome terminal (green/amber on near-black, monospace everything, CRT glow optional)
+Never auto-create `~/.agents/DESIGN.md`. Never copy or auto-install DESIGN.md into the user's project or home. Muse owns the lookup; the user owns whether to keep a project or global file.
 
-**Flexible aesthetics (use with caution):**
+The shipped default is Eldritch (Dusk / Cthulhu / Abyss) plus light-alt, with Space Grotesk headlines and Barlow Condensed body. Tanker is out. Templates are layout skeletons that consume those tokens; they are not a second design system.
 
-- IDE-inspired (borrow a real, named color scheme: Dracula, Nord, Catppuccin Mocha/Latte, Solarized Dark/Light, Gruvbox, One Dark, Rosé Pine, Eldritch) — commit to the actual palette, don't approximate
-- Data-dense (small type, tight spacing, maximum information, muted colors)
+**Review surface.** If `plannotator` is on PATH, use it for interactive plan and recap review. Otherwise use Muse review (`runtime.mjs serve`). Never auto-install Plannotator. Do not write `~/.plannotator/config.json`. steer-chat is out of v1 — do not add it.
+
+**Theme.** Follow the user's explicit choice, else OS `prefers-color-scheme`. Always include a light/dark toggle. Dark OS maps to Cthulhu (`dark`), not Abyss (`darker`). Modes: `light` (Dusk), `light-alt` (sheet), `dark` (Cthulhu), `darker` (Abyss). light-alt is an extra light, never the OS default.
 
 **Explicitly forbidden:**
 
@@ -66,17 +66,18 @@ For prose accents, see "Prose Page Elements" in `./references/css-patterns.md`. 
 - Gradient mesh (pink/purple/cyan blobs) — too generic
 - Any combination of Inter font + violet/indigo accents + gradient text
 
-Vary the choice each time. If the last diagram was dark and technical, make the next one light and editorial. The swap test: if you replaced your styling with a generic dark theme and nobody would notice the difference, you haven't designed anything.
+The swap test: if you replaced your styling with a generic dark theme and nobody would notice the difference, you haven't used the DESIGN.md tokens.
 
 ### 2. Structure
 
 **Read the reference material** before generating. Don't memorize it — read it each time to absorb the patterns.
 
-- For text-heavy architecture overviews (card content matters more than topology): read `./templates/architecture.html`
-- For flowcharts, sequence diagrams, ER, state machines, mind maps, class diagrams, C4: read `./templates/mermaid-flowchart.html`
-- For data tables, comparisons, audits, feature matrices: read `./templates/data-table.html`
+- Always read the resolved `DESIGN.md` (project, then `~/.agents/DESIGN.md`, then `plugins/Muse/DESIGN.md`) and apply its tokens
+- For text-heavy architecture overviews (card content matters more than topology): read `./templates/architecture.html` as a layout skeleton
+- For flowcharts, sequence diagrams, ER, state machines, mind maps, class diagrams, C4: read `./templates/mermaid-flowchart.html` as a layout skeleton
+- For data tables, comparisons, audits, feature matrices: read `./templates/data-table.html` as a layout skeleton
 - For slide deck presentations (when `--slides` flag is present or `/generate-slides` is invoked): read `./templates/slide-deck.html` and `./references/slide-patterns.md`
-- For prose-heavy publishable pages (READMEs, articles, blog posts, essays): read the "Prose Page Elements" section in `./references/css-patterns.md` and "Typography by Content Voice" in `./references/libraries.md`
+- For prose-heavy publishable pages (READMEs, articles, blog posts, essays): read the "Prose Page Elements" section in `./references/css-patterns.md`
 
 **For interactive plans and recaps**, read `./references/interactive-plans.md`, `./references/mdx-components.md`, `./references/mdx-blocks.md`, and `./references/review-state.md`. These artifacts live under `.agents/visual-plans/<slug>/` or `.agents/visual-recaps/<slug>/`, use `plan.mdx` as the source of truth, render to reviewable HTML, and persist approval state to local JSON plus `agent-handoff.*`.
 **For CSS/layout patterns and SVG connectors**, read `./references/css-patterns.md`.
@@ -101,7 +102,7 @@ Vary the choice each time. If the last diagram was dark and technical, make the 
 | Timeline                        | CSS (central line + cards)   | Simple linear layout doesn't need a layout engine                               |
 | Dashboard                       | CSS Grid + Chart.js          | Card grid with embedded charts                                                  |
 
-**Mermaid theming:** Always use `theme: 'base'` with custom `themeVariables` so colors match your page palette. Use `layout: 'elk'` for complex graphs (requires the `@mermaid-js/layout-elk` package — see `./references/libraries.md` for the CDN import). Override Mermaid's SVG classes with CSS for pixel-perfect control. See `./references/libraries.md` for full theming guide.
+**Mermaid theming:** Always use `theme: 'base'` with hex `themeVariables` from the active DESIGN.md `mermaid-*` tokens. Mermaid rejects `oklch()`. Use `layout: 'elk'` for complex graphs (requires the `@mermaid-js/layout-elk` package — see `./references/libraries.md` for the CDN import). Override Mermaid's SVG classes with CSS for pixel-perfect control. See `./references/libraries.md` for full theming guide.
 
 **Mermaid containers:** Always center Mermaid diagrams with `display: flex; justify-content: center;`. Add zoom controls (+/−/reset/expand) to every `.mermaid-wrap` container. Include the click-to-expand JavaScript so clicking the diagram (or the ⛶ button) opens it full-size in a new tab.
 
@@ -115,58 +116,38 @@ Vary the choice each time. If the last diagram was dark and technical, make the 
 
 **Mermaid CSS class collision constraint:** Never define `.node` as a page-level CSS class. Mermaid.js uses `.node` internally on SVG `<g>` elements with `transform: translate(x, y)` for positioning. Page-level `.node` styles (hover transforms, box-shadows) leak into diagrams and break layout. Use the namespaced `.ve-card` class for card components instead. The only safe way to style Mermaid's `.node` is scoped under `.mermaid` (e.g., `.mermaid .node rect`).
 
-**AI-generated illustrations (optional).** If [surf-cli](https://github.com/edheltzel/surf-cli) is available, you can generate images via Gemini and embed them in the page for creative, illustrative, explanatory, educational, or decorative purposes. Check availability with `which surf`. If available:
+**AI-generated illustrations (optional).** If impeccable is available, generate images that match the active DESIGN.md mode and embed them in the page. If image gen is missing, skip without erroring — the page stands on type and CSS. Do not use surf-cli.
 
-```bash
-# Generate to a temp file (use --aspect-ratio for control)
-surf gemini "descriptive prompt" --generate-image /tmp/ve-img.png --aspect-ratio 16:9
-
-# Base64 encode for self-containment (macOS)
-IMG=$(base64 -i /tmp/ve-img.png)
-# Linux: IMG=$(base64 -w 0 /tmp/ve-img.png)
-
-# Embed in HTML and clean up
-# <img src="data:image/png;base64,${IMG}" alt="descriptive alt text">
-rm /tmp/ve-img.png
-```
-
-See `./references/css-patterns.md` for image container styles (hero banners, inline illustrations, captions).
+Hero 16:9, inline 1:1. See `./references/css-patterns.md` for image container styles (hero banners, inline illustrations, captions).
 
 **When to use:** Hero banners that establish the page's visual tone. Conceptual illustrations for abstract systems that Mermaid can't express (physical infrastructure, user journeys, mental models). Educational diagrams that benefit from artistic or photorealistic rendering. Decorative accents that reinforce the aesthetic.
 
-**When to skip:** Anything Mermaid or CSS handles well. Generic decoration that doesn't convey meaning. Data-heavy pages where images would distract. Always degrade gracefully — if surf isn't available, skip images without erroring. The page should stand on its own with CSS and typography alone.
+**When to skip:** Anything Mermaid or CSS handles well. Generic decoration that doesn't convey meaning. Data-heavy pages where images would distract.
 
-**Prompt craft:** Match the image to the page's palette and aesthetic direction. Specify the style (3D render, technical illustration, watercolor, isometric, flat vector, etc.) and mention dominant colors from your CSS variables. Use `--aspect-ratio 16:9` for hero banners, `--aspect-ratio 1:1` for inline illustrations. Keep prompts specific — "isometric illustration of a message queue with cyan nodes on dark navy background" beats "a diagram of a queue."
+**Prompt craft:** Match the image to the active DESIGN.md palette and mode. Specify the style and mention dominant hex values from the resolved tokens.
 
 ### 3. Style
 
 Apply these principles to every diagram:
 
-**Typography is the diagram.** Pick a distinctive font pairing from the list in `./references/libraries.md`. Every page should use a different pairing from recent generations.
+**Typography is the diagram.** Use Space Grotesk for headlines (`headline` 600, `headline-md` 500) and Barlow Condensed for body, labels, nav, and UI chrome. Same pairing in every mode. Tokens live in the resolved DESIGN.md — do not rotate pairings from `./references/libraries.md`.
 
-**Forbidden as `--font-body`:** Inter, Roboto, Arial, Helvetica, system-ui alone. These are AI slop signals.
+**Forbidden as `--font-body`:** Inter, Roboto, Arial, Helvetica, system-ui alone, Tanker, Bricolage Grotesque, Fragment Mono.
 
-**Good pairings (use these):**
+Load self-hosted OFL woff2 when the interactive runtime embeds fonts. For generated HTML, Google Fonts is optional; keep system fallbacks in the stack so the CDN is not a hard render dependency:
 
-- DM Sans + Fira Code (technical, precise)
-- Instrument Serif + JetBrains Mono (editorial, refined)
-- IBM Plex Sans + IBM Plex Mono (reliable, readable)
-- Bricolage Grotesque + Fragment Mono (bold, characterful)
-- Plus Jakarta Sans + Azeret Mono (rounded, approachable)
+```css
+:root {
+  --font-headline: "Space Grotesk", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-body: "Barlow Condensed", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+}
+```
 
-Load via `<link>` in `<head>`. Include a system font fallback in the `font-family` stack for offline resilience.
+**Color tells a story.** Map CSS custom properties from the resolved DESIGN.md hex tokens. Define at minimum: `--bg`, `--surface`, `--border`, `--text`, `--text-dim`, `--primary`, `--accent`, `--ok`, `--warn`, `--danger`. Support the documented modes. YAML hex is normative. Mermaid `themeVariables` must use the `mermaid-*` hex twins — Mermaid rejects `oklch()`.
 
-**Color tells a story.** Use CSS custom properties for the full palette. Define at minimum: `--bg`, `--surface`, `--border`, `--text`, `--text-dim`, and 3-5 accent colors. Each accent should have a full and a dim variant (for backgrounds). Name variables semantically when possible (`--pipeline-step` not `--blue-3`). Support both themes.
+**Forbidden accent colors:** `#8b5cf6` `#7c3aed` `#a78bfa` (Tailwind indigo/violet that is not Eldritch purple), `#d946ef` (fuchsia), the cyan-magenta-pink Tailwind combination. Dusk green `#38ff9f` and yellow `#fff952` are decorative only — not body text. Terracotta/sage lottery palettes are out.
 
-**Forbidden accent colors:** `#8b5cf6` `#7c3aed` `#a78bfa` (indigo/violet), `#d946ef` (fuchsia), the cyan-magenta-pink combination. These are Tailwind defaults that signal zero design intent.
-
-**Good accent palettes (use these):**
-
-- Terracotta + sage (`#c2410c`, `#65a30d`) — warm, earthy
-- Teal + slate (`#0891b2`, `#0369a1`) — technical, precise
-- Rose + cranberry (`#be123c`, `#881337`) — editorial, refined
-- Amber + emerald (`#d97706`, `#059669`) — data-focused
-- Deep blue + gold (`#1e3a5f`, `#d4a73a`) — premium, sophisticated
+**Use the DESIGN.md palettes:** light/Dusk, light-alt, dark/Cthulhu, darker/Abyss. light-alt peach is a wash and card tint, not body text.
 
 Put your primary aesthetic in `:root` and the alternate in the media query:
 
@@ -358,7 +339,7 @@ Use these sparingly within visual pages to highlight key points or provide breat
 
 An alternative output format for presenting content as a magazine-quality slide presentation instead of a scrollable page. **Opt-in only** — the agent generates slides when the user invokes `/generate-slides`, passes `--slides` to an existing prompt (e.g., `/diff-review --slides`), or explicitly asks for a slide deck. Never auto-select slide format.
 
-**Before generating slides**, read `./references/slide-patterns.md` (engine CSS, slide types, transitions, nav chrome, presets) and `./templates/slide-deck.html` (reference template showing all 10 types). Also read `./references/css-patterns.md` for shared patterns and `./references/libraries.md` for Mermaid/Chart.js theming.
+**Before generating slides**, read the resolved `DESIGN.md`, then `./references/slide-patterns.md` (engine CSS, slide types, transitions, nav chrome) and `./templates/slide-deck.html` (reference template showing all 10 types). Also read `./references/css-patterns.md` for shared patterns and `./references/libraries.md` for Mermaid/Chart.js theming. Slide palettes and type come from DESIGN.md — there are no baked slide presets.
 
 **Slides are not pages reformatted.** They're a different medium. Each slide is exactly one viewport tall (100dvh) with no scrolling. Typography is 2–3× larger. Compositions are bolder. The agent composes a narrative arc (impact → context → deep dive → resolution) rather than mechanically paginating the source.
 
@@ -366,11 +347,11 @@ An alternative output format for presenting content as a magazine-quality slide 
 
 **Slide types (10):** Title, Section Divider, Content, Split, Diagram, Dashboard, Table, Code, Quote, Full-Bleed. Each has a defined layout in `slide-patterns.md`. Content that exceeds a slide's density limit splits across multiple slides — never scrolls within a slide.
 
-**Visual richness:** Check `which surf` at the start. If surf-cli is available, generate 2–4 images (title slide background, full-bleed background, optional content illustrations) before writing HTML — see the Proactive Imagery section in `slide-patterns.md` for the workflow. Also use SVG decorative accents, per-slide background gradients, inline sparklines, and small Mermaid diagrams. Visual-first, text-second.
+**Visual richness:** Generate 2–4 images through impeccable when available (title slide background, full-bleed background, optional content illustrations) before writing HTML — see the Proactive Imagery section in `slide-patterns.md`. If image gen is missing, skip. Also use SVG decorative accents, per-slide background treatments from DESIGN.md tokens, inline sparklines, and small Mermaid diagrams. Visual-first, text-second.
 
 **Compositional variety:** Consecutive slides must vary spatial approach — centered, left-heavy, right-heavy, split, edge-aligned, full-bleed. Three centered slides in a row means push one off-axis.
 
-**Curated presets:** Four slide-specific presets as starting points (Midnight Editorial, Warm Signal, Terminal Mono, Swiss Clean) plus the existing 8 aesthetic directions adapted for slides. Pick one and commit. See `slide-patterns.md` for preset CSS values.
+**One visual world:** Consume the resolved DESIGN.md tokens on every slide. Do not pick Midnight Editorial, Warm Signal, Terminal Mono, Swiss Clean, or any other baked preset.
 
 **`--slides` flag on existing prompts:** When a user passes `--slides` to `/diff-review`, `/plan-review`, `/project-recap`, or other prompts, the agent gathers data using the prompt's normal data-gathering instructions, then presents the content as a slide deck instead of a scrollable page. The slide version tells the same story with different structure and pacing — but the same breadth of coverage. Don't use the slide format as an excuse to summarize or skip sections that the scrollable version would have included.
 
@@ -408,7 +389,7 @@ Share visual explainer pages instantly via the Vercel CLI. Each share creates it
 bash ~/.pi/agent/skills/Muse/scripts/share.sh <html-file>
 ```
 
-If the skill lives somewhere else, use that install path instead, such as `~/.codex/skills/Muse/skills/muse/scripts/share.sh`, or `./plugins/Muse/skills/muse/scripts/share.sh` from a repository checkout.
+If the skill lives somewhere else, use that install path instead, such as `~/.codex/skills/Muse/skills/do-muse/scripts/share.sh`, or `./plugins/Muse/skills/do-muse/scripts/share.sh` from a repository checkout.
 
 **Example:**
 
@@ -446,7 +427,7 @@ See `./commands/share-page.md` for the `/share-page` command template.
 Before delivering, verify:
 
 - **The squint test**: Blur your eyes. Can you still perceive hierarchy? Are sections visually distinct?
-- **The swap test**: Would replacing your fonts and colors with a generic dark theme make this indistinguishable from a template? If yes, push the aesthetic further.
+- **The swap test**: Would replacing your fonts and colors with a generic dark theme make this indistinguishable from a template? If yes, you have not applied the resolved DESIGN.md tokens.
 - **Both themes**: Toggle your OS between light and dark mode. Both should look intentional, not broken.
 - **Information completeness**: Does the diagram actually convey what the user asked for? Pretty but incomplete is a failure.
 - **No overflow**: Resize the browser to different widths. No content should clip or escape its container. Every grid and flex child needs `min-width: 0`. Side-by-side panels need `overflow-wrap: break-word`. Never use `display: flex` on `<li>` for marker characters — it creates anonymous flex items that can't shrink, causing lines with many inline `<code>` badges to overflow. Use absolute positioning for markers instead. See the Overflow Protection section in `./references/css-patterns.md`.
@@ -465,7 +446,7 @@ These patterns are explicitly forbidden. They signal "AI-generated template" and
 - Roboto, Arial, Helvetica — generic system fallbacks promoted to primary
 - system-ui, sans-serif alone — no character, no intent
 
-**Required:** Pick from the font pairings in `./references/libraries.md`. Every generation should use a different pairing from the last.
+**Required:** Space Grotesk headlines and Barlow Condensed body from the resolved DESIGN.md. Do not rotate pairings.
 
 ### Color Palette
 
@@ -481,7 +462,7 @@ These patterns are explicitly forbidden. They signal "AI-generated template" and
 - Animated glowing box-shadows on cards (`box-shadow: 0 0 20px var(--glow); animation: glow 2s...`)
 - Multiple overlapping radial glows in accent colors creating a "neon haze"
 
-**Required:** Build palettes from the reference templates (terracotta/sage, teal/cyan, rose/cranberry, slate/blue) or derive from real IDE themes (Dracula, Nord, Solarized, Gruvbox, Catppuccin). Accents should feel intentional, not default.
+**Required:** Consume the resolved DESIGN.md palettes (Dusk, light-alt, Cthulhu, Abyss). Accents should be Eldritch hex, not Tailwind defaults.
 
 ### Section Headers
 
@@ -512,7 +493,7 @@ These patterns are explicitly forbidden. They signal "AI-generated template" and
 - "Neon Dashboard" as an aesthetic choice — it always produces generic results
 - Gradient meshes with pink/purple/cyan blobs in the background
 
-**Required:** Code blocks use a simple header with filename or language label. KPI cards vary by importance — hero numbers for the primary metric, subdued treatment for supporting metrics. Pick aesthetics with natural constraints: Blueprint (must feel technical/precise), Editorial (must have generous whitespace and serif typography), Paper/ink (must feel warm and informal).
+**Required:** Code blocks use a simple header with filename or language label. KPI cards vary by importance — hero numbers for the primary metric, subdued treatment for supporting metrics. One DESIGN.md world across every page.
 
 ### The Slop Test
 
@@ -526,4 +507,4 @@ Before delivering, apply this test: **Would a developer looking at this page imm
 6. Perfectly uniform card grid with no visual hierarchy
 7. Three-dot code block chrome
 
-If two or more of these are present, the page is slop. Regenerate with a different aesthetic direction — Editorial, Blueprint, Paper/ink, or a specific IDE theme. These constrained aesthetics are harder to mess up because they have specific visual requirements that prevent defaulting to generic patterns.
+If two or more of these are present, the page is slop. Regenerate from the resolved DESIGN.md tokens.

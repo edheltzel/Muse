@@ -1,0 +1,5 @@
+interface:
+  display_name: "do-muse"
+  short_description: "Turn technical work into visual HTML explainers"
+  brand_color: "#8a69f7"
+  default_prompt: "Use do-muse to turn this technical material into a polished visual explainer."

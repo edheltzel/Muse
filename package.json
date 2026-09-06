@@ -1,6 +1,6 @@
 {
   "name": "muse",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "Agent skill that generates beautiful HTML pages for diagrams, diff reviews, plan reviews, slide decks, and data tables",
   "license": "MIT",
   "homepage": "https://github.com/edheltzel/Muse#readme",
@@ -56,12 +56,12 @@
     "test": "bun test",
     "build": "vp build --config vite.config.ts",
     "check": "vp run test && vp run component-explorer:test-browser && vp run visual-plan:build",
-    "visual-plan:render": "bun plugins/Muse/skills/muse/tools/interactive-plan/render.ts",
-    "visual-plan:serve": "bun plugins/Muse/skills/muse/tools/interactive-plan/server.ts",
-    "component-explorer:render": "bun plugins/Muse/skills/muse/tools/interactive-plan/render.ts tests/fixtures/interactive-plans/component-library-showcase",
-    "component-explorer:serve": "bun plugins/Muse/skills/muse/tools/interactive-plan/server.ts tests/fixtures/interactive-plans/component-library-showcase 7375",
+    "visual-plan:render": "bun plugins/Muse/skills/do-muse/tools/interactive-plan/render.ts",
+    "visual-plan:serve": "bun plugins/Muse/skills/do-muse/tools/interactive-plan/server.ts",
+    "component-explorer:render": "bun plugins/Muse/skills/do-muse/tools/interactive-plan/render.ts tests/fixtures/interactive-plans/component-library-showcase",
+    "component-explorer:serve": "bun plugins/Muse/skills/do-muse/tools/interactive-plan/server.ts tests/fixtures/interactive-plans/component-library-showcase 7375",
     "component-explorer:test-browser": "bun tests/component-explorer.browser.ts",
-    "visual-plan:runtime:build": "bun build plugins/Muse/skills/muse/tools/interactive-plan/runtime-entry.ts --target bun --format esm --minify --outfile plugins/Muse/skills/muse/tools/interactive-plan/runtime.mjs",
+    "visual-plan:runtime:build": "bun build plugins/Muse/skills/do-muse/tools/interactive-plan/runtime-entry.ts --target bun --format esm --minify --outfile plugins/Muse/skills/do-muse/tools/interactive-plan/runtime.mjs",
     "visual-plan:build": "vp build --config vite.config.ts && vp run visual-plan:runtime:build"
   },
   "devDependencies": {

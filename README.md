@@ -67,10 +67,10 @@ muse turns that same information into a web page:
 This section gives you one working path for each supported agent surface. After installing, start a fresh agent session and use the same request everywhere:
 
 ```text
-Use muse to <task>.
+Use do-muse to <task>.
 ```
 
-The unavoidable host-native explicit fallbacks and their reasons live in one place: [Invoking muse](plugins/Muse/skills/muse/references/invocation.md).
+The unavoidable host-native explicit fallbacks and their reasons live in one place: [Invoking do-muse](plugins/Muse/skills/do-muse/references/invocation.md).
 
 ### Claude Code
 
@@ -162,14 +162,14 @@ codex plugin add muse@muse-marketplace
 codex plugin marketplace list
 ```
 
-Codex installs the plugin into its local cache; the same marketplace is also available in the ChatGPT desktop app's plugin directory. Start a new Codex task and use the shared request above. Codex can also activate `muse` implicitly from the skill description.
+Codex installs the plugin into its local cache; the same marketplace is also available in the ChatGPT desktop app's plugin directory. Start a new Codex task and use the shared request above. Codex can also activate `do-muse` implicitly from the skill description.
 
 For a direct Codex CLI user-skill install without the plugin marketplace:
 
 ```bash
 git clone --depth 1 https://github.com/edheltzel/Muse.git /tmp/Muse
 mkdir -p ~/.agents/skills
-cp -R /tmp/Muse/plugins/Muse/skills/muse ~/.agents/skills/muse
+cp -R /tmp/Muse/plugins/Muse/skills/do-muse ~/.agents/skills/do-muse
 rm -rf /tmp/Muse
 ```
 
@@ -194,7 +194,7 @@ Codex scans `~/.agents/skills` for user skills. The older `~/.codex/skills` and 
 | `/fact-check`           | A code-grounded accuracy review for a document                             |
 | `/share-page`           | A Vercel production URL for an HTML explainer page                         |
 
-You rarely need the slash commands. On native-skill surfaces (Claude Code, Pi, OMP, and Codex) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and `muse` picks the right treatment on its own. The slash commands are explicit shortcuts on harnesses that support command templates.
+You rarely need the slash commands. On native-skill surfaces (Claude Code, Pi, OMP, and Codex) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and `do-muse` picks the right treatment on its own. The slash commands are explicit shortcuts on harnesses that support command templates.
 
 The skill also activates proactively when an agent is about to dump a complex table in the terminal: 4+ rows or 3+ columns should become a browser page.
 
@@ -271,9 +271,10 @@ Use `vp add`, `vp remove`, and `vp install` for dependency management. Do not us
 ```text
 .claude-plugin/                         marketplace metadata
 plugins/Muse/
+├── DESIGN.md                           shipped default visual tokens
 ├── .claude-plugin/                     plugin manifest
 ├── commands/                           command prompts
-└── skills/muse/
+└── skills/do-muse/
     ├── SKILL.md                        skill instructions
     ├── references/                     design, Mermaid, MDX, state docs
     ├── templates/                      HTML templates

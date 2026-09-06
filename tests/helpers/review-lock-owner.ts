@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { acquirePlanLock } from "../../plugins/Muse/skills/muse/tools/interactive-plan/plan-lock";
+import { acquirePlanLock } from "../../plugins/Muse/skills/do-muse/tools/interactive-plan/plan-lock";
 
 const planDir = process.argv[2];
 if (!planDir) throw new Error("plan directory is required");

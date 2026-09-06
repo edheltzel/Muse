@@ -1,10 +1,10 @@
 # Slide Deck Patterns
 
-CSS patterns, JS engine, slide type layouts, transitions, navigation chrome, and curated presets for self-contained HTML slide presentations. All slides are viewport-fit (100dvh), single-file, same philosophy as scrollable pages.
+CSS patterns, JS engine, slide type layouts, transitions, and navigation chrome for self-contained HTML slide presentations. All slides are viewport-fit (100dvh), single-file, same philosophy as scrollable pages. Visual tokens come from the resolved DESIGN.md — there are no baked slide presets.
 
 **When to use slides:** Only when the user explicitly requests them — `/generate-slides`, `--slides` flag on an existing prompt, or natural language like "as a slide deck." Never auto-select slide format.
 
-**Before generating**, also read `./css-patterns.md` for shared patterns (Mermaid zoom controls, overflow protection, depth tiers, status badges) and `./libraries.md` for Mermaid theming, Chart.js, and font pairings. Those patterns apply to slides too — this file adds slide-specific patterns on top.
+**Before generating**, read the resolved DESIGN.md, then `./css-patterns.md` for shared patterns (Mermaid zoom controls, overflow protection, depth tiers, status badges) and `./libraries.md` for Mermaid theming and Chart.js. Those patterns apply to slides too — this file adds slide-specific patterns on top.
 
 ## Planning a Deck from a Source Document
 
@@ -21,7 +21,7 @@ When converting a plan, spec, review, or any structured document into slides, fo
 
 **Step 3 — Choose layouts.** For each planned slide, pick a slide type and spatial composition. Vary across the sequence (see Compositional Variety below). This is where narrative pacing happens — alternate dense slides with sparse ones.
 
-**Step 4 — Plan images.** Run `which surf`. If surf-cli is available, plan 2–4 generated images for the deck. At minimum, target the **title slide** (16:9 background that sets the visual tone) and **one full-bleed slide** (immersive background for a key moment). Content slides with conceptual topics also benefit from a 1:1 illustration in the aside area. Generate these images early — before writing HTML — so you can embed them as base64 data URIs. See the Proactive Imagery section below for the full workflow. If surf isn't available, degrade to CSS gradients and SVG decorations — note the fallback in a comment but don't error.
+**Step 4 — Plan images.** If impeccable is available, plan 2–4 generated images for the deck. At minimum, target the **title slide** (16:9 background that sets the visual tone) and **one full-bleed slide** (immersive background for a key moment). Content slides with conceptual topics also benefit from a 1:1 illustration in the aside area. Generate these images early — before writing HTML — so you can embed them as base64 data URIs. Match the active DESIGN.md mode. If image gen is missing, skip; the deck stands on type and CSS.
 
 **Step 5 — Verify before writing HTML.** Scan the inventory from Step 1. Is anything unmapped? Would a reader of the source document notice something missing from the deck? If yes, add slides. A source document with 7 sections typically produces 18–25 slides, not 10–13.
 
@@ -467,7 +467,7 @@ Each type has a defined HTML structure and CSS layout. The agent can adapt color
 
 ### Title Slide
 
-Full-viewport hero. Background treatment via gradient, texture, or surf-generated image. 80–120px display type.
+Full-viewport hero. Background treatment via gradient, texture, or impeccable-generated image. 80–120px display type.
 
 ```html
 <section class="slide slide--title">
@@ -1000,7 +1000,7 @@ KPI cards at presentation scale (48–64px hero numbers). Mini-charts via Chart.
 
 ### Full-Bleed Slide
 
-Background image (surf-generated or CSS gradient) dominates the viewport. Text overlay with gradient scrim ensuring contrast. Zero slide padding.
+Background image (impeccable-generated or CSS gradient) dominates the viewport. Text overlay with gradient scrim ensuring contrast. Zero slide padding.
 
 ```html
 <section class="slide slide--bleed">
@@ -1120,42 +1120,21 @@ Vary gradient direction and accent glow position across slides to create visual 
 
 Slides should reach for visuals before defaulting to text alone. If a slide could be more compelling with an image, chart, or diagram, add one.
 
-**surf-cli integration:** Check `which surf` at the start of every slide deck generation. If available, **generate 2–4 images minimum** for any deck over 10 slides. This is not optional when surf is available — a deck with AI-generated imagery is dramatically more compelling than one with only CSS gradients. Target these slides in priority order:
+**impeccable integration:** If impeccable is available, **generate 2–4 images** for any deck over 10 slides. Target these slides in priority order:
 
-1. **Title slide** (always): background image that sets the deck's visual tone. Match the topic and palette. Use `--aspect-ratio 16:9`. Prompt example: "abstract dark geometric pattern with green accent lines, technical and minimal" for Terminal Mono preset.
-2. **Full-bleed slide** (always if deck has one): immersive background for the deck's visual anchor moment. Style should match the preset — photo-realistic for Midnight Editorial, abstract/geometric for Swiss Clean, circuit-board or terminal aesthetic for Terminal Mono.
-3. **Content slides with conceptual topics** (1–2 if the deck has room): illustration in the `.slide__aside` area for slides about abstract concepts. Use `--aspect-ratio 1:1`.
+1. **Title slide** (always): background image that sets the deck's visual tone. Match the topic and the active DESIGN.md palette. Hero 16:9.
+2. **Full-bleed slide** (always if deck has one): immersive background for the deck's visual anchor moment, in the same Eldritch or light-alt world.
+3. **Content slides with conceptual topics** (1–2 if the deck has room): illustration in the `.slide__aside` area for slides about abstract concepts. Inline 1:1.
 
-**Generate images before writing HTML** so they're ready to embed. The workflow:
+**Generate images before writing HTML** so they're ready to embed. If image gen is missing, skip without erroring.
 
-```bash
-# Check availability
-which surf
+**Prompt craft for slides:** Be specific about style, dominant DESIGN.md hex values, and mood. Do not invent a second palette.
 
-# Generate (one per target slide)
-surf gemini "descriptive prompt matching deck palette" --generate-image /tmp/ve-slide-title.png --aspect-ratio 16:9
+**When image gen fails or isn't available:** Degrade gracefully to CSS gradients and SVG decorations from DESIGN.md tokens. The deck should stand on its own visually without generated images — they enhance, they don't carry.
 
-# Base64 encode for self-containment (macOS)
-TITLE_IMG=$(base64 -i /tmp/ve-slide-title.png)
-# Linux: TITLE_IMG=$(base64 -w 0 /tmp/ve-slide-title.png)
+**Inline data visualizations:** Proactively add SVG sparklines next to numbers, mini-charts on dashboard slides, and small Mermaid diagrams on split slides even when not explicitly requested. A number with a sparkline next to it tells a better story than a number alone. Theme Chart.js from CSS variables.
 
-# Embed in the slide
-# <div class="slide__bg" style="background-image:url('data:image/png;base64,${TITLE_IMG}')"></div>
-
-# Clean up
-rm /tmp/ve-slide-title.png
-```
-
-**Prompt craft for slides:** Be specific about style, dominant colors, and mood. Pull colors from the preset's CSS variables. Examples:
-- Terminal Mono: "dark abstract circuit board pattern, green (#50fa7b) traces on near-black (#0a0e14), minimal, technical"
-- Midnight Editorial: "deep navy abstract composition, warm gold accent light, cinematic depth of field, premium editorial feel"
-- Warm Signal: "warm cream textured paper with terracotta geometric accents, confident modern design"
-
-**When surf fails or isn't available:** Degrade gracefully to CSS gradients and SVG decorations. Use the `.slide__bg--gradient` pattern with bold `linear-gradient` or `radial-gradient` backgrounds. The deck should stand on its own visually without generated images — they enhance, they don't carry. Note the fallback in an HTML comment (`<!-- surf unavailable, using CSS gradient fallback -->`) so future edits know to retry.
-
-**Inline data visualizations:** Proactively add SVG sparklines next to numbers, mini-charts on dashboard slides, and small Mermaid diagrams on split slides even when not explicitly requested. A number with a sparkline next to it tells a better story than a number alone.
-
-**When to skip images:** If surf isn't available, degrade gracefully — use CSS gradients and SVG decorations instead. Never error on missing surf. Pure structural or data-heavy decks (code reviews, table comparisons) may not need generated images.
+**When to skip images:** Pure structural or data-heavy decks (code reviews, table comparisons) may not need generated images. Never use surf-cli.
 
 ## Compositional Variety
 
@@ -1237,170 +1216,6 @@ Height-based scaling is more critical for slides than width. Each breakpoint pro
 }
 ```
 
-## Curated Presets
+## Design tokens
 
-Starting points the agent can riff on. Each defines a font pairing, palette, and background treatment. The agent adapts these to the content — different decks with the same preset should still feel distinct.
-
-### Midnight Editorial
-
-Deep navy, serif display, warm gold accents. Cinematic, premium. Dark-first.
-
-```css
-:root {
-  --font-body: 'Instrument Serif', Georgia, serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
-  --bg: #0f1729;
-  --surface: #162040;
-  --surface2: #1d2b52;
-  --surface-elevated: #243362;
-  --border: rgba(200, 180, 140, 0.08);
-  --border-bright: rgba(200, 180, 140, 0.16);
-  --text: #e8e4d8;
-  --text-dim: #9a9484;
-  --accent: #d4a73a;
-  --accent-dim: rgba(212, 167, 58, 0.1);
-  --code-bg: #0a0f1e;
-  --code-text: #d4d0c4;
-}
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #faf8f2;
-    --surface: #ffffff;
-    --surface2: #f5f0e6;
-    --surface-elevated: #fffdf5;
-    --border: rgba(30, 30, 50, 0.08);
-    --border-bright: rgba(30, 30, 50, 0.16);
-    --text: #1a1814;
-    --text-dim: #7a7468;
-    --accent: #b8860b;
-    --accent-dim: rgba(184, 134, 11, 0.08);
-    --code-bg: #2a2520;
-    --code-text: #e8e4d8;
-  }
-}
-```
-
-Background: radial gold glow at top center. Decorative corner marks in gold. Title slides use dramatic serif at max scale.
-
-### Warm Signal
-
-Cream paper, bold sans, terracotta/coral accents. Confident and modern. Light-first.
-
-```css
-:root {
-  --font-body: 'Plus Jakarta Sans', system-ui, sans-serif;
-  --font-mono: 'Azeret Mono', 'SF Mono', monospace;
-  --bg: #faf6f0;
-  --surface: #ffffff;
-  --surface2: #f5ece0;
-  --surface-elevated: #fffdf5;
-  --border: rgba(60, 40, 20, 0.08);
-  --border-bright: rgba(60, 40, 20, 0.16);
-  --text: #2c2a25;
-  --text-dim: #7c756a;
-  --accent: #c2410c;
-  --accent-dim: rgba(194, 65, 12, 0.08);
-  --code-bg: #2c2520;
-  --code-text: #f5ece0;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1c1916;
-    --surface: #262220;
-    --surface2: #302b28;
-    --surface-elevated: #3a3430;
-    --border: rgba(200, 180, 160, 0.08);
-    --border-bright: rgba(200, 180, 160, 0.16);
-    --text: #f0e8dc;
-    --text-dim: #a09888;
-    --accent: #e85d2a;
-    --accent-dim: rgba(232, 93, 42, 0.1);
-    --code-bg: #141210;
-    --code-text: #f0e8dc;
-  }
-}
-```
-
-Background: warm radial glow at bottom left. Terracotta accent borders on cards. Section divider numbers in ultra-light coral.
-
-### Terminal Mono
-
-Dark, monospace everything, green/cyan accents, faint grid. Developer-native. Dark-first.
-
-```css
-:root {
-  --font-body: 'Geist Mono', 'SF Mono', Consolas, monospace;
-  --font-mono: 'Geist Mono', 'SF Mono', Consolas, monospace;
-  --bg: #0a0e14;
-  --surface: #12161e;
-  --surface2: #1a1f2a;
-  --surface-elevated: #222836;
-  --border: rgba(80, 250, 123, 0.06);
-  --border-bright: rgba(80, 250, 123, 0.12);
-  --text: #c8d6e5;
-  --text-dim: #5a6a7a;
-  --accent: #50fa7b;
-  --accent-dim: rgba(80, 250, 123, 0.08);
-  --code-bg: #060a10;
-  --code-text: #c8d6e5;
-}
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f4f6f8;
-    --surface: #ffffff;
-    --surface2: #eaecf0;
-    --surface-elevated: #f8f9fa;
-    --border: rgba(0, 80, 40, 0.08);
-    --border-bright: rgba(0, 80, 40, 0.16);
-    --text: #1a2332;
-    --text-dim: #5a6a7a;
-    --accent: #0d7a3e;
-    --accent-dim: rgba(13, 122, 62, 0.08);
-    --code-bg: #1a2332;
-    --code-text: #c8d6e5;
-  }
-}
-```
-
-Background: faint dot grid. Everything in mono. Title slides use large weight-400 mono instead of bold display. Code slides feel native.
-
-### Swiss Clean
-
-White, geometric sans, single bold accent, visible grid. Minimal and precise. Light-first.
-
-```css
-:root {
-  --font-body: 'DM Sans', system-ui, sans-serif;
-  --font-mono: 'Fira Code', 'SF Mono', monospace;
-  --bg: #ffffff;
-  --surface: #f8f8f8;
-  --surface2: #f0f0f0;
-  --surface-elevated: #ffffff;
-  --border: rgba(0, 0, 0, 0.08);
-  --border-bright: rgba(0, 0, 0, 0.16);
-  --text: #111111;
-  --text-dim: #666666;
-  --accent: #0055ff;
-  --accent-dim: rgba(0, 85, 255, 0.06);
-  --code-bg: #18181b;
-  --code-text: #e4e4e7;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111111;
-    --surface: #1a1a1a;
-    --surface2: #222222;
-    --surface-elevated: #2a2a2a;
-    --border: rgba(255, 255, 255, 0.08);
-    --border-bright: rgba(255, 255, 255, 0.16);
-    --text: #f0f0f0;
-    --text-dim: #888888;
-    --accent: #3b82f6;
-    --accent-dim: rgba(59, 130, 246, 0.08);
-    --code-bg: #0a0a0a;
-    --code-text: #e4e4e7;
-  }
-}
-```
-
-Background: clean white or near-black, no gradients. Visible grid lines (the `--with-grid` pattern). Tight geometric layouts. Single accent color used sparingly for emphasis. Data-heavy and analytical content shines here.
+There are no baked slide presets. Read the resolved `DESIGN.md` (project cwd, then `~/.agents/DESIGN.md`, then `plugins/Muse/DESIGN.md`) and apply those colors and typefaces on every slide. Space Grotesk headlines, Barlow Condensed body. Eldritch Dusk / Cthulhu / Abyss plus light-alt. Tanker is out.

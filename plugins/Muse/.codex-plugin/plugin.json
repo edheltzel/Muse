@@ -1,6 +1,6 @@
 {
   "name": "muse",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "Generate beautiful HTML pages and interactive MDX visual plans and recaps",
   "author": {
     "name": "edheltzel",
@@ -20,8 +20,8 @@
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://github.com/edheltzel/Muse",
     "defaultPrompt": [
-      "Use muse to visualize this technical system.",
-      "Use muse to create a visual review of these changes."
+      "Use do-muse to visualize this technical system.",
+      "Use do-muse to create a visual review of these changes."
     ],
     "brandColor": "#B85C3C"
   }

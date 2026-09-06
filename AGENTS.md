@@ -34,7 +34,7 @@ Do not use `npm`, `npx`, `pnpm`, or `yarn` in this repo. Vite+ delegates to Bun 
 
 ## OMP plugin contract
 
-`plugins/Muse/` is also the OMP, Claude Code, and Codex plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/.codex-plugin/plugin.json`, `plugins/Muse/skills/muse/SKILL.md`, and `.claude-plugin/marketplace.json`. Machine and display identity must stay lowercase `muse` in every manifest and skill metadata surface; OMP silently drops catalog entries with uppercase machine names. The directory name `plugins/Muse` is a path, not the plugin name. Keep host-native explicit syntax confined to `plugins/Muse/skills/muse/references/invocation.md`; every other user-facing surface uses the cross-host request `Use muse to <task>`.
+`plugins/Muse/` is also the OMP, Claude Code, and Codex plugin root. Keep its `plugin.json` version in sync with root `package.json`, `plugins/Muse/.claude-plugin/plugin.json`, `plugins/Muse/.codex-plugin/plugin.json`, `plugins/Muse/skills/do-muse/SKILL.md`, and `.claude-plugin/marketplace.json`. Plugin machine and display identity must stay lowercase `muse` in every plugin/marketplace manifest; OMP silently drops catalog entries with uppercase machine names. The skill id is `do-muse`. The directory name `plugins/Muse` is a path, not the plugin name. Keep host-native explicit syntax confined to `plugins/Muse/skills/do-muse/references/invocation.md`; every other user-facing surface uses the cross-host request `Use do-muse to <task>`.
 
 Use OMP commands for OMP installs:
 
@@ -55,12 +55,13 @@ Do not document OMP installs with `pi install`; Pi and OMP have separate package
 ## Architecture map
 
 ```text
+plugins/Muse/DESIGN.md                         shipped default visual tokens
 plugins/Muse/commands/                         slash-command prompt templates
-plugins/Muse/skills/muse/SKILL.md              primary skill instructions
-plugins/Muse/skills/muse/references/invocation.md canonical cross-host request and native fallback syntax
-plugins/Muse/skills/muse/references/           design and authoring references
-plugins/Muse/skills/muse/templates/            HTML templates
-plugins/Muse/skills/muse/tools/interactive-plan/ renderer, server, state, handoff
+plugins/Muse/skills/do-muse/SKILL.md              primary skill instructions
+plugins/Muse/skills/do-muse/references/invocation.md canonical cross-host request and native fallback syntax
+plugins/Muse/skills/do-muse/references/           design and authoring references
+plugins/Muse/skills/do-muse/templates/            HTML templates
+plugins/Muse/skills/do-muse/tools/interactive-plan/ renderer, server, state, handoff
 tests/fixtures/interactive-plans/               reproducible MDX review fixtures
 ```
 
@@ -96,9 +97,9 @@ Core source files:
 
 When adding, removing, or materially changing an MDX component, update:
 
-- `plugins/Muse/skills/muse/tools/interactive-plan/shared.ts`
-- `plugins/Muse/skills/muse/tools/interactive-plan/components.ts`
-- `plugins/Muse/skills/muse/references/mdx-components.md`
+- `plugins/Muse/skills/do-muse/tools/interactive-plan/shared.ts`
+- `plugins/Muse/skills/do-muse/tools/interactive-plan/components.ts`
+- `plugins/Muse/skills/do-muse/references/mdx-components.md`
 - `tests/fixtures/interactive-plans/component-library-showcase/plan.mdx`
 - `tests/interactive-plan.test.ts`
 
@@ -106,26 +107,28 @@ The component-library fixture is the visual regression anchor. It should show ev
 
 ## Design rules
 
-Muse output should look deliberate, not generated from a default AI template.
+Muse output consumes the resolved `DESIGN.md`: project cwd, then `~/.agents/DESIGN.md`, then the shipped `plugins/Muse/DESIGN.md`. Do not auto-create `~/.agents/DESIGN.md` or copy it into user projects.
 
 Avoid:
 
 - React or Agent Native dependencies.
-- Violet/indigo gradient text.
+- Violet/indigo gradient text and Tailwind indigo that is not Eldritch purple.
 - Emoji section headers.
 - Neon cyan/magenta dashboards.
 - Generic identical card grids.
 - Decorative grid/stripe backgrounds unless the surface is a real canvas or blueprint.
 - Mermaid diagrams without zoom, pan, and expand controls.
+- Terracotta / Bricolage Grotesque / Fragment Mono / Tanker.
+- SKILL.md aesthetic lottery or baked slide presets.
 
 Prefer:
 
-- restrained palettes: terracotta, sage, teal, gold, slate,
-- distinctive but readable typography,
+- Eldritch palettes (Dusk, Cthulhu, Abyss) plus light-alt,
+- Space Grotesk headlines and Barlow Condensed body,
 - strong hierarchy and compact reference sections,
 - semantic HTML tables for comparison/data content,
 - vanilla browser APIs before dependencies,
-- light and dark themes that both feel intentional.
+- light and dark themes that both feel intentional (dark OS maps to Cthulhu).
 
 ## Mermaid notes
 
@@ -170,7 +173,7 @@ Before yielding after behavior or UI changes:
 
 Human docs live in `README.md`. Keep the README visual and outcome-first.
 
-Agent docs live here. Keep this file operational: commands, contracts, invariants, and verification only. Host-native invocation syntax lives only in `plugins/Muse/skills/muse/references/invocation.md`.
+Agent docs live here. Keep this file operational: commands, contracts, invariants, and verification only. Host-native invocation syntax lives only in `plugins/Muse/skills/do-muse/references/invocation.md`.
 
 ## DOX framework
 
@@ -187,8 +190,8 @@ lives in **[docs/dox.md](docs/dox.md)**. Read it before editing any file in this
 
 ### Child DOX Index
 
-- [`configs/openclaw/AGENTS.md`](configs/openclaw/AGENTS.md) owns OpenClaw's lightweight rules guidance and its use of the canonical `muse` skill and command templates.
-- [`configs/codex/AGENTS.md`](configs/codex/AGENTS.md) owns Codex installation, discovery, invocation, and browser constraints for `muse`.
+- [`configs/openclaw/AGENTS.md`](configs/openclaw/AGENTS.md) owns OpenClaw's lightweight rules guidance and its use of the canonical `do-muse` skill and command templates.
+- [`configs/codex/AGENTS.md`](configs/codex/AGENTS.md) owns Codex installation, discovery, invocation, and browser constraints for `do-muse`.
 - [`configs/pi/AGENTS.md`](configs/pi/AGENTS.md) owns Pi package installation, prompt invocation, legacy-copy compatibility, and optional sharing dependencies.
 
 Add another child contract when a folder becomes a durable boundary with local rules that do not belong in this repository-wide guide.

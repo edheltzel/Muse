@@ -5,7 +5,7 @@ import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { MDX_COMPONENT_NAMES } from "../plugins/Muse/skills/muse/tools/interactive-plan/shared.ts";
+import { MDX_COMPONENT_NAMES } from "../plugins/Muse/skills/do-muse/tools/interactive-plan/shared.ts";
 import {
   bounded,
   runProcess,
@@ -77,10 +77,10 @@ const expectedMermaidUrl = `https://cdn.jsdelivr.net/npm/mermaid@${expectedMerma
 const expectedMermaidSha256 = "74d7c46dabca328c2294733910a8aa1ed0c37451776e8d5295da38a2b758fb9b";
 const expectedMermaidSri = "sha384-T/0lMUdJpd2S1ZHtRiofG3htU3xPCrFVeAQ1UUE2TJwlEJSV5NUwn30kP28n238E";
 const expectedFontFaces = [
-  { family: "Bricolage Grotesque", weight: "500", sha256: "b62688707e0820a9cf2a98e9b0349fbb348fd17f76b70a05b53e7a668e3f406f" },
-  { family: "Bricolage Grotesque", weight: "600", sha256: "b34fc8c1ef0ac8798455ac2979eae4b4f90f0d327e3584d1032fa77a8a9a66ca" },
-  { family: "Bricolage Grotesque", weight: "700", sha256: "4c373ce3c1cca41c864eb3e27c059a59fc6310547ab9c9b6cd780d387ba24206" },
-  { family: "Fragment Mono", weight: "400", sha256: "44c4e39bff5e76652a24a872cbebabccbcfb20f62c4633b27c1f2745cba86b56" },
+  { family: "Space Grotesk", weight: "500", sha256: "1b1a8131d9edf975d9decee81e2f2bf504812f7a4f498e5500f28a613e22e64c" },
+  { family: "Space Grotesk", weight: "600", sha256: "685bbbf69fa616df1ef81847c85fc76be097ddfb3468ff2257be54511ab3130f" },
+  { family: "Barlow Condensed", weight: "400", sha256: "7fff1bb22e5773f0d1a55d3093068b6dac4539e8bb3ac23fb9f0a729df2c7bb4" },
+  { family: "Barlow Condensed", weight: "500", sha256: "460f141ec8f6c9a1516bfd2bd9fe71656246d7a9d04a0955faf53158d8970c4c" },
 ] as const;
 let agentBrowserExecutable = "";
 
@@ -110,7 +110,7 @@ async function evaluate<T>(expression: string): Promise<T> {
 }
 
 async function startServer(planDir: string): Promise<RunningServer> {
-  const serverScript = join(repoRoot, "plugins", "Muse", "skills", "muse", "tools", "interactive-plan", "server.ts");
+  const serverScript = join(repoRoot, "plugins", "Muse", "skills", "do-muse", "tools", "interactive-plan", "server.ts");
   return startServerProcess({
     command: [process.execPath, serverScript, planDir, "0"],
     label: "Muse fixture server",

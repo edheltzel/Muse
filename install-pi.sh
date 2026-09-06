@@ -53,4 +53,4 @@ if [ "$HAS_LEGACY" = true ]; then
   echo "Quarantined legacy manual copies at $BACKUP_DIR"
 fi
 
-echo "Done. Start a fresh Pi session and ask: Use muse to <task>."
+echo "Done. Start a fresh Pi session and ask: Use do-muse to <task>."

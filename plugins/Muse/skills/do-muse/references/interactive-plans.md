@@ -23,6 +23,6 @@ Use Bun for commands/tests/server. Use Vite/Vite Plus for browser review assets.
 
 1. Agent authors MDX with Muse components.
 2. Renderer validates component IDs and block schema.
-3. Local bridge serves `dist/index.html`.
+3. Local bridge serves `dist/index.html`. If `plannotator` is on PATH, use it for review instead of (or after) Muse serve. Never auto-install Plannotator. steer-chat is out of v1.
 4. Reviewer answers questions, checks checklist items, comments, then approves.
 5. Approval writes the agent handoff files for future implementation agents.

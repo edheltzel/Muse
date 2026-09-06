@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.4] - 2026-09-05
+
+### Changed
+- **Breaking:** renamed the live skill id from `muse` to `do-muse` to match PStack. Skill folder is `plugins/Muse/skills/do-muse`. Host fallbacks are `/skill:do-muse`, `/muse:do-muse`, and `$do-muse`. Plugin package name stays `muse`.
+- Landed the locked Muse-shipped `plugins/Muse/DESIGN.md` as the default visual world (Eldritch Dusk / Cthulhu / Abyss plus light-alt; Space Grotesk headlines, Barlow Condensed body). Resolution is project `DESIGN.md` → `~/.agents/DESIGN.md` → this shipped file. Muse does not auto-create `~/.agents/DESIGN.md` or copy it into user projects.
+- Kill the SKILL.md aesthetic lottery and baked slide presets. Templates and review chrome consume DESIGN.md tokens. Tanker, Bricolage Grotesque, and Fragment Mono are out.
+
+### Added
+- Product rules: use Plannotator for review when it is on PATH, otherwise Muse review; never auto-install Plannotator; steer-chat is out of v1.
+
 ## [0.9.3] - 2026-07-10
 
 ### Added

@@ -1,0 +1,28 @@
+{
+  "assets": [
+    {
+      "asset": "space-grotesk-latin-500-normal.woff2",
+      "package": "@fontsource/space-grotesk",
+      "version": "5.2.10",
+      "notice": "notices/fontsource-space-grotesk-5.2.10-LICENSE.txt"
+    },
+    {
+      "asset": "space-grotesk-latin-600-normal.woff2",
+      "package": "@fontsource/space-grotesk",
+      "version": "5.2.10",
+      "notice": "notices/fontsource-space-grotesk-5.2.10-LICENSE.txt"
+    },
+    {
+      "asset": "barlow-condensed-latin-400-normal.woff2",
+      "package": "@fontsource/barlow-condensed",
+      "version": "5.2.8",
+      "notice": "notices/fontsource-barlow-condensed-5.2.8-LICENSE.txt"
+    },
+    {
+      "asset": "barlow-condensed-latin-500-normal.woff2",
+      "package": "@fontsource/barlow-condensed",
+      "version": "5.2.8",
+      "notice": "notices/fontsource-barlow-condensed-5.2.8-LICENSE.txt"
+    }
+  ]
+}
