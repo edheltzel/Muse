@@ -93,6 +93,8 @@ describe("coding-agent packaging", () => {
     });
     expect(codex.skills).toBe("./skills/");
     expect(skill).toMatch(/^name: do-muse$/m);
+    expect(skill).toContain("installed `do-muse` skill");
+    expect(skill).not.toContain("installed `Muse` skill");
     expect(codexMetadata).toContain('display_name: "do-muse"');
     expect(codexMetadata).toContain("Use do-muse to");
     expect(codexMetadata).not.toContain("$Muse");
@@ -240,12 +242,13 @@ describe("coding-agent packaging", () => {
   });
 
   test("ships DESIGN.md as the Muse default and resolves project then home then shipped", async () => {
-    const { resolveDesignMdPath, SHIPPED_DESIGN_MD } = await import(
+    const { parseDesignPrimary, resolveDesignMdPath, SHIPPED_DESIGN_MD } = await import(
       "../plugins/Muse/skills/do-muse/tools/interactive-plan/design.ts"
     );
     const design = await readFile(join(repoRoot, "plugins/Muse/DESIGN.md"), "utf8");
     const skill = await readFile(join(repoRoot, "plugins/Muse/skills/do-muse/SKILL.md"), "utf8");
 
+    expect(parseDesignPrimary(design)).toBe("#8a69f7");
     expect(design).toContain("name: Muse default");
     expect(design).toContain("Space Grotesk");
     expect(design).toContain("Barlow Condensed");
@@ -269,6 +272,40 @@ describe("coding-agent packaging", () => {
       expect(await resolveDesignMdPath({ cwd: project, home })).toBe(join(home, ".agents", "DESIGN.md"));
       await writeFile(join(project, "DESIGN.md"), "project\n");
       expect(await resolveDesignMdPath({ cwd: project, home })).toBe(join(project, "DESIGN.md"));
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("interactive CSS uses resolved DESIGN.md colors.primary", async () => {
+    const { loadPlanFolder } = await import(
+      "../plugins/Muse/skills/do-muse/tools/interactive-plan/mdx-loader.ts"
+    );
+    const { renderPlanHtml } = await import(
+      "../plugins/Muse/skills/do-muse/tools/interactive-plan/render.ts"
+    );
+
+    const fixtureRoot = await mkdtemp(join(tmpdir(), "muse-primary-css-"));
+    try {
+      const project = join(fixtureRoot, "project");
+      const home = join(fixtureRoot, "home");
+      const planDir = join(project, "plan");
+      const primary = "#12ab34";
+      await mkdir(planDir, { recursive: true });
+      await writeFile(
+        join(project, "DESIGN.md"),
+        `---\ncolors:\n  primary: "${primary}"\n---\n`,
+      );
+      await cp(join(repoRoot, "tests", "fixtures", "interactive-plans", "minimal-plan"), planDir, {
+        recursive: true,
+      });
+
+      const html = await renderPlanHtml(await loadPlanFolder(planDir), false, undefined, {
+        cwd: project,
+        home,
+      });
+      expect(html).toContain(`--primary: ${primary}`);
+      expect(html).not.toMatch(/:root\s*\{[^}]*--primary:\s*#8a69f7/);
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true });
     }

@@ -92,6 +92,7 @@ Core source files:
 - `render.ts` creates `dist/index.html` and `dist/static-export.html`.
 - `server.ts` serves the local review bridge.
 - `runtime-entry.ts` is the source entry for the installed-plugin runtime.
+- `design.ts` resolves DESIGN.md (project, `~/.agents/DESIGN.md`, shipped) and supplies `colors.primary` to `render.ts` interactive CSS `--primary`.
 - `runtime.mjs` is the committed Bun bundle used from cached plugin copies; `vp run visual-plan:build` must keep it synchronized and self-contained.
 - `state-store.ts` persists local reviewer state.
 - `handoff.ts` generates agent handoff files.

@@ -403,7 +403,7 @@ bash ~/.pi/agent/skills/Muse/scripts/share.sh .agents/diagrams/my-diagram.html
 
 **How it works:**
 
-1. Runs the `share.sh` script from the installed `Muse` skill directory
+1. Runs the `share.sh` script from the installed `do-muse` skill directory
 2. Copies HTML file to a uniquely-named temp directory as `index.html`
 3. Runs `vercel deploy --prod --yes` from that directory — each share gets its own Vercel project
 4. Resolves the project's public production URL and verifies it with an anonymous request

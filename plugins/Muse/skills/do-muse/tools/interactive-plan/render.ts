@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { copyFontAssets, fontFaceCss, MERMAID_SHA384, MERMAID_URL, readFontNotices } from "./assets";
 import { interactivePlanClientScript, staticPlanClientScript } from "./client";
 import { escapeHtml, renderBlocks } from "./components";
+import { loadDesignPrimary, type DesignResolveOptions } from "./design";
 import { loadPlanFolder, type LoadedPlanFolder } from "./mdx-loader";
 import { validateRenderedHtmlIds } from "./schema";
 import { getRendererOwnedIdsByRole, MDX_COMPONENT_META, MDX_COMPONENT_NAMES } from "./shared";
@@ -766,8 +767,18 @@ async function renderFontNotices(): Promise<string> {
   return `<details class="ve-ip-block ve-ip-card ve-ip-third-party-notices"><summary>Third-party font notices</summary><div class="ve-ip-third-party-notices__body"><p>Copyright notices and SIL Open Font License 1.1 terms for fonts embedded in this portable file.</p>${entries}</div></details>`;
 }
 
-export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false, shell?: string): Promise<string> {
+function styleWithPrimary(primary: string): string {
+  return style.replace(/--primary:\s*#[0-9A-Fa-f]{3,8}/, `--primary: ${primary}`);
+}
+
+export async function renderPlanHtml(
+  plan: LoadedPlanFolder,
+  staticMode = false,
+  shell?: string,
+  options: DesignResolveOptions = {},
+): Promise<string> {
   const template = shell ?? (await readShellTemplate());
+  const primary = await loadDesignPrimary(options);
   const componentExplorer = plan.manifest.kind === "styleguide";
   const content = [
     renderBlocks(plan.plan.blocks, { staticMode, componentExplorer }),
@@ -788,7 +799,7 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
     .replaceAll("{{NAV}}", navFor(plan))
     .replaceAll("{{CONTENT}}", content)
     .replaceAll("{{FONTS}}", fonts)
-    .replaceAll("{{STYLE}}", style)
+    .replaceAll("{{STYLE}}", styleWithPrimary(primary))
     .replaceAll("{{MERMAID_URL}}", MERMAID_URL)
     .replaceAll("{{MERMAID_SRI}}", MERMAID_SHA384)
     .replaceAll("{{CLIENT}}", staticMode ? staticPlanClientScript : interactivePlanClientScript);
@@ -809,7 +820,10 @@ export async function renderPlanHtml(plan: LoadedPlanFolder, staticMode = false,
   return html;
 }
 
-export async function renderPlanFolder(rootDir: string): Promise<{ indexPath: string; staticExportPath: string }> {
+export async function renderPlanFolder(
+  rootDir: string,
+  options: DesignResolveOptions = {},
+): Promise<{ indexPath: string; staticExportPath: string }> {
   const plan = await loadPlanFolder(rootDir);
   const distDir = join(rootDir, plan.manifest.dist);
   await mkdir(distDir, { recursive: true });
@@ -817,8 +831,8 @@ export async function renderPlanFolder(rootDir: string): Promise<{ indexPath: st
   const indexPath = join(distDir, "index.html");
   const staticExportPath = join(distDir, "static-export.html");
   const shell = await readShellTemplate();
-  await writeFile(indexPath, await renderPlanHtml(plan, false, shell));
-  await writeFile(staticExportPath, await renderPlanHtml(plan, true, shell));
+  await writeFile(indexPath, await renderPlanHtml(plan, false, shell, options));
+  await writeFile(staticExportPath, await renderPlanHtml(plan, true, shell, options));
   return { indexPath, staticExportPath };
 }
 
