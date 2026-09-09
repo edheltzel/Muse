@@ -111,6 +111,14 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
   let browserProcess: ChildProcess | null = null;
   let primaryFailure: unknown;
 
+  async function launchManagedChrome(): Promise<Browser> {
+    return puppeteer.launch({
+      executablePath: await puppeteer.executablePath(),
+      headless: true,
+      args: process.env.CI ? ["--no-sandbox", "--disable-setuid-sandbox"] : [],
+    });
+  }
+
   async function withPage(run: (page: Page) => Promise<void>): Promise<void> {
     let page: Page | undefined;
     let testFailure: unknown;
@@ -135,10 +143,7 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
 
   beforeAll(async () => {
     try {
-      browser = await puppeteer.launch({
-        executablePath: await puppeteer.executablePath(),
-        headless: true,
-      });
+      browser = await launchManagedChrome();
       browserProcess = browser.process();
     } catch (error) {
       primaryFailure ??= error;
@@ -368,10 +373,7 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
     let disconnectedBrowser: Browser | undefined;
     let disconnectedProcess: ChildProcess | null = null;
     try {
-      disconnectedBrowser = await puppeteer.launch({
-        executablePath: await puppeteer.executablePath(),
-        headless: true,
-      });
+      disconnectedBrowser = await launchManagedChrome();
       disconnectedProcess = disconnectedBrowser.process();
       expect(disconnectedProcess).not.toBeNull();
       disconnectedBrowser.disconnect();

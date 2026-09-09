@@ -90,6 +90,17 @@ describe("coding-agent packaging", () => {
     expect(codexMetadata).not.toContain("$Muse");
   });
 
+  test("command templates load the do-muse skill by name", async () => {
+    const commandDir = join(repoRoot, "plugins/Muse/commands");
+    const files = (await readdir(commandDir)).filter((name) => name.endsWith(".md")).sort();
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const text = await readFile(join(commandDir, file), "utf8");
+      expect(text).not.toContain("Load the Muse skill");
+      expect(text).not.toContain("Follow the Muse skill workflow");
+    }
+  });
+
   test("centralizes native invocation syntax behind one lowercase cross-host request", async () => {
     const [invocation, readme, skill, openclawGuide, codexGuide, piGuide] = await Promise.all([
       readFile(join(repoRoot, "plugins/Muse/skills/do-muse/references/invocation.md"), "utf8"),

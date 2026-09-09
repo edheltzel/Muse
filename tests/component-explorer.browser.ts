@@ -600,9 +600,10 @@ try {
     config?: { testedAgentBrowserVersion?: string };
   };
   assert.equal(packageManifest.config?.testedAgentBrowserVersion, testedAgentBrowserVersion, "package.json must declare the tested agent-browser compatibility version");
-  const agentBrowserPath = Bun.which("agent-browser");
+  const localAgentBrowser = join(repoRoot, "node_modules", ".bin", "agent-browser");
+  const agentBrowserPath = existsSync(localAgentBrowser) ? localAgentBrowser : Bun.which("agent-browser");
   if (!agentBrowserPath) {
-    throw new Error("Missing required executable: agent-browser. Install it before running `vp run component-explorer:test-browser`.");
+    throw new Error("Missing required executable: agent-browser. Pin agent-browser@0.31.1 and run `vp install` before `vp run component-explorer:test-browser`.");
   }
   agentBrowserExecutable = agentBrowserPath;
   agentBrowserVersion = await runAgentBrowser(["--version"], false);

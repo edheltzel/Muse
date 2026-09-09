@@ -16,7 +16,7 @@ Use this command for critique. Use `/generate-visual-plan` when the deliverable 
 
 ## Workflow
 
-1. Load the Muse skill.
+1. Load the `do-muse` skill.
 2. Read the supplied plan and relevant code/docs.
 3. Verify claims against the repository.
 4. Produce a Muse HTML review with:

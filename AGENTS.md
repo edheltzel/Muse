@@ -83,6 +83,7 @@ Core source files:
 
 - `shared.ts` defines the supported MDX component names.
 - `schema.ts` defines manifest, state, comments, and handoff types.
+- `design.ts` resolves DESIGN.md (project, `~/.agents/DESIGN.md`, shipped default) and parses hex color tokens for the renderer.
 - `mdx-loader.ts` parses frontmatter and component blocks.
 - `components.ts` renders MDX blocks to HTML.
 - `client.ts` owns browser interactions: theme toggle, Mermaid rendering, zoom/pan, tabs, persistence handlers.
@@ -137,6 +138,8 @@ Mermaid does not accept CSS `oklch(...)` values in `themeVariables`. The page CS
 The interactive client renders Mermaid from `.mermaid-source` into `.mermaid-canvas`, then applies zoom and pan transforms to the canvas. Keep the readable source fallback available for static/error cases.
 
 ## Verification expectations
+
+`vp run check` is the local and CI proof command: unit tests, the component-explorer browser contract, and the interactive-plan build. GitHub Actions runs it from `.github/workflows/check.yml`. Pin `agent-browser@0.31.1` (see `config.testedAgentBrowserVersion`); the browser contract looks for `node_modules/.bin/agent-browser` first. `bun test` runs with `--max-concurrency 1` so `fs` spies in the review-state suite cannot leak across concurrent tests.
 
 Before yielding after behavior or UI changes:
 

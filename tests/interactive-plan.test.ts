@@ -945,6 +945,27 @@ describe("interactive plan MDX loading", () => {
 });
 
 describe("interactive plan rendering", () => {
+  test("renders DESIGN.md colors.primary into interactive CSS", async () => {
+    const project = await mkdtemp(join(tmpdir(), "muse-design-primary-"));
+    try {
+      await writeFile(
+        join(project, "DESIGN.md"),
+        `---\nname: override\ncolors:\n  primary: "#c0ffee"\n---\n`,
+      );
+      await withFixture("minimal-plan", async (planDir) => {
+        const { indexPath } = await renderPlanFolder(planDir, {
+          cwd: project,
+          home: join(project, "missing-home"),
+        });
+        const html = await readFile(indexPath, "utf8");
+        expect(html).toContain("--primary: #c0ffee");
+        expect(html).not.toContain("--primary: #8a69f7");
+      });
+    } finally {
+      await rm(project, { recursive: true, force: true });
+    }
+  });
+
   test("renders the minimal fixture to interactive and static HTML with review chrome", async () => {
     await withFixture("minimal-plan", async (planDir) => {
       const { indexPath, staticExportPath } = await renderPlanFolder(planDir);
