@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  AGENT_BROWSER_ARGS: --no-sandbox,--disable-setuid-sandbox
+
 jobs:
   check:
     runs-on: ubuntu-latest
