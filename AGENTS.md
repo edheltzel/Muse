@@ -83,6 +83,7 @@ Core source files:
 
 - `shared.ts` defines the supported MDX component names.
 - `schema.ts` defines manifest, state, comments, and handoff types.
+- `design.ts` resolves DESIGN.md (project, `~/.agents/DESIGN.md`, shipped default) and parses hex color tokens for the renderer.
 - `mdx-loader.ts` parses frontmatter and component blocks.
 - `components.ts` renders MDX blocks to HTML.
 - `client.ts` owns browser interactions: theme toggle, Mermaid rendering, zoom/pan, tabs, persistence handlers.
