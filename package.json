@@ -60,12 +60,13 @@
     "visual-plan:serve": "bun plugins/Muse/skills/do-muse/tools/interactive-plan/server.ts",
     "component-explorer:render": "bun plugins/Muse/skills/do-muse/tools/interactive-plan/render.ts tests/fixtures/interactive-plans/component-library-showcase",
     "component-explorer:serve": "bun plugins/Muse/skills/do-muse/tools/interactive-plan/server.ts tests/fixtures/interactive-plans/component-library-showcase 7375",
-    "component-explorer:test-browser": "bun tests/component-explorer.browser.ts",
+    "component-explorer:test-browser": "agent-browser install && bun tests/component-explorer.browser.ts",
     "visual-plan:runtime:build": "bun build plugins/Muse/skills/do-muse/tools/interactive-plan/runtime-entry.ts --target bun --format esm --minify --outfile plugins/Muse/skills/do-muse/tools/interactive-plan/runtime.mjs",
     "visual-plan:build": "vp build --config vite.config.ts && vp run visual-plan:runtime:build"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
+    "agent-browser": "0.31.1",
     "happy-dom": "^20.10.6",
     "puppeteer": "25.3.0",
     "vite-plus": "0.2.2"

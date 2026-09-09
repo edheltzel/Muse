@@ -17,10 +17,13 @@ Use Vite+ commands from the repository root:
 ```bash
 vp install
 vp run test
+vp run check
 vp run visual-plan:build
 vp run component-explorer:render
 vp run component-explorer:serve
 ```
+
+CI is `.github/workflows/check.yml`: Bun `1.3.14`, `agent-browser install --with-deps`, then `vp run check`. `check` pins `agent-browser` to `config.testedAgentBrowserVersion`.
 
 Dependency changes go through Vite+:
 

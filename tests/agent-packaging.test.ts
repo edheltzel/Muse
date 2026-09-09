@@ -49,6 +49,7 @@ describe("coding-agent packaging", () => {
       readJson(".agents/plugins/marketplace.json"),
     ]);
 
+    expect(pkg.devDependencies["agent-browser"]).toBe(pkg.config.testedAgentBrowserVersion);
     expect(pkg.name).toBe("muse");
     expect(omp.name).toBe("muse");
     expect(claude.name).toBe("muse");
@@ -63,6 +64,13 @@ describe("coding-agent packaging", () => {
       marketplace.metadata.version,
       marketplace.plugins[0].version,
     ]).toEqual([pkg.version, pkg.version, pkg.version, pkg.version, pkg.version]);
+  });
+
+  test("CI runs the same check gate as local `vp run check`", async () => {
+    const workflow = await readFile(join(repoRoot, ".github/workflows/check.yml"), "utf8");
+    expect(workflow).toContain("bun-version: \"1.3.14\"");
+    expect(workflow).toContain("agent-browser install --with-deps");
+    expect(workflow).toContain("vp run check");
   });
 
   test("exposes the canonical skill to OMP, Pi, Claude Code, and Codex", async () => {
