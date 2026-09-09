@@ -23,7 +23,7 @@ vp run component-explorer:render
 vp run component-explorer:serve
 ```
 
-CI is `.github/workflows/check.yml`: Bun `1.3.14`, `agent-browser install --with-deps`, then `vp run check`. `check` pins `agent-browser` to `config.testedAgentBrowserVersion`.
+CI is `.github/workflows/check.yml`: Bun `1.3.14`, `agent-browser install --with-deps`, then `vp run check`. GitHub-hosted Linux sets `AGENT_BROWSER_ARGS` and Puppeteer `--no-sandbox` because the runner blocks Chromium user namespaces. `check` pins `agent-browser` to `config.testedAgentBrowserVersion`.
 
 Dependency changes go through Vite+:
 
