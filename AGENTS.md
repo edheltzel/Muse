@@ -138,6 +138,8 @@ The interactive client renders Mermaid from `.mermaid-source` into `.mermaid-can
 
 ## Verification expectations
 
+`vp run check` is the local and CI proof command: unit tests, the component-explorer browser contract, and the interactive-plan build. GitHub Actions runs it from `.github/workflows/check.yml`. Pin `agent-browser@0.31.1` (see `config.testedAgentBrowserVersion`); the browser contract looks for `node_modules/.bin/agent-browser` first. `bun test` runs with `--max-concurrency 1` so `fs` spies in the review-state suite cannot leak across concurrent tests.
+
 Before yielding after behavior or UI changes:
 
 1. Run the focused test suite:
