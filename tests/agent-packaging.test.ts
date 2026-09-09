@@ -70,6 +70,7 @@ describe("coding-agent packaging", () => {
     const workflow = await readFile(join(repoRoot, ".github/workflows/check.yml"), "utf8");
     expect(workflow).toContain("bun-version: \"1.3.14\"");
     expect(workflow).toContain("agent-browser install --with-deps");
+    expect(workflow).toContain("AGENT_BROWSER_ARGS");
     expect(workflow).toContain("vp run check");
   });
 

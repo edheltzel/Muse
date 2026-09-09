@@ -7,6 +7,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      AGENT_BROWSER_ARGS: "--no-sandbox,--disable-setuid-sandbox"
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

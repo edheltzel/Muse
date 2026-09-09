@@ -12,6 +12,14 @@ import { renderPlanFolder } from "../plugins/Muse/skills/do-muse/tools/interacti
 
 type TabType = "Tabs" | "DiffTabs";
 
+async function chromeLaunchOptions() {
+  return {
+    executablePath: await puppeteer.executablePath(),
+    headless: true,
+    args: process.env.CI ? ["--no-sandbox", "--disable-setuid-sandbox"] : [],
+  };
+}
+
 function tabBlock(type: TabType): string {
   return renderBlock({
     id: type.toLowerCase(),
@@ -135,10 +143,7 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
 
   beforeAll(async () => {
     try {
-      browser = await puppeteer.launch({
-        executablePath: await puppeteer.executablePath(),
-        headless: true,
-      });
+      browser = await puppeteer.launch(await chromeLaunchOptions());
       browserProcess = browser.process();
     } catch (error) {
       primaryFailure ??= error;
@@ -368,10 +373,7 @@ describe("interactive plan tabs in managed Chrome for Testing", () => {
     let disconnectedBrowser: Browser | undefined;
     let disconnectedProcess: ChildProcess | null = null;
     try {
-      disconnectedBrowser = await puppeteer.launch({
-        executablePath: await puppeteer.executablePath(),
-        headless: true,
-      });
+      disconnectedBrowser = await puppeteer.launch(await chromeLaunchOptions());
       disconnectedProcess = disconnectedBrowser.process();
       expect(disconnectedProcess).not.toBeNull();
       disconnectedBrowser.disconnect();
