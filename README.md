@@ -1,6 +1,16 @@
-![muse banner](banner.png)
+```
+███╗   ███╗██╗   ██╗███████╗███████╗
+████╗ ████║██║   ██║██╔════╝██╔════╝
+██╔████╔██║██║   ██║███████╗█████╗
+██║╚██╔╝██║██║   ██║╚════██║██╔══╝
+██║ ╚═╝ ██║╚██████╔╝███████║███████╗
+╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚══════╝
+```
 
 # muse
+
+> [!NOTE]
+> EdHeltzel's Visual Explainer
 
 > [!NOTE]
 > Big thanks to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) for the original idea and work. [muse](https://github.com/edheltzel/Muse) has been **heavily modified** to fit my personal needs and will continue to change with more features.
