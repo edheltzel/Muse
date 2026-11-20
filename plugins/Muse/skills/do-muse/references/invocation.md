@@ -19,6 +19,7 @@ This is the shared mental model and the only cross-host invocation `do-muse` adv
 | Claude Code | `/muse:do-muse <request>` or `/muse:<workflow>` | Claude namespaces plugin skills and command templates with the plugin name. |
 | Pi | `/skill:do-muse <request>` or `/<workflow>` | Pi owns the `/skill:<name>` grammar and loads package prompt templates as top-level slash commands. |
 | Codex | `$do-muse <request>` or `/skills` | Codex owns skill mentions and the skill picker name `do-muse`; plugin command Markdown is reference material rather than installed prompts. |
+| Empryo | none | Empryo loads the skill from `~/.agents/skills` and reaches it through the canonical request. It has no skill-mention or slash-command grammar of its own. |
 
 These syntax differences are forced by host grammar. Do not translate them into a fake shared token or capitalize the skill mention.
 

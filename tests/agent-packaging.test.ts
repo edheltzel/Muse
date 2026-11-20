@@ -102,24 +102,27 @@ describe("coding-agent packaging", () => {
   });
 
   test("centralizes native invocation syntax behind one lowercase cross-host request", async () => {
-    const [invocation, readme, skill, openclawGuide, codexGuide, piGuide] = await Promise.all([
-      readFile(join(repoRoot, "plugins/Muse/skills/do-muse/references/invocation.md"), "utf8"),
-      readFile(join(repoRoot, "README.md"), "utf8"),
-      readFile(join(repoRoot, "plugins/Muse/skills/do-muse/SKILL.md"), "utf8"),
-      readFile(join(repoRoot, "configs/openclaw/AGENTS.md"), "utf8"),
-      readFile(join(repoRoot, "configs/codex/AGENTS.md"), "utf8"),
-      readFile(join(repoRoot, "configs/pi/AGENTS.md"), "utf8"),
-    ]);
+    const [invocation, readme, skill, openclawGuide, codexGuide, piGuide, empryoGuide] =
+      await Promise.all([
+          readFile(join(repoRoot, "plugins/Muse/skills/do-muse/references/invocation.md"), "utf8"),
+          readFile(join(repoRoot, "README.md"), "utf8"),
+          readFile(join(repoRoot, "plugins/Muse/skills/do-muse/SKILL.md"), "utf8"),
+          readFile(join(repoRoot, "configs/openclaw/AGENTS.md"), "utf8"),
+          readFile(join(repoRoot, "configs/codex/AGENTS.md"), "utf8"),
+          readFile(join(repoRoot, "configs/pi/AGENTS.md"), "utf8"),
+        readFile(join(repoRoot, "configs/empryo/AGENTS.md"), "utf8"),
+        ]);
 
     expect(invocation).toContain("Use do-muse to <visualize, review, explain, or plan this work>.");
     expect(invocation).toContain("/muse:do-muse <request>");
     expect(invocation).toContain("/skill:do-muse <request>");
     expect(invocation).toContain("$do-muse <request>");
-    expect(invocation).toMatch(/forced by host grammar/i);
+    expect(invocation).toContain("| Empryo | none |");
+      expect(invocation).toMatch(/forced by host grammar/i);
 
-    for (const surface of [readme, skill, openclawGuide, codexGuide, piGuide]) {
-      expect(surface).toContain("Use do-muse to");
-      expect(surface).not.toMatch(/\/muse:do-muse|\/skill:do-muse|\$do-muse|\$Muse/);
+      for (const surface of [readme, skill, openclawGuide, codexGuide, piGuide, empryoGuide]) {
+        expect(surface).toContain("Use do-muse to");
+        expect(surface).not.toMatch(/\/muse:do-muse|\/skill:do-muse|\$do-muse|\$Muse/);
       expect(surface).not.toContain("/skill:muse");
     }
   });
@@ -226,6 +229,21 @@ describe("coding-agent packaging", () => {
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true });
     }
+  });
+
+  test("is installable as a GAP utility that reaches Empryo", async () => {
+    const [manifest, guide, agents] = await Promise.all([
+      readFile(join(repoRoot, "gap-utility.toml"), "utf8"),
+      readFile(join(repoRoot, "configs/empryo/AGENTS.md"), "utf8"),
+      readFile(join(repoRoot, "AGENTS.md"), "utf8"),
+    ]);
+
+    expect(manifest).toContain('schema = "1"');
+    expect(manifest).toContain('skills = ["do-muse"]');
+    expect(guide).toContain("gap add edheltzel/Muse");
+    expect(guide).toContain("~/.agents/skills/do-muse");
+    expect(guide).toContain("~/.empryo/bin/empryo");
+    expect(agents).toContain("configs/empryo/AGENTS.md");
   });
 
   test("documents current Codex skill locations without legacy copy paths", async () => {

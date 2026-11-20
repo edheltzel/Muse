@@ -1,0 +1,4 @@
+schema = "1"
+name = "muse"
+description = "Visual explanations, diagrams, and reviewable plans (do-muse)"
+skills = ["do-muse"]
