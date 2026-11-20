@@ -196,6 +196,7 @@ lives in **[docs/dox.md](docs/dox.md)**. Read it before editing any file in this
 - [`configs/openclaw/AGENTS.md`](configs/openclaw/AGENTS.md) owns OpenClaw's lightweight rules guidance and its use of the canonical `do-muse` skill and command templates.
 - [`configs/codex/AGENTS.md`](configs/codex/AGENTS.md) owns Codex installation, discovery, invocation, and browser constraints for `do-muse`.
 - [`configs/pi/AGENTS.md`](configs/pi/AGENTS.md) owns Pi package installation, prompt invocation, legacy-copy compatibility, and optional sharing dependencies.
+- [`configs/empryo/AGENTS.md`](configs/empryo/AGENTS.md) owns Empryo installation through GAP, discovery from `~/.agents/skills`, and the split between generated pages and Empryo's native `show` tool.
 
 Add another child contract when a folder becomes a durable boundary with local rules that do not belong in this repository-wide guide.
 

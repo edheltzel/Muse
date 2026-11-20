@@ -185,6 +185,17 @@ rm -rf /tmp/Muse
 
 Codex scans `~/.agents/skills` for user skills. The older `~/.codex/skills` and `~/.codex/prompts` copy paths are not used; explicit fallback syntax remains centralized in the invocation reference.
 
+### Empryo
+
+Empryo reads user skills from `~/.agents/skills`, which is where GAP installs them. Add Muse as a GAP utility and sync:
+
+```bash
+gap add edheltzel/Muse
+gap sync
+```
+
+`gap add` pins this repo and copies `do-muse` into `~/.agents/skills`. Start a new Empryo tab and use the shared request above. Empryo has no slash commands, so the files under `plugins/Muse/commands/` stay reference material. For a small inline visual, Empryo's native `show` tool is the better fit; `do-muse` is for durable pages, decks, and reviews with approval and handoff files.
+
 ### Cursor and OpenClaw
 
 - Cursor: use `configs/cursor/muse.mdc` as the project rule.
@@ -204,7 +215,7 @@ Codex scans `~/.agents/skills` for user skills. The older `~/.codex/skills` and 
 | `/fact-check`           | A code-grounded accuracy review for a document                             |
 | `/share-page`           | A Vercel production URL for an HTML explainer page                         |
 
-You rarely need the slash commands. On native-skill surfaces (Claude Code, Pi, OMP, and Codex) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and `do-muse` picks the right treatment on its own. The slash commands are explicit shortcuts on harnesses that support command templates.
+You rarely need the slash commands. On native-skill surfaces (Claude Code, Pi, OMP, Codex, and Empryo) the skill auto-invokes from natural language — ask for a "visual explainer", say "visualize this", "visualize a plan", "make it visual", or "explain this visually", and `do-muse` picks the right treatment on its own. The slash commands are explicit shortcuts on harnesses that support command templates.
 
 The skill also activates proactively when an agent is about to dump a complex table in the terminal: 4+ rows or 3+ columns should become a browser page.
 
