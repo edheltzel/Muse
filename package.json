@@ -70,6 +70,7 @@
     "agent-browser": "0.31.1",
     "happy-dom": "^20.10.6",
     "puppeteer": "25.3.0",
+    "typescript": "^7.0.2",
     "vite-plus": "0.2.2"
   },
   "pi": {

@@ -9,11 +9,11 @@
 
 # muse
 
-> [!NOTE]
-> EdHeltzel's Visual Explainer
+> [!WARNING]
+> **This repository is archived and no longer maintained.** Use the [Plannotator](https://github.com/backnotprop/plannotator) plugin and its `plannotator-visual-explainer` skill instead. See [Use Plannotator instead](#use-plannotator-instead).
 
 > [!NOTE]
-> Big thanks to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) for the original idea and work. [muse](https://github.com/edheltzel/Muse) has been **heavily modified** to fit my personal needs and will continue to change with more features.
+> Big thanks to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) for the original idea and work. muse was a heavily modified fork of it.
 
 **Turn dense agent output into beautiful browser-native pages people can actually understand.**
 
@@ -72,134 +72,42 @@ muse turns that same information into a web page:
 4. the human reviews visually,
 5. interactive plans can produce an agent-readable handoff after approval.
 
-## Install
+## Use Plannotator instead
 
-This section gives you one working path for each supported agent surface. After installing, start a fresh agent session and use the same request everywhere:
+muse is no longer installed or updated. Its job now belongs to [Plannotator](https://github.com/backnotprop/plannotator): plans and PR explainers render with Plannotator theming and open in Plannotator's annotation UI, where you can approve, deny, or annotate them.
 
-```text
-Use do-muse to <task>.
-```
+1. Install the Plannotator plugin. In Claude Code:
 
-The unavoidable host-native explicit fallbacks and their reasons live in one place: [Invoking do-muse](plugins/Muse/skills/do-muse/references/invocation.md).
+   ```shell
+   /plugin marketplace add backnotprop/plannotator
+   /plugin install plannotator@plannotator
+   ```
 
-### Claude Code
+   For Codex, Pi, OMP, OpenCode, and other agents, follow [Plannotator's installation guide](https://github.com/backnotprop/plannotator#readme).
 
-Install from the Claude Code plugin marketplace:
+2. Add the visual explainer skill. It ships with Plannotator's optional extra skills, which are not installed by default:
 
-```shell
-/plugin marketplace add edheltzel/Muse
-/plugin install muse@muse-marketplace
-```
+   ```bash
+   npx skills add backnotprop/plannotator/apps/skills/extra --global
+   ```
 
-You should see Claude Code report that the `muse` plugin installed successfully.
+3. Start a fresh agent session and ask for `plannotator-visual-explainer` by name, for example: `Use plannotator-visual-explainer to visualize this plan.` The skill does not activate on its own.
 
-Start a fresh Claude Code session after installation. Use the shared request above; see the canonical invocation reference for Claude's namespaced fallbacks.
+For architecture diagrams, data tables, slide decks, and recaps, the skill delegates to [nicobailon/visual-explainer](https://github.com/nicobailon/visual-explainer) and asks to install it the first time.
 
-### Pi
+### Removing muse
 
-Install the package from GitHub:
-
-```bash
-pi install git:github.com/edheltzel/Muse
-```
-
-You should see Pi install the package and register the skill plus command templates. Start a fresh Pi session, then use the shared request above.
-
-For local development, install from a checkout instead:
+If you installed muse before, remove it:
 
 ```bash
-git clone --depth 1 https://github.com/edheltzel/Muse.git
-pi install ./Muse
+claude plugin uninstall muse@muse-marketplace && claude plugin marketplace remove muse-marketplace
+codex plugin remove muse@muse-marketplace && codex plugin marketplace remove muse-marketplace
+pi remove git:github.com/edheltzel/Muse
+omp plugin uninstall muse@muse-marketplace
+rm -rf ~/.agents/skills/do-muse ~/.claude/skills/do-muse ~/.pi/agent/skills/do-muse
 ```
 
-The package manifest advertises the canonical skill and command templates:
-
-```json
-"pi": {
-  "skills": ["./plugins/Muse"],
-  "prompts": ["./plugins/Muse/commands"]
-}
-```
-
-### OMP
-
-Install directly from GitHub with OMP:
-
-```bash
-omp install github:edheltzel/Muse
-```
-
-For project-scoped installs, use `--scope project` with a marketplace install (git installs are always user-scoped):
-
-```bash
-omp install --scope project muse@muse-marketplace
-```
-
-For local development, install from the repo root of a checkout (local installs need the root `package.json` manifest, so `omp install ./plugins/Muse` does not work):
-
-```bash
-git clone --depth 1 https://github.com/edheltzel/Muse.git
-cd Muse
-omp install .
-```
-
-You can also install through the bundled marketplace catalog (local marketplace sources need a `./` prefix or an absolute path):
-
-```bash
-omp plugin marketplace add edheltzel/Muse
-omp install muse@muse-marketplace
-```
-
-Verify that OMP loaded the plugin surfaces (inside the OMP TUI you can also run `/extensions`):
-
-```bash
-omp plugin list
-```
-
-Then start a fresh OMP session and use the shared request above.
-
-Generated HTML pages should land in `.agents/diagrams/`. Interactive visual plans and recaps create local MDX review folders with state, comments, approval controls, and agent handoff files.
-
-`/share-page` requires an OMP-compatible `vercel-deploy` plugin or skill. Install publishing support separately when you need hosted pages.
-
-### Codex and ChatGPT
-
-muse ships a native Codex plugin manifest. Add the bundled marketplace from Codex CLI:
-
-```bash
-codex plugin marketplace add edheltzel/Muse
-codex plugin add muse@muse-marketplace
-codex plugin marketplace list
-```
-
-Codex installs the plugin into its local cache; the same marketplace is also available in the ChatGPT desktop app's plugin directory. Start a new Codex task and use the shared request above. Codex can also activate `do-muse` implicitly from the skill description.
-
-For a direct Codex CLI user-skill install without the plugin marketplace:
-
-```bash
-git clone --depth 1 https://github.com/edheltzel/Muse.git /tmp/Muse
-mkdir -p ~/.agents/skills
-cp -R /tmp/Muse/plugins/Muse/skills/do-muse ~/.agents/skills/do-muse
-rm -rf /tmp/Muse
-```
-
-Codex scans `~/.agents/skills` for user skills. The older `~/.codex/skills` and `~/.codex/prompts` copy paths are not used; explicit fallback syntax remains centralized in the invocation reference.
-
-### Empryo
-
-Empryo reads user skills from `~/.agents/skills`, which is where GAP installs them. Add Muse as a GAP utility and sync:
-
-```bash
-gap add edheltzel/Muse
-gap sync
-```
-
-`gap add` pins this repo and copies `do-muse` into `~/.agents/skills`. Start a new Empryo tab and use the shared request above. Empryo has no slash commands, so the files under `plugins/Muse/commands/` stay reference material. For a small inline visual, Empryo's native `show` tool is the better fit; `do-muse` is for durable pages, decks, and reviews with approval and handoff files.
-
-### Cursor and OpenClaw
-
-- Cursor: use `configs/cursor/muse.mdc` as the project rule.
-- OpenClaw: use `configs/openclaw/AGENTS.md` as lightweight project guidance.
+The rest of this README describes muse as it was when archived.
 
 ## Commands
 
